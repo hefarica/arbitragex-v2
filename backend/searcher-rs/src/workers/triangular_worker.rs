@@ -612,6 +612,11 @@ fn build_triangular_route_metadata(
         leg_amounts_in: None,
         leg_amounts_out: None,
         leg_zero_for_one: None,
+        // STEP 4 (fee V3): hop pools resolve at this layer without RouteLeg
+        // fees — absent, never zero (R8); the plan-built A1 path carries fees.
+        fee_tier_bps: None,
+        economics_amount_in_wei: None,
+        economics_basis: None,
     }
 }
 
@@ -767,9 +772,7 @@ pub struct EvalInput {
 #[derive(Debug, Clone)]
 pub struct EvalResult {
     pub amount_in_wei: U256,
-    #[allow(dead_code)]
     pub amount_out_wei: U256,
-    #[allow(dead_code)]
     pub profit_token_a_wei: i128,
     pub expected_profit_usd: Option<f64>,
     /// Per-hop V2 `amount_out` collected from the SAME post-clamp re-evaluation
@@ -937,7 +940,6 @@ pub struct HopAmountOut {
     pub amount_in_used: U256,
     pub amount_out: U256,
     /// Source tag for the diagnostic log on sanity reject.
-    #[allow(dead_code)]
     pub source: HopAmountSource,
 }
 
@@ -1194,12 +1196,10 @@ impl DedupState {
     }
     /// Current entry count — used by tests; kept public for future
     /// observability surfacing (heartbeat could log dedup memory pressure).
-    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.seen.len()
     }
     /// Returns true when the dedup set is empty.
-    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.seen.is_empty()
     }
@@ -1632,6 +1632,7 @@ impl TriangularWorker {
             pipeline_latency_ms: None,
             detected_at: Utc::now(),
             trace_id: Uuid::new_v4(),
+            economics: None,
         };
 
         info!(
@@ -2060,6 +2061,7 @@ impl TriangularWorker {
                 pipeline_latency_ms: None,
                 detected_at: Utc::now(),
                 trace_id: Uuid::new_v4(),
+                economics: None,
             };
 
             info!(

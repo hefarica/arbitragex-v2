@@ -1,0 +1,21 @@
+ASSUMPTIONS — PARÁMETROS GLOBALES EDITABLES,,,,,
+Parameter,Value,Unit,Meaning,Source / rationale,Editable
+Selected_Chain,BASE,chain,Chain del escenario,Scenario input,YES
+Quote_Token,USDC,token,Numeraire de referencia,Scenario input,YES
+Min_Hops,2,hops,Mínimo de legs,Dynamic QuoteBase source,YES
+Max_Hops,7,hops,Máximo de legs,Dynamic QuoteBase source,YES
+Min_TVL_USD,100000,USD,Gate de liquidez por pool,Uploaded models,YES
+Min_Net_bps,5,bps,Gate mínimo de retorno neto,Dynamic QuoteBase source,YES
+Max_Block_Age,2,blocks,Freshness máxima,Dynamic QuoteBase source,YES
+Utilization_Cap,0.15,% depth,Porcentaje máximo del depth usado en sizing,Model assumption,YES
+CLAMM_Impact_K,0.05,factor,Proxy de impacto amount-aware para V3/CLAMM,Simulation approximation,YES
+Stable_Impact_K,0.25,factor,Proxy cuadrático de impacto para stableswap,Simulation approximation,YES
+Base_Gas_USD,8,USD/tx,Costo base de ejecución,Scenario input,YES
+Gas_Per_Hop_USD,2.5,USD/hop,Gas incremental por leg,Scenario input,YES
+Builder_Tip_bps,1,bps,Tip/bribe modelado sobre notional,Scenario input,YES
+Risk_Haircut_bps,2,bps,Haircut por latencia/estado/competencia,Scenario input,YES
+Min_Profit_USD,10,USD,Gate absoluto de beneficio,Scenario input,YES
+Beam_K,4,branches,Beam search branches por expansión,Dynamic QuoteBase source,YES
+Dirty_Seeds,4,edges,Aristas afectadas en hot set,Dynamic QuoteBase source,YES
+Discovery_SLA_ms,30,ms,Objetivo de discovery/ranking,Dynamic QuoteBase source,YES
+Default_Request_USD,100000,USD,Notional de prueba por ruta,Scenario input,YES

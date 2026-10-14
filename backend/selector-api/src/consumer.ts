@@ -15,10 +15,42 @@ import type pg from "pg";
 import type { Logger } from "pino";
 import type { AppConfig, CircuitBreaker, KillSwitchClient } from "@arbx/shared";
 import { OpportunitySchema, type Opportunity } from "@arbx/shared";
+import { z } from "zod";
 import { prefilter, decide, type Decision } from "./policy/engine.js";
 import { scoreOpportunity, weightsFromConfig } from "./scoring/engine.js";
 import { checkToken } from "./token_safety/client.js";
 import { persistDecision } from "./persistence.js";
+
+/**
+ * SELECTOR-PARSE-01 — el schema ESTRICTO compartido rechaza todo payload del
+ * searcher que traiga una clave de nivel superior que no declare.
+ *
+ * El productor Rust serializa claves nuevas de forma UNILATERAL (es la misma
+ * clase que ya documentan `cartridge_id` y `detector_id` en
+ * `shared-ts/src/contracts/index.ts:41-56`), así que si `OpportunitySchema`
+ * va un campo por detrás el resultado es un fallo de parse del 100%:
+ * `invalid_message` → XACK → el mensaje se pierde para siempre y NADA llega
+ * nunca a `arbx:opps:validated`.
+ *
+ * MEDIDO (2026-10-06, payload real de `XREVRANGE arbx:opps:detected`): el
+ * payload añade exactamente UNA clave no declarada de nivel superior,
+ * `economics` (el desglose de 7 costes del searcher). `2044`
+ * `consumer.invalid_message` por 20 min y CERO publicaciones; `simulations`
+ * con 0 filas de por vida (`n_tup_ins = 0`, `stats_reset = never`).
+ *
+ * NO se relaja ningún gate: `economics` NO lo consume ninguna decisión de
+ * este módulo — `prefilter`, `safety`, `score`, `decide` y `persist` leen
+ * sólo los campos ya declarados. Aceptarlo no cambia umbrales, ni el gate de
+ * viabilidad, ni el veredicto económico: sólo evita que el parser TIRE el
+ * mensaje entero por un campo que no usa.
+ *
+ * Se mantiene ESTRICTO — `.extend()` conserva la política `strict` — así que
+ * una clave realmente desconocida sigue fallando ruidosamente y esto no
+ * degenera en "aceptar cualquier cosa".
+ */
+export const SelectorOpportunitySchema = OpportunitySchema.extend({
+  economics: z.object({}).passthrough().nullish(),
+});
 
 const STREAM_IN = "arbx:opps:detected";
 const STREAM_OUT = "arbx:opps:validated";
@@ -326,7 +358,7 @@ export class StreamConsumer {
     try {
       const json = fieldValue(kv, "json");
       if (!json) throw new Error("no_json_field");
-      opportunity = OpportunitySchema.parse(JSON.parse(json));
+      opportunity = SelectorOpportunitySchema.parse(JSON.parse(json));
     } catch (err) {
       this.deps.logger.warn({ event: "consumer.invalid_message", id, err: (err as Error).message });
       this.deps.metrics.invalidMessagesTotal();
@@ -341,9 +373,23 @@ export class StreamConsumer {
         persistDecision(this.deps.pool, opportunity!.id, opportunity!.chain_id, opportunity!.trace_id, decision),
       );
 
-      if (decision.kind === "accept") {
-        await this.publishValidated(opportunity, decision.score);
-      }
+      // DL-01 (FIX-SELGATE-01): `arbx:opps:validated` es un **LOG DE DECISIONES**,
+      // no una cola de aceptados. Antes de SEL-GATE-01 (fdb40401) se publicaba
+      // TODA oportunidad decidida — las entradas supervivientes lo prueban: traen
+      // `rejection_reason` Y `risk_score` a la vez (`single_pool_no_spread`,
+      // `v3_quote_unavailable`). fdb40401 añadió el `if (kind === "accept")` y
+      // convirtió el log en una cola de aceptados; como el productor estampa
+      // `rejection_reason` en el 100% de sus filas, `prefilter` clasificaba todo
+      // como `producer_rejected` y la cola quedó vacía desde 2026-09-17T09:26:12Z.
+      //
+      // LA GUARDA SE PRESERVA (engine.ts:36-39): los productor-rechazados siguen
+      // clasificándose ANTES de cualquier trabajo caro, y siguen sin poder salir
+      // como `verdict:"accept"`. Lo que se mueve es el PUNTO DE ENFORCEMENT: este
+      // publicador ahora emite el veredicto y el motivo, así que quien decide qué
+      // se EJECUTA (el consumidor de simulación / el terminus live) es quien
+      // filtra por `verdict === "accept"`. El filtro se REUBICA aguas abajo; no se
+      // borró, y no se relajó ningún umbral.
+      await this.publishValidated(opportunity, decision);
 
       this.deps.metrics.decisionsTotal({
         decision: decision.kind,
@@ -388,8 +434,23 @@ export class StreamConsumer {
     return decide({ scored, safety, sim: null, cfg: this.deps.cfg });
   }
 
-  private async publishValidated(opp: Opportunity, score: number): Promise<void> {
-    const payload = JSON.stringify({ ...opp, risk_score: score });
+  /**
+   * DL-01 (FIX-SELGATE-01): publica TODA oportunidad decidida — aceptada o no —
+   * con su veredicto y su motivo. Antes sólo se publicaban los aceptados, lo que
+   * vaciaba el stream por construcción.
+   *
+   * `verdict` / `verdict_reason` son campos NUEVOS y son el contrato con aguas
+   * abajo: el consumidor que sí ejecuta debe filtrar `verdict === "accept"`.
+   * `rejection_reason` se conserva intacto tal como lo emitió el productor (es un
+   * campo distinto y con otro dueño: no se pisa).
+   */
+  private async publishValidated(opp: Opportunity, decision: Decision): Promise<void> {
+    const payload = JSON.stringify({
+      ...opp,
+      risk_score: decision.score,
+      verdict: decision.kind,
+      verdict_reason: decision.kind === "reject" ? decision.reason : null,
+    });
     await this.deps.redis.xadd(
       STREAM_OUT, "MAXLEN", "~", MAXLEN_OUT, "*",
       "json", payload,

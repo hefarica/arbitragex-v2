@@ -1,0 +1,8 @@
+"PRUEBAS DEL LIBRO | positivos, límites y pérdidas",,,,,,,,,,,,,,,,,,,,,,,
+Fixtures fijos independientes del mercado. USD 326 es aritmética del caso positivo; no beneficio acreditado. Estas pruebas no son tests del backend.,,,,,,,,,,,,,,,,,,,,,,,
+Caso,Notional_USD,Gross_USD,Gas_USD,Flash_USD,Builder_USD,Externos_USD,Intento_USD,Reserva_USD,P_inclusion,P_exito_cond,Fallo_USD,ROI_objetivo,Margen_bps,Neto_esperado_fixture_USD,Tipo_de_prueba,Costes_USD,Neto_calculado_USD,Neto_prudente_USD,Objetivo_USD,Brecha_USD,EV_USD,Prueba_aritmetica,Prueba_signo_y_umbral
+POSITIVO_BASE,10000,400,20,9,30,10,5,25,0.45,0.985,20,0.02,10,326,POSITIVO_Y_META,74,326,301,210,0,141.58075,CORRECTO,CORRECTO
+MARGEN_INSUFICIENTE,10000,260,20,9,30,10,5,25,0.45,0.985,20,0.02,10,186,POSITIVO_SIN_META,74,186,161,210,49,79.52574999999999,CORRECTO,CORRECTO
+PERDIDA,10000,50,20,9,30,10,5,25,0.45,0.985,20,0.02,10,-24,NEGATIVO,74,-24,-49,210,259,-13.556750000000001,CORRECTO,CORRECTO
+UMBRAL_EXACTO,10000,309,20,9,30,10,5,25,0.45,0.985,20,0.02,10,235,LIMITE_META,74,235,210,210,0,101.245,CORRECTO,CORRECTO
+GAS_ALTO,10000,400,500,9,30,10,5,25,0.45,0.985,20,0.02,10,-154,NEGATIVO,554,-154,-179,210,389,-71.17925,CORRECTO,CORRECTO

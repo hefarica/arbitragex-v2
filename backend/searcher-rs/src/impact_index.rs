@@ -218,11 +218,14 @@ pub struct ImpactIndex {
 
     /// router_address → router family classification.
     /// Used by the decoder for fast dispatch.
+    /// STEP 5 census (2026-10-13): genuinely dead today (populated in no
+    /// constructor) — kept for the decoder wiring that re-uses it.
     #[allow(dead_code)]
     router_to_protocol: HashMap<Address, RouterKind>,
 
     /// 4-byte function selector → decoder kind.
     /// Compile-time constant populated in `new_with_selectors`.
+    /// STEP 5 census: genuinely dead today — kept for the decoder wiring.
     #[allow(dead_code)]
     selector_to_decoder: HashMap<[u8; 4], DecoderKind>,
 }
@@ -429,6 +432,23 @@ impl ImpactIndex {
     pub fn load_pool_cycles(&mut self, universe: CycleUniverse) {
         self.pool_to_cycles = universe.pool_to_cycles;
         self.cycles = universe.specs;
+    }
+
+    /// Reads the dynamic cycle universe from the `pool_cycles` PG table
+    /// WITHOUT touching the index (STEP 2.5b).
+    ///
+    /// Companion to [`Self::load_pool_cycles`]: lets the scanner's periodic
+    /// `cycle_enum` refresh task do the network read OUTSIDE the write lock
+    /// and only take the lock for the in-memory swap, so `resolve()`'s
+    /// per-intent read path stays unblocked (R9-friendly).
+    ///
+    /// Returns an EMPTY universe when the table is empty — the CALLER decides
+    /// policy (boot `from_registry` treats it as cold-boot MVP seeding; the
+    /// periodic refresh skips the swap to avoid draining a working universe,
+    /// R8 fail-honest).
+    pub async fn read_cycle_universe(pg: &PgPool, chain_id: u64) -> anyhow::Result<CycleUniverse> {
+        let rows = load_pool_cycles_from_pg(pg, chain_id).await?;
+        Ok(load_pool_to_cycles(&rows, chain_id))
     }
 
     /// Looks up the [`CycleSpec`] of a discovered cycle by its stable

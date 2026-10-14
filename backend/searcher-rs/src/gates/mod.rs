@@ -444,6 +444,7 @@ mod tests {
             pipeline_latency_ms: None,
             detected_at: chrono::Utc::now(),
             trace_id: Uuid::new_v4(),
+            economics: None,
         }
     }
 

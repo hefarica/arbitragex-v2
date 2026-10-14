@@ -15,9 +15,19 @@ mod tests {
     };
     use std::collections::HashMap;
 
+    /// Clave canonica del par simulado por los fixtures de este modulo (tokens
+    /// hex en minusculas, orden lexicografico, unidos por '|' — formato de
+    /// FEATURES-01b). Todas las filas de un fixture son el MISMO par observado en
+    /// varias venues/snapshots, de ahi que la clave se repita: asi el gap de
+    /// arbitraje del `RegimeRouter` sigue siendo computable donde ya lo era.
+    const PAR_FIXTURE: &str =
+        "0xaaaa0000000000000000000000000000000000aa|0xbbbb0000000000000000000000000000000000bb";
+
     fn state_from_prices(prices: &[f64]) -> MarketState {
         MarketState {
             price_matrix: prices.iter().map(|p| vec![*p]).collect(),
+            // Una clave por fila: invariante pair_keys.len() == price_matrix.len().
+            pair_keys: vec![PAR_FIXTURE.to_string(); prices.len()],
             liquidity_reserves: Vec::new(),
             gas_price_gwei: 20.0,
             block_timestamp: 1_700_000_000,
@@ -138,6 +148,8 @@ mod tests {
                 vec![103.0, 206.0, 48.0],
                 vec![104.0, 208.0, 52.0],
             ],
+            // 5 filas = 5 snapshots del MISMO par de la columna 0.
+            pair_keys: vec![PAR_FIXTURE.to_string(); 5],
             liquidity_reserves: Vec::new(),
             gas_price_gwei: 20.0,
             block_timestamp: 1_700_000_000,
@@ -240,13 +252,28 @@ mod tests {
     fn pool_state() -> MarketState {
         // r1/r0 = 1.01 ⇒ γ·p_pool = 0.997·1.01 ≈ 1.00697 > 1 (edge detectable).
         // price_matrix col0 ≈ 1.01 ⇒ p_ref ≈ 1.01 (gas cost scale).
+        //
+        // FEATURES-DEFAULTS-01: el `γ = 0.997` de la linea de arriba es un fee
+        // MEDIDO de 30 bps. Este fixture NO lo declaraba antes y el operador lo
+        // FABRICABA con su `unwrap_or(0.003)`: la deteccion de edge dependia de un
+        // default silencioso. Ahora que un fee ausente declara el hueco
+        // (`reason_fee_unavailable`), el fixture debe APORTAR el dato — que es lo
+        // que un fixture de mercado tiene que hacer. Las aserciones de los tests
+        // que lo usan no se tocaron.
+        // `break_even_target = 0.0` es un CERO ACREDITADO (hurdle declarado en
+        // cero), NO una ausencia: por eso op_21 computa con el.
+        let mut features = HashMap::new();
+        features.insert("fee_bps".to_string(), 30.0);
+        features.insert("break_even_target".to_string(), 0.0);
         MarketState {
             price_matrix: vec![vec![1.01], vec![1.01], vec![1.01]],
+            // 3 filas, mismo par (fixture de 1 pool con edge).
+            pair_keys: vec![PAR_FIXTURE.to_string(); 3],
             liquidity_reserves: vec![(1_000_000.0, 1_010_000.0)],
             gas_price_gwei: 20.0,
             block_timestamp: 1_700_000_000,
             block_number: 18_000_000,
-            features: HashMap::new(),
+            features,
         }
     }
 
@@ -374,6 +401,7 @@ mod tests {
         // r1/r0 = 1.0 ⇒ γ·p_pool = 0.997 < 1 ⇒ sin edge ⇒ None.
         let no_edge = MarketState {
             price_matrix: vec![vec![1.0]],
+            pair_keys: vec![PAR_FIXTURE.to_string()],
             liquidity_reserves: vec![(1_000_000.0, 1_000_000.0)],
             gas_price_gwei: 20.0,
             block_timestamp: 1_700_000_000,
@@ -432,6 +460,8 @@ mod tests {
                 vec![105.0, 210.0, 50.0],
                 vec![106.0, 212.0, 51.0],
             ],
+            // 7 filas, mismo par de la columna 0.
+            pair_keys: vec![PAR_FIXTURE.to_string(); 7],
             // Pool primario con edge (r1/r0=1.05) + referencia 1:1 → op_26 edge.
             liquidity_reserves: vec![(1_000_000.0, 1_050_000.0), (500_000.0, 500_000.0)],
             gas_price_gwei: 20.0,
@@ -474,6 +504,7 @@ mod tests {
         features.insert("nsga2.2.latency_ms".to_string(), 150.0);
         let state = MarketState {
             price_matrix: vec![vec![1.01], vec![1.01], vec![1.01]],
+            pair_keys: vec![PAR_FIXTURE.to_string(); 3],
             liquidity_reserves: vec![
                 (1_000_000.0, 1_010_000.0),
                 (2_000_000.0, 2_008_000.0),
@@ -502,6 +533,7 @@ mod tests {
         // Fail-honest por registry: sin objetivos nsga2.* → computed=0, sin escalar.
         let empty = MarketState {
             price_matrix: state.price_matrix.clone(),
+            pair_keys: state.pair_keys.clone(),
             liquidity_reserves: state.liquidity_reserves.clone(),
             gas_price_gwei: state.gas_price_gwei,
             block_timestamp: state.block_timestamp,
@@ -533,6 +565,7 @@ mod tests {
                 vec![105.0, 210.0, 50.0],
                 vec![106.0, 212.0, 51.0],
             ],
+            pair_keys: vec![PAR_FIXTURE.to_string(); 7],
             liquidity_reserves: vec![(1_000_000.0, 1_050_000.0), (500_000.0, 500_000.0)],
             gas_price_gwei: 20.0,
             block_timestamp: 1_700_000_000,
@@ -548,5 +581,271 @@ mod tests {
                 assert!(v.is_finite(), "operator {id} scalar must be finite: {v}");
             }
         }
+    }
+}
+
+/// RATCHET ANTI-REGRESION — FEATURES-DEFAULTS-01.
+///
+/// Los tests de comportamiento de cada operador prueban el EFECTO (clave ausente
+/// ⇒ hueco declarado). Este prueba el MECANISMO: que nadie vuelva a introducir un
+/// `unwrap_or(<literal>)` sobre una clave de `MarketState.features` que es una
+/// MEDICION. Es el mismo patron que vigila el gate del equipo
+/// (`docs/market-features/check-feature-producers.ps1`, regla R1), aqui dentro de
+/// `cargo test` para que la regresion no dependa de correr el script.
+#[cfg(test)]
+mod fabrication_ratchet {
+    /// Claves que son MEDICIONES del mercado/operador. Un default silencioso
+    /// sobre ellas convierte una AUSENCIA en un numero (RULE 00 / R8).
+    ///
+    /// NO incluye los prior de op_11 (`bayes_prior_alpha` / `bayes_prior_beta`):
+    /// esos son una DECISION DE MODELO declarada como constante nombrada
+    /// (`DECLARED_UNIFORM_PRIOR_*`) y por diseño tienen default explicito.
+    const MEASURED_KEYS: &[&str] = &[
+        "bayes_wins",
+        "bayes_losses",
+        "fee_bps",
+        "pool_fee",
+        "flash_premium",
+        "max_capital",
+        "break_even_target",
+    ];
+
+    /// Fuentes de produccion, embebidas en compilacion (independiente del cwd).
+    const SOURCES: &[(&str, &str)] = &[
+        ("op_11_bayes.rs", include_str!("op_11_bayes.rs")),
+        (
+            "op_15_golden_section.rs",
+            include_str!("op_15_golden_section.rs"),
+        ),
+        ("op_19_simplex.rs", include_str!("op_19_simplex.rs")),
+        ("op_21_newton.rs", include_str!("op_21_newton.rs")),
+        ("op_26_flash_loan.rs", include_str!("op_26_flash_loan.rs")),
+        (
+            "op_32_multi_objective.rs",
+            include_str!("op_32_multi_objective.rs"),
+        ),
+    ];
+
+    /// Descarta lineas de comentario para no confundir prosa con codigo (los
+    /// comentarios de estos archivos CITAN los defaults que se cortaron).
+    fn code_only(src: &str) -> String {
+        src.lines()
+            .map(|l| {
+                if l.trim_start().starts_with("//") {
+                    String::new()
+                } else {
+                    l.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Normaliza el espacio para que el ratchet no dependa del formato (rustfmt).
+    fn squish(s: &str) -> String {
+        s.chars().filter(|c| !c.is_whitespace()).collect()
+    }
+
+    #[test]
+    fn no_measured_feature_falls_back_to_a_literal_default() {
+        let mut offenders: Vec<String> = Vec::new();
+        for (file, src) in SOURCES {
+            let code = squish(&code_only(src));
+            for key in MEASURED_KEYS {
+                let needle = format!("get(\"{key}\")");
+                let mut from = 0usize;
+                while let Some(rel) = code[from..].find(needle.as_str()) {
+                    let at = from + rel;
+                    // Enunciado = de la lectura al cierre del enunciado (`;` o
+                    // `}`), la misma ventana que usa el gate del equipo.
+                    let rest = &code[at..];
+                    let end = rest.find([';', '}']).unwrap_or(rest.len());
+                    let stmt = &rest[..end];
+                    if stmt.contains("unwrap_or(") || stmt.contains("unwrap_or_default(") {
+                        offenders.push(format!("{file}: features.get(\"{key}\") → {stmt}"));
+                    }
+                    from = at + needle.len();
+                }
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "un dato AUSENTE no puede volverse un numero inventado (RULE 00 / R8): \
+             declara el hueco en lugar del default.\n  {}",
+            offenders.join("\n  ")
+        );
+    }
+
+    /// Control negativo del ratchet: el escaner SI detecta una fabricacion real.
+    /// Sin esto, un bug que dejara `SOURCES` vacio pasaria por "verde".
+    #[test]
+    fn the_ratchet_actually_detects_a_fabrication() {
+        let synthetic = "let x = state.features.get(\"fee_bps\").copied().unwrap_or(0.003);";
+        let code = squish(&code_only(synthetic));
+        let needle = "get(\"fee_bps\")";
+        let at = code.find(needle).expect("lectura sintetica presente");
+        let rest = &code[at..];
+        let end = rest.find([';', '}']).unwrap_or(rest.len());
+        assert!(
+            rest[..end].contains("unwrap_or("),
+            "el escaner debe ver el unwrap_or literal: {}",
+            &rest[..end]
+        );
+    }
+}
+
+/// ARSE-264-01 (`t3`) — frontera del catálogo de operadores: 31 vs 32.
+///
+/// En este proyecto los dos números son ciertos en EJES DISTINTOS y ambos deben
+/// seguir siéndolo:
+///
+///   * RUNTIME — [`OPERATOR_COUNT`] = 32: el registry compila, registra y despacha
+///     IDs 1..=32 (op_32 = NSGA-II). Los tests de dispatch 1..=32 ya lo cubren.
+///   * CATÁLOGO — [`SOURCE_OPERATOR_COUNT`] = 31: la Master Matrix 264 registros
+///     (`cartridges/strategy_mapping.json`) y el puente de cartuchos
+///     (`searcher-rs::native_operator_adapter`) sólo referencian 1..=31. op_32
+///     queda DELIBERADAMENTE DESCONECTADO de los cartuchos.
+///
+/// Este módulo convierte esa decisión escrita (ver el doc-comment de
+/// `SOURCE_OPERATOR_COUNT`) en un invariante ejecutable: si alguien cablea op_32
+/// "para que los números coincidan" o pierde un operador del catálogo, el contrato
+/// falla acá — antes de tocar la matriz de datos, que es del operador y no se
+/// ajusta por conveniencia.
+#[cfg(test)]
+mod source_catalog_boundary {
+    use crate::operators::{
+        MarketState, OperatorRegistry, TopologicalOperator, OPERATOR_COUNT, SOURCE_OPERATOR_COUNT,
+    };
+    use std::collections::HashMap;
+
+    /// Clave canónica de par (mismo formato que FEATURES-01b): irrelevante para
+    /// esta frontera, sólo debe respetar `pair_keys.len() == price_matrix.len()`.
+    const PAR: &str =
+        "0xaaaa0000000000000000000000000000000000aa|0xbbbb0000000000000000000000000000000000bb";
+
+    fn state(features: HashMap<String, f64>) -> MarketState {
+        MarketState {
+            price_matrix: vec![vec![1.01]],
+            pair_keys: vec![PAR.to_string()],
+            liquidity_reserves: vec![(1_000_000.0, 1_010_000.0)],
+            gas_price_gwei: 20.0,
+            block_timestamp: 1_700_000_000,
+            block_number: 18_000_000,
+            features,
+        }
+    }
+
+    /// El registry materializa EXACTAMENTE `OPERATOR_COUNT` operadores, con IDs
+    /// contiguos 1..=32 y ninguno por encima del declarado.
+    #[test]
+    fn runtime_registry_is_exactly_operator_count() {
+        let registry = OperatorRegistry::new();
+        assert_eq!(
+            registry.all().len(),
+            OPERATOR_COUNT as usize,
+            "el registry debe materializar exactamente OPERATOR_COUNT operadores"
+        );
+        for id in 1..=OPERATOR_COUNT {
+            let op: &dyn TopologicalOperator = registry.get(id).unwrap_or_else(|| {
+                panic!("id {id} está dentro de OPERATOR_COUNT pero falta del registry")
+            });
+            assert_eq!(
+                op.id(),
+                id,
+                "el operador registrado bajo {id} se identifica como {}",
+                op.id()
+            );
+        }
+        assert!(
+            registry.get(OPERATOR_COUNT + 1).is_none(),
+            "no puede existir un ID por encima del declarado"
+        );
+    }
+
+    /// La aritmética declarada: 32 = 31 + 1. Todo el rango del catálogo existe en
+    /// runtime y el ÚNICO ID fuera del catálogo es op_32.
+    #[test]
+    fn source_catalog_is_31_and_op_32_is_the_single_extra_id() {
+        assert_eq!(SOURCE_OPERATOR_COUNT, 31, "el catálogo fuente es 31");
+        assert_eq!(
+            OPERATOR_COUNT,
+            SOURCE_OPERATOR_COUNT + 1,
+            "la aritmética declarada es 32 = 31 + 1 (31 del catálogo + op_32): \
+             cualquier otra diferencia es drift, no una decisión"
+        );
+        let registry = OperatorRegistry::new();
+        for id in 1..=SOURCE_OPERATOR_COUNT {
+            assert!(
+                registry.get(id).is_some(),
+                "op_{id} pertenece al catálogo y debe existir en runtime"
+            );
+        }
+        let extra: Vec<u8> = registry
+            .all()
+            .into_iter()
+            .map(|op| op.id())
+            .filter(|id| *id > SOURCE_OPERATOR_COUNT)
+            .collect();
+        assert_eq!(
+            extra,
+            vec![OPERATOR_COUNT],
+            "op_32 debe ser el único ID fuera del catálogo de 31"
+        );
+    }
+
+    /// La RAZÓN de la desconexión, medida — no sólo el número: op_32 es el único
+    /// operador multi-objetivo del registry y su salida es un FRENTE (conjunto de
+    /// candidatos no dominados + los ÍNDICES de los supervivientes), no la métrica
+    /// de una estrategia. Por eso no es ponderable contra los 31 operadores
+    /// escalares/vectoriales del puente de cartuchos: cablearlo no agregaría señal,
+    /// agregaría una categoría distinta al contrato de receipts.
+    #[test]
+    fn op_32_is_the_only_multiobjective_operator_and_returns_a_front() {
+        let registry = OperatorRegistry::new();
+        let multi: Vec<u8> = registry
+            .all()
+            .into_iter()
+            .filter(|op| op.category() == "multiobjective_optimization")
+            .map(|op| op.id())
+            .collect();
+        assert_eq!(
+            multi,
+            vec![OPERATOR_COUNT],
+            "sólo op_32 declara la categoría multi-objetivo"
+        );
+
+        let mut features = HashMap::new();
+        features.insert("nsga2.count".to_string(), 3.0);
+        features.insert("nsga2.population_size".to_string(), 2.0);
+        // Candidatos {0,1} no dominados entre sí; {2} dominado por ambos.
+        for (i, (profit, risk, latency)) in
+            [(10.0, 5.0, 100.0), (12.0, 4.0, 120.0), (5.0, 9.0, 150.0)]
+                .into_iter()
+                .enumerate()
+        {
+            features.insert(format!("nsga2.{i}.net_profit_usd"), profit);
+            features.insert(format!("nsga2.{i}.risk_cvar_usd"), risk);
+            features.insert(format!("nsga2.{i}.latency_ms"), latency);
+        }
+        let out = registry
+            .dispatch(OPERATOR_COUNT, &state(features))
+            .expect("op_32 despacha con objetivos declarados");
+        // Escalar = cardinalidad del frente; vector = ÍNDICES de los supervivientes
+        // (no una métrica); matriz = el frente. Ninguno de los tres es "el valor de
+        // la estrategia" que un receipt ponderable necesita.
+        assert_eq!(
+            out.scalar_value,
+            Some(2.0),
+            "el frente de {{0,1}} tiene cardinalidad 2 (el candidato 2 está dominado)"
+        );
+        assert_eq!(
+            out.vector_result,
+            Some(vec![0.0, 1.0]),
+            "el vector de op_32 son los ÍNDICES de los supervivientes, no una métrica"
+        );
+        assert!(
+            out.matrix_result.is_some(),
+            "el frente completo viaja en matrix_result"
+        );
     }
 }

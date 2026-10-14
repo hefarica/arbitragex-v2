@@ -576,7 +576,16 @@ pub fn economic_check(
     } else {
         None
     };
-    let mut policy_ok = policy.enabled && policy.control_state == "ON";
+    // POLICY-GATE-01 (2026-10-01): the producer set for `control_state` never
+    // emitted the literal "ON" — cartridge_boot.rs builds the real bundle with
+    // `"operator_config_enabled"` (cfg.enabled) and the Phase-1 v4 DATA_GAP stub
+    // with `"phase1_data_gap"`. Comparing against "ON" alone made `policy_ok`
+    // STRUCTURALLY false for every cartridge in every mode: a dead gate that no
+    // amount of data wiring could satisfy. Accept the canonical states the
+    // producers actually emit; the stub keeps its own value and stays
+    // fail-closed (an empty DATA_GAP bundle must never pass the policy gate).
+    const CONTROL_STATE_ON: [&str; 2] = ["ON", "operator_config_enabled"];
+    let mut policy_ok = policy.enabled && CONTROL_STATE_ON.contains(&policy.control_state.as_str());
     let capital = quote
         .capital_usd
         .as_deref()
@@ -668,7 +677,7 @@ pub fn economic_check(
       "gross_profit_usd":gross.as_ref().map(Usd::text),"net_profit_usd":net.as_ref().map(Usd::text),"external_cost_usd":if costs_complete{Some(external.text())}else{None},
       "profit_basis":quote.profit_basis,"economic_kind":quote.economic_kind,"execution_mode":policy.execution_mode,
       "legs":quote.legs,"costs":quote.costs,"quote_evidence":quote.evidence,"operators":evidence,"repairs":repairs,
-      "reason":if eligible{"economic_proposal_requires_canonical_validation"}else if observe{"source_observe_only"}else if comparison_only{"execution_improvement_is_not_settled_profit"}else if !policy_ok{"policy_rejected"}else if !repairs.is_empty(){"applicable_data_or_constraint_gap"}else{"non_positive_net"},
+      "reason":if eligible{"economic_proposal_requires_canonical_validation"}else if observe{"source_observe_only"}else if comparison_only{"execution_improvement_is_not_settled_profit"}else if !repairs.is_empty(){"applicable_data_or_constraint_gap"}else if !policy_ok{"policy_rejected"}else{"non_positive_net"},
       "simulation":{"status":"NOT_RUN_BY_CARTRIDGE","passed":null,"reason":"canonical_simulator_owns_validation"}})
 }
 fn to_json(d: &Dynamic) -> Result<Value, String> {

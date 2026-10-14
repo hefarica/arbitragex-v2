@@ -80,7 +80,6 @@ use tracing::{debug, info, warn};
 /// Default tick interval. REST polling at 5 s is conservative; Phase 2 WS
 /// subscriptions will give <100 ms latency. Operator can tune via
 /// `CEX_DEX_WORKER_INTERVAL_MS`.
-#[allow(dead_code)]
 pub const DEFAULT_TICK_MS: u64 = 5_000;
 
 /// Per-request HTTP timeout for CEX REST calls. Matches `price_worker`
@@ -103,7 +102,6 @@ pub const DEFAULT_MIN_SPREAD_BPS: u32 = 30;
 ///   QuoterV2 integer → float conversion. Prevents silent decimal-mismatch bugs
 ///   (cf. Incidente #9).
 /// - `min_spread_bps`: per-pair threshold. Overrides `DEFAULT_MIN_SPREAD_BPS`.
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct CexDexPair {
     pub symbol: String,
@@ -131,7 +129,6 @@ impl CexDexPair {
 }
 
 /// Boot-time configuration for `CexDexWorker`.
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct CexDexWorkerConfig {
     pub chain_id: u64,
@@ -142,7 +139,6 @@ pub struct CexDexWorkerConfig {
     pub okx_base_url: Option<String>,
 }
 
-#[allow(dead_code)]
 impl CexDexWorkerConfig {
     pub fn new(chain_id: u64, tick_ms: u64) -> Self {
         Self {
@@ -163,7 +159,6 @@ impl CexDexWorkerConfig {
 /// Spawned via `tokio::spawn` in `main.rs`. Runs until process exit.
 /// Does NOT emit `Opportunity` records in this scaffold — see module doc for
 /// the Phase 2 extension plan.
-#[allow(dead_code)]
 pub struct CexDexWorker {
     cfg: CexDexWorkerConfig,
     /// Retained for Phase 2 DEX quoter path. Optional — absence is logged at boot.
@@ -172,7 +167,6 @@ pub struct CexDexWorker {
     http: reqwest::Client,
 }
 
-#[allow(dead_code)]
 impl CexDexWorker {
     /// Construct a worker.
     ///
@@ -195,7 +189,6 @@ impl CexDexWorker {
     }
 
     /// Override the pair set. Exposed for tests and future operator configuration.
-    #[allow(dead_code)]
     pub fn with_pairs(mut self, pairs: Vec<CexDexPair>) -> Self {
         self.pairs = pairs;
         self

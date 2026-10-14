@@ -516,34 +516,149 @@ impl DexScreenerPriceOracle {
                 .await
                 .unwrap_or_default();
 
+        // B5c: the PENDING corrections recorded by previous cycles (their own
+        // short-TTL key, never published as prices). Read once, like `prev`.
+        let pending_key = shared_rs::price_oracle::pending_corrections_key(chain_id);
+        let pending: std::collections::HashMap<String, String> =
+            <redis::aio::MultiplexedConnection as redis::AsyncCommands>::hgetall(
+                &mut *conn,
+                &pending_key,
+            )
+            .await
+            .unwrap_or_default();
+
+        // B5d (2026-09-26, live SNX re-poisoning): the LONG-LIVED per-symbol
+        // baseline. The published hash read above lives ~50 s (measured `TTL
+        // arbx:token_prices:1` = 51 s), so after every expiry `prev` is None and
+        // the range guard had NOTHING to compare against — it accepted the ×1e6
+        // SNX candidate (272885.72 against a real 0.2610872236) unconditionally,
+        // and the hash was then actively re-written with it (HLEN 386, read 3×
+        // stable). The baseline survives that TTL, so every candidate is now
+        // validated against it FIRST. ONE extra HGETALL per chain per cycle, read
+        // once before the loop like `prev`/`pending`.
+        let baseline_key = shared_rs::price_oracle::redis_price_baseline_key(chain_id);
+        let baseline: std::collections::HashMap<String, String> =
+            <redis::aio::MultiplexedConnection as redis::AsyncCommands>::hgetall(
+                &mut *conn,
+                &baseline_key,
+            )
+            .await
+            .unwrap_or_default();
+        // B5d knob (default ON): loop-invariant, read ONCE per cycle, never per symbol.
+        let baseline_guard = shared_rs::price_oracle::baseline_guard_enabled_from_env();
+
         let mut pipe = redis::pipe();
         pipe.atomic();
         let mut written = 0usize;
+        // B5 (authority order): symbols the sovereign stack already owns
+        // (Binance charter / Chainlink anchors) are skipped — a free-tier pool
+        // quote must never clobber the authoritative writer's value. Aggregated
+        // into ONE summary log (R9: no per-item logflood).
+        let mut skipped_authoritative = 0usize;
         for (sym, price) in prices {
             // Defensive: never write garbage (the reader also drops these, but
             // honesty starts at the writer).
             if !(price.is_finite() && *price > 0.0) {
                 continue;
             }
-            let prev_val = prev.get(sym).and_then(|v| v.parse::<f64>().ok());
-            if !shared_rs::price_oracle::is_plausible_price(prev_val, *price) {
-                tracing::warn!(
-                    event = "dexscreener.price_implausible_skip",
-                    symbol = sym.as_str(),
-                    prev = ?prev_val,
-                    new = *price,
-                    "B5: refusing an implausible single-tick jump — keeping the stored value"
-                );
+            if shared_rs::price_oracle::is_authoritative_symbol(sym) {
+                skipped_authoritative += 1;
                 continue;
             }
-            pipe.hset(&key, sym, format!("{price}")).ignore();
-            written += 1;
+            let prev_val = prev.get(sym).and_then(|v| v.parse::<f64>().ok());
+            let pending_val = pending.get(sym).and_then(|v| v.parse::<f64>().ok());
+            let baseline_val = baseline.get(sym).and_then(|v| v.parse::<f64>().ok());
+            // B5d: ONE pure decision (shared-rs owns the whole rule) — the writer
+            // only executes the persistence obligations of the verdict.
+            //   · baseline first (it survives the published hash's ~50 s TTL — with
+            //     `prev` absent the range guard used to license ANY value),
+            //   · else the published value, else a first-ever write,
+            //   · an implausible candidate still heals when a previous cycle
+            //     recorded a corroborating PENDING observation (B5c, unchanged).
+            let decision = shared_rs::price_oracle::decide_price_write(
+                baseline_guard,
+                baseline_val,
+                prev_val,
+                pending_val,
+                *price,
+            );
+            match decision {
+                shared_rs::price_oracle::PriceWriteDecision::AcceptFirst
+                | shared_rs::price_oracle::PriceWriteDecision::Accept => {
+                    pipe.hset(&key, sym, format!("{price}")).ignore();
+                    written += 1;
+                }
+                shared_rs::price_oracle::PriceWriteDecision::AcceptCorrection => {
+                    // B5c/B5d: an implausible jump may be the CORRECTION of an
+                    // already stored poison (live: AAVE stored 161,339,420.31 while
+                    // the real price is ~154 and this writer proposed
+                    // 154.1760931358 — the range guard refused it, so the poison
+                    // could never be repaired). Two independent observations
+                    // agreeing against the reference are accepted; a lone outlier is
+                    // recorded as PENDING (separate, short-TTL key — never published
+                    // as a price) and still refused.
+                    tracing::warn!(
+                        event = "dexscreener.price_corroborated_correction",
+                        symbol = sym.as_str(),
+                        stored = ?prev_val,
+                        baseline = ?baseline_val,
+                        corrected_to = *price,
+                        "B5c/B5d: two agreeing observations — accepting the correction of the reference (baseline reset)"
+                    );
+                    pipe.hset(&key, sym, format!("{price}")).ignore();
+                    pipe.hdel(&pending_key, sym).ignore();
+                    written += 1;
+                }
+                shared_rs::price_oracle::PriceWriteDecision::RefusePending => {
+                    tracing::warn!(
+                        event = "dexscreener.price_implausible_skip",
+                        symbol = sym.as_str(),
+                        prev = ?prev_val,
+                        baseline = ?baseline_val,
+                        new = *price,
+                        "B5/B5d: refusing an implausible jump against the reference (published value or long-lived baseline) — keeping the stored value (recorded as PENDING)"
+                    );
+                    pipe.hset(&pending_key, sym, format!("{price}")).ignore();
+                    pipe.expire(
+                        &pending_key,
+                        shared_rs::price_oracle::PENDING_CORRECTION_TTL_SECS,
+                    )
+                    .ignore();
+                }
+                // Unreachable by construction (the finite/positive filter above) —
+                // the arm exists so the match is exhaustive and the writer has no
+                // policy of its own.
+                shared_rs::price_oracle::PriceWriteDecision::RefuseInvalid => {}
+            }
+            // B5d: every ACCEPTED write advances the baseline; a corroborated
+            // correction RESETS it (keeping the poisoned reference would refuse the
+            // healed value again on the next cycle).
+            if let Some(base) = shared_rs::price_oracle::baseline_value(decision, *price) {
+                pipe.hset(&baseline_key, sym, format!("{base}")).ignore();
+            }
+        }
+        if skipped_authoritative > 0 {
+            tracing::debug!(
+                event = "dexscreener.price_authority_skip",
+                chain_id,
+                skipped = skipped_authoritative,
+                "B5: authoritative symbols left to price_worker (Binance charter / Chainlink)"
+            );
         }
         if written == 0 {
             // Nothing valid to write — don't touch the key (no EXPIRE, no clobber).
             return Ok(0);
         }
         pipe.expire(&key, ttl_secs).ignore();
+        // B5d: the baseline is long-lived (24 h) and re-armed whenever a cycle
+        // accepted something, so it outlives the ~50 s published TTL it exists to
+        // backstop — while an abandoned symbol's baseline still expires on its own
+        // (no infinite pinning, no manual Redis surgery either way).
+        pipe.expire(
+            &baseline_key,
+            shared_rs::price_oracle::PRICE_BASELINE_TTL_SECS,
+        )
+        .ignore();
         // G-PRICE-1: notify subscribers (api-server prices-stream bridge) in the
         // same atomic pipeline — the receiver re-reads the hash for the data.
         pipe.cmd("PUBLISH")

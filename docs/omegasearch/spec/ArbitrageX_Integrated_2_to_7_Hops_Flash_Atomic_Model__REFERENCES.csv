@@ -1,0 +1,24 @@
+"REFERENCES — FUENTES MATEMÁTICAS, ROUTING Y FLASH LIQUIDITY",,,,,
+Topic,Reference,Year,Use in workbook,URL,Note
+Cycle enumeration,Johnson — Finding All the Elementary Circuits of a Directed Graph,1975,Completeness reference / complexity,https://epubs.siam.org/doi/10.1137/0204007,"O((V+E)(C+1)), output-sensitive"
+Negative cycles,DEFIPOSER — Just-In-Time Discovery of Profit-Generating Transactions,2021,BFM negative-cycle discovery,https://arxiv.org/abs/2103.02228,BFM well-suited to cyclic arbitrage
+Cyclic arbitrage,Cyclic Arbitrage in Decentralized Exchanges,2021,Empirical cycle context,https://arxiv.org/abs/2105.02784,Historical empirical reference
+Convex routing,Optimal Routing for Constant Function Market Makers,2022,Post-discovery routing/sizing,https://arxiv.org/abs/2204.05238,Convex formulation under assumptions
+Efficient routing,An Efficient Algorithm for Optimal Routing Through CFMMs,2023,Decomposition / scaling,https://arxiv.org/abs/2302.04938,Follow-up routing algorithm
+MMBF,An Improved Algorithm to Identify More Arbitrage Opportunities,2024,MMBF + line graph discovery pass,https://arxiv.org/abs/2406.16573,More loops / specified path semantics
+Real-time negative cycles,RICH,2025,k-hop candidate prioritization,https://www.vldb.org/pvldb/vol18/p4081-luo.pdf,Color-coding + DP; not exhaustive
+Optimization,Marginal Price Optimization,2025,Post-discovery sizing/ranking,https://arxiv.org/html/2502.08258v1,Modern AMM arbitrage/routing optimization
+Graph structure,Network Analysis of Uniswap,2025,Hot-token/core pruning,https://arxiv.org/html/2503.07834v1,Hub concentration supports pruning
+Line graph routing,A Line Graph-Based Framework for Identifying Optimal Routing in DEXs,2025,Parallel edge / structure,https://arxiv.org/abs/2504.15809,Structure-aware routing
+Token graph routing,PRIME,2026,Candidate routing benchmark,https://arxiv.org/html/2603.08337v1,Recent routing benchmark
+Multi-path routing,Multi-Path Routing in AMM Exchange Networks,2026,Split/multi-path routing,https://arxiv.org/abs/2607.22540,Recent extension
+Production,Flashbots simple-arbitrage,,Discover/evaluate/rate reference,https://github.com/flashbots/simple-arbitrage,Educational production pattern
+Production,Paradigm Artemis,,Event-driven framework,https://github.com/paradigmxyz/artemis,Rust MEV framework
+Production,Uniswap smart-order-router,,Production routing,https://github.com/Uniswap/smart-order-router,Routing/splitting reference
+Production,Sorella Brontes,,MEV analytics state,https://github.com/SorellaLabs/brontes,Reth-based analytics
+Production,evm-amm-search,,Incremental AMM route search/state sync,https://lib.rs/crates/evm-amm-search,Working-set reference
+Financing filter,Aave V3 Flash Loans,,Provider fee/capacity input,https://aave.com/docs/aave-v3/guides/flash-loans,"Fee initialized at 0.05%, governance-updatable"
+Financing filter,Balancer Protocol Fees,,Provider fee input,https://docs.balancer.fi/concepts/governance/protocol-fees.html,Flash loans fee-free by design per docs
+Flash standard,ERC-3156,,Generic flash loan interface,https://eips.ethereum.org/EIPS/eip-3156,Verify lender implementation
+Uniswap V2,Flash Swaps,,Atomic flash swap mechanics,https://docs.uniswap.org/contracts/v2/guides/smart-contract-integration/using-flash-swaps,Official docs
+Uniswap V3,Flash,,V3 flash callback mechanics,https://docs.uniswap.org/contracts/v3/guides/flash-integrations/inheritance-constructors,Official docs

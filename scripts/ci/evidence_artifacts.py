@@ -31,6 +31,28 @@ def validate_payload(payload, item, sha, repository, run_id):
         raise ValueError(f"Invalid or stale {item} evidence")
 
 
+def publication_verdict(main_sha, target_sha, validating):
+    """What this script may do about the readiness publication for `target_sha`.
+
+    DEPLOY-VERAZ-01. This script decides a PUBLICATION, and the step that runs it
+    sits AFTER the deployment step, so its failure must never be read as "the
+    deploy failed". When `main` has moved on:
+
+      * selecting (validating=False) — the deployment for `target_sha` already
+        completed; the VPS HEAD is asserted by the deploy step's own post-check
+        (`git rev-parse HEAD`), not by this GitHub ref. Nothing can be published
+        for a superseded SHA, so the honest outcome is to SKIP the publication
+        and say why, not to fail the delivery that already happened. A superseded
+        publication is not a failed deploy.
+      * validating (validating=True) — the caller is one step away from POSTING
+        evidence. Publishing for a superseded SHA would stamp stale provenance
+        onto the registry, so this stays a hard refusal.
+    """
+    if main_sha == target_sha:
+        return "publish"
+    return "refuse" if validating else "skip-superseded"
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--validate-dir", type=Path)
@@ -40,8 +62,18 @@ def main():
     if (not re.fullmatch(r"[0-9a-f]{40}", sha)
             or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository)):
         raise ValueError("Invalid deployment identity")
-    if api(f"repos/{repository}/git/ref/heads/main")["object"]["sha"] != sha:
+    main_sha = api(f"repos/{repository}/git/ref/heads/main")["object"]["sha"]
+    verdict = publication_verdict(main_sha, sha, args.validate_dir is not None)
+    if verdict == "refuse":
         raise ValueError("Deployment superseded; refusing stale readiness publication")
+    if verdict == "skip-superseded":
+        print(f"::warning::DEPLOY-VERAZ-01: main moved to {main_sha[:12]} while {sha[:12]} was being "
+              "deployed. The deployment itself already completed (see 'Deploy to VPS via SSH'), so this "
+              "is NOT a delivery failure; the readiness-evidence publication for this superseded SHA is "
+              "skipped and will be published by the run that deploys the current main.")
+        with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+            output.write("run_id=\n")
+        return
     run_id = select_run(fetch_runs(repository, sha), sha, repository)
     if args.validate_dir is None:
         with open(os.environ["GITHUB_OUTPUT"], "a") as output:

@@ -465,6 +465,69 @@ describe("verifyGSIM1()", () => {
     expect(item.reason).not.toMatch(/stub/);
   });
 
+  // G-SIM1-AUTOREFRESH (2026-09-26): a status='failed' row is a MEASURED
+  // outcome, not an absence. The blocker must quote the producer's own reason
+  // and must NOT label the item "missing evidence" — otherwise a benchmark that
+  // ran, produced a full histogram and failed reads as "never produced
+  // anything", and the operator has no actionable cause.
+  it("(i) a status='failed' item is reported with its measured reason, never as 'missing evidence'", async () => {
+    process.env["ARBX_SIMULATOR_V2_READY"] = "true";
+    stubFetch({ healthOk: true, caps: CAPS, promThrows: true });
+    const rows = [
+      ...freshRows().filter(
+        (r) => r.item_key !== "variance_benchmark" && r.item_key !== "second_signoff",
+      ),
+      {
+        item_key: "variance_benchmark",
+        status: "failed",
+        verified_at: "2026-04-30T12:00:00.000Z",
+        evidence_ref: "harness 2026-04-30T11:53:21Z rows=800",
+        detail: {
+          method: "revm_b_vs_revm_b1_fork",
+          samples_labeled: 0,
+          min_samples_required: 100,
+          skips: {
+            attempted: 800,
+            dedup: 779,
+            unsupported_adapter: 9,
+            stale_timestamp: 7,
+            pred_failed: 5,
+            bad_shape: 0,
+          },
+        },
+      },
+      // Evidenced but 61 days old → pending AND stale (strict >30d rule).
+      { item_key: "second_signoff", status: "evidenced", verified_at: "2026-03-01T12:00:00.000Z" },
+    ];
+    const item = await verifyGSIM1({ simCtlUrl: SIM, promUrl: PROM, pool: mockPool(rows), now: NOW });
+    expect(item.status).toBe("red");
+    // 5/7 evidenced: the five untouched keys stay evidenced + fresh.
+    expect(item.reason).toMatch(/5\/7/);
+    expect(item.reason).toMatch(/premature flag — SECURE_BOOT violated/);
+    // The honest wording: unmet, with the recorded failure quoted.
+    expect(item.reason).toMatch(/unmet items: \[variance_benchmark, second_signoff\]/);
+    expect(item.reason).not.toMatch(/missing evidence/);
+    expect(item.reason).toMatch(
+      /recorded failures \(measured, not missing\): variance_benchmark \(samples_labeled=0 < min_samples=100/,
+    );
+    expect(item.reason).toMatch(/unsupported_adapter=9/);
+    expect(item.reason).toMatch(/dedup=779/);
+    expect(item.reason).toMatch(/distinct=21/);
+    expect(item.reason).toMatch(/stale \(>30d\): second_signoff/);
+  });
+
+  // The distinction is presence-based: with NO rows at all (registry read OK,
+  // gate never recorded) the original "missing evidence" wording must survive
+  // — it is the truthful description of that state.
+  it("(i) CONTRACT: an empty registry still reads 'missing evidence' (no invented failure)", async () => {
+    process.env["ARBX_SIMULATOR_V2_READY"] = "true";
+    stubFetch({ healthOk: true, caps: CAPS, promThrows: true });
+    const item = await verifyGSIM1({ simCtlUrl: SIM, promUrl: PROM, pool: mockPool([]), now: NOW });
+    expect(item.status).toBe("red");
+    expect(item.reason).toMatch(/missing evidence: \[unit_tests/);
+    expect(item.reason).not.toMatch(/recorded failures/);
+  });
+
   // (g) capabilities unreachable while /health alive: flag-only truthful
   // reasoning, capabilities unavailability noted, no enumeration, no "stub".
   it("(g) capabilities unreachable + health alive + flag=false → red, notes capabilities unavailable, no module enumeration, no 'stub'", async () => {

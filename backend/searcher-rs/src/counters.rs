@@ -198,14 +198,12 @@ pub struct ScannerCounters {
     /// produces `CandidateInput` with real calldata. Kept here so the metric
     /// schema is stable between PRs (heartbeat + Grafana panels can be wired
     /// against the field name today).
-    #[allow(dead_code)]
     pub simulator_revm_success: AtomicU64,
     /// Simulator Phase A.1+A.2 — REVM ran and the transaction reverted.
     /// A non-zero value with real calldata is HEALTHY (means we're catching
     /// candidates that would have lost money before relay submit).
     ///
     /// Forward-declared: same rationale as `simulator_revm_success`.
-    #[allow(dead_code)]
     pub simulator_revm_revert: AtomicU64,
     /// Phase A.2.5 — candidate reached the hot path with a per-chain
     /// `Arc<SimulatorV2>` available (RPC_HTTP_<chain_id> configured and pool
@@ -236,36 +234,29 @@ pub struct ScannerCounters {
     /// orchestrator. Once the wire is live the count of successful encodings
     /// per period is the leading indicator that the system is ready to start
     /// actually simulating routes.
-    #[allow(dead_code)]
     pub encoder_success_total: AtomicU64,
     /// Phase A.3.a — encoder rejected the candidate (any `SimEncoderError`
     /// variant). The reason tag is logged with the counter increment so the
     /// operator can attribute rejections to encoder gaps vs candidate gaps.
-    #[allow(dead_code)]
     pub encoder_rejected_total: AtomicU64,
     /// Phase A.3.a — encoder rejected because `EXECUTOR_<chain_id>` env var
     /// missing / invalid / zero. Distinct from `encoder_rejected_total` so
     /// the operator can grep on this specific configuration gap.
-    #[allow(dead_code)]
     pub encoder_missing_executor_total: AtomicU64,
     /// Phase A.3.a — encoder rejected because the decimals provider has no
     /// entry for `(chain_id, token_in)`. Pre-A.3.b this fires for every
     /// candidate (decimals provider is empty); post-A.3.b the count drops
     /// to the long-tail of unindexed tokens.
-    #[allow(dead_code)]
     pub encoder_missing_decimals_total: AtomicU64,
     /// Phase A.3.a — encoder rejected because `amount_in` is NaN, ±Inf,
     /// non-positive, sub-wei, or overflows U256.
-    #[allow(dead_code)]
     pub encoder_invalid_amount_total: AtomicU64,
     /// Phase A.3.a — encoder rejected because `dex_adapters` carries a
     /// label outside the Phase A.3.a allowlist (V2 + Sushi only).
-    #[allow(dead_code)]
     pub encoder_unsupported_dex_total: AtomicU64,
     /// Phase A.3.a — encoder rejected because the candidate route shape is
     /// not the 2-leg round trip supported by Phase A.3.a (triangular,
     /// flashloan_arb, liquidation shapes all map here).
-    #[allow(dead_code)]
     pub encoder_unsupported_route_shape_total: AtomicU64,
     /// Phase A.3.b — encoder produced a valid `RoundTripContext` and the
     /// hot path is fail-closed waiting for the `execute_round_trip` REVM
@@ -273,7 +264,6 @@ pub struct ScannerCounters {
     /// orchestrator dispatch happens immediately after encoder OK, so the
     /// "pending" window is observationally zero. Kept here as a stable
     /// Prometheus metric name for dashboards built against earlier phases.
-    #[allow(dead_code)]
     pub encoder_round_trip_executor_pending_total: AtomicU64,
     /// Phase A.3.b — encoder rejected because the parsed `token_in` is the
     /// zero address (caught by `parse_token_address` before the decimals

@@ -233,6 +233,33 @@ pub static V3_FEE_CATALOG_POOLS: Lazy<IntGauge> = Lazy::new(|| {
     g
 });
 
+/// V3-QUOTE-02 (2026-10-03): fee-tier CONTRADICTIONS in the current catalog —
+/// the same pool address described by two `arbx:pool_index_v3` sources with two
+/// different fee tiers.
+///
+/// Measured production state before the fix: 44 of 704 catalogued pools held a
+/// contradictory tier, and all 44 differed by exactly ×100 (1↔100, 5↔500,
+/// 30↔3000) — the signature of the `fee_bps` field being re-interpreted from
+/// basis points to raw pips without a unit migration for pre-existing keys.
+/// A tier 100× too small makes QuoterV2 derive a pool that does not exist
+/// (`IUniswapV3Factory.getPool(t0,t1,fee)` measured → `0x0000…0000`), the
+/// sub-call reverts, and the candidate used to die as `v3_quote_unavailable`.
+///
+/// A gauge, not a counter: it is the number of contradictions visible in the
+/// CURRENT catalog, so it must fall back to zero when the stale keys are
+/// repaired at the source. Non-zero is an operator action item, not noise to be
+/// silenced — the ambiguity is resolved deterministically (canonical key wins)
+/// but it is never hidden.
+pub static V3_FEE_CATALOG_CONFLICTS: Lazy<IntGauge> = Lazy::new(|| {
+    let g = IntGauge::new(
+        "arbx_v3_fee_catalog_conflicted_pools",
+        "Pools whose tier came from two contradictory arbx:pool_index_v3 sources",
+    )
+    .expect("metric");
+    REGISTRY.register(Box::new(g.clone())).expect("register");
+    g
+});
+
 // ---------------------------------------------------------------------------
 // simulation_failed_total{chain_id, strategy, reason}
 // ---------------------------------------------------------------------------
@@ -559,6 +586,30 @@ pub static DISCOVERY_EDGE_VISITS: Lazy<prometheus::IntGaugeVec> = Lazy::new(|| {
 });
 
 // ---------------------------------------------------------------------------
+// hop_cycle_capability_total{chain_id, capability}  (RG-01 AUDIT BUG-1 marker)
+// ---------------------------------------------------------------------------
+
+/// Discovered 3..=7-hop cycles handed to the native emission pipeline, by the
+/// capability verdict the bridge reached — `v2_cycle_sizeable`,
+/// `v3_cycle_sizeable` (N-leg V3 kernel gate ON) or `v3_multileg_unsupported`
+/// (gate OFF). WIRE MARKER (RG-01): the `v3_cycle_sizeable` series existing and
+/// rising is the falsifiable proof that the DEPLOYED build classifies
+/// V3-bearing cycles as priceable — i.e. the bridge and the sizing kernel are
+/// reading the same gate on the box that serves the domain.
+pub static HOP_CYCLE_CAPABILITY_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let c = IntCounterVec::new(
+        prometheus::opts!(
+            "arbx_hop_cycle_capability_total",
+            "Discovered deep cycles dispatched to emission, by kernel capability verdict"
+        ),
+        &["chain_id", "capability"],
+    )
+    .expect("metric");
+    REGISTRY.register(Box::new(c.clone())).expect("register");
+    c
+});
+
+// ---------------------------------------------------------------------------
 // Initialiser — call once at boot (main.rs after init_metrics())
 // ---------------------------------------------------------------------------
 
@@ -593,6 +644,17 @@ pub fn init_orchestrator_metrics() {
     let _ = &*DISCOVERY_EDGES_BUILT;
     let _ = &*DISCOVERY_WORK_LIMITED;
     let _ = &*DISCOVERY_EDGE_VISITS;
+    // RG-01 AUDIT BUG-1: force-register the capability counter and seed every
+    // series so the post-deploy arbiter (`v3_cycle_sizeable` rising vs the
+    // `v3_multileg_unsupported` wall) exists at 0 before the first tick.
+    let _ = &*HOP_CYCLE_CAPABILITY_TOTAL;
+    for capability in [
+        "v2_cycle_sizeable",
+        "v3_cycle_sizeable",
+        "v3_multileg_unsupported",
+    ] {
+        HOP_CYCLE_CAPABILITY_TOTAL.with_label_values(&["1", capability]);
+    }
     // WO-06 (FEE-TIER-AWARE-QUOTING): force-register the fee-resolution
     // counter and seed every label series so the production branch-arbiter
     // (catalog vs mismatch vs not_catalogued vs pair_no_pools) exists (absent

@@ -24,7 +24,7 @@ interface Props {
   /** Boot snapshot from the /operations Server Component (GET tick). */
   initialStages: LatencyStageRow[] | null;
   initialPassP95: boolean | null;
-  initialCycles: number;
+  initialCycles: number | null;
   /** Boot-fetch error, rendered verbatim while no stages exist (R8). */
   initialError: string | null;
 }
@@ -42,7 +42,7 @@ export function LatencyBudgetPanel({
     <LatencyBudgetCard
       stages={liveHasLat ? (live.lat_stages as LatencyStageRow[]) : initialStages}
       passP95={liveHasLat ? live.lat_pass_p95 ?? null : initialPassP95}
-      cycles={liveHasLat ? live.lat_cycles ?? 0 : initialCycles}
+      cycles={liveHasLat ? live.lat_cycles ?? null : initialCycles}
       error={initialError}
     />
   );

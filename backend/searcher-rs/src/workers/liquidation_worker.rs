@@ -473,6 +473,11 @@ pub fn build_liquidation_route_metadata(
         leg_amounts_in: None,
         leg_amounts_out: None,
         leg_zero_for_one: None,
+        // STEP 4 (fee V3): Aave V3 liquidation is not an AMM hop — no LP fee
+        // tier applies; absent, never zero (R8).
+        fee_tier_bps: None,
+        economics_amount_in_wei: None,
+        economics_basis: None,
     }
 }
 
@@ -623,11 +628,9 @@ impl DedupState {
         let cutoff = latest_block - DEDUP_RETAIN_BLOCKS;
         self.seen.retain(|(_, b)| *b >= cutoff);
     }
-    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.seen.len()
     }
-    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.seen.is_empty()
     }
@@ -1088,6 +1091,7 @@ impl LiquidationWorker {
                     pipeline_latency_ms: None,
                     detected_at: Utc::now(),
                     trace_id: Uuid::new_v4(),
+                    economics: None,
                 };
 
                 info!(

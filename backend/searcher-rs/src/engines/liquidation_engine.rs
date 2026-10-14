@@ -298,6 +298,7 @@ impl LiquidationEngine {
             pipeline_latency_ms: None,
             detected_at: Utc::now(),
             trace_id,
+            economics: None,
         };
 
         let candidate = OpportunityCandidate {

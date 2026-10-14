@@ -71,7 +71,6 @@ const DEFAULT_LOSS_ON_LOSS: f64 = 1.0;
 pub struct PriorState {
     pub observation_count: u64,
     pub profitable_count: u64,
-    #[allow(dead_code)]
     pub log_odds: f64,
 }
 
@@ -137,7 +136,6 @@ impl ScoringPipeline {
         }
     }
 
-    #[allow(dead_code)]
     pub fn config(&self) -> &GateCScoringConfig {
         &self.cfg
     }

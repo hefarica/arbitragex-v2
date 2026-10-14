@@ -58,7 +58,10 @@ interface Props {
   /** ARBX-QB-07-008: lat.* boot snapshot (live overlay via useRouteTick). */
   initialLatStages: LatencyStageRow[] | null;
   initialLatPass: boolean | null;
-  initialLatCycles: number;
+  // LAT-CYCLES-NO-FAKE-ZERO-01 (audit 2026-09-29): `null` = key absent from the
+  // snapshot, propagated verbatim from the Server Component so the card can render
+  // the honest "—" instead of a fabricated 0.
+  initialLatCycles: number | null;
   initialLatError: string | null;
 }
 

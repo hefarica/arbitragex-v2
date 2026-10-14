@@ -141,6 +141,20 @@ pub fn spawn_cartridge_runtime(
     // ConnectionManager is an internally-multiplexed handle — clone is cheap.
     let mut registry_redis = redis.clone();
 
+    // EXACT-QUOTES-PRODUCER-01 (2026-10-04): el pool RPC con failover que
+    // `main.rs` construye llega a este módulo UNA vez, aquí, y se MUEVE al
+    // `HostContext`. El camino del intent (orchestrator → active_evaluate_and_emit
+    // → build_and_register_intent_context) corre en OTROS tasks y no lo recibe;
+    // este registro lo publica para el productor de quotes exactas sin abrir una
+    // segunda conexión, sin releer env y sin duplicar el presupuesto de RPC del
+    // proceso. Sin pool registrado el productor no inventa nada: no cotiza.
+    if let Some(pool) = rpc_pool.as_ref() {
+        v4_exact_quote_pools()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(chain_id, pool.clone());
+    }
+
     let host_ctx = HostContext {
         redis: Arc::new(RwLock::new(redis)),
         chain_id,
@@ -210,8 +224,22 @@ pub fn spawn_cartridge_runtime(
         route_support: Default::default(),
         domain_plans: Default::default(),
         canonical_payloads: Default::default(),
-        manifest_digests: Default::default(),
+        // ADMISSION-MANIFEST-01 (2026-10-01): el stub Phase-1 es el contexto
+        // que se usa cuando el intent no arma aristas (v4_edges vacío) o el
+        // router no está disponible. Antes llevaba `manifest_digests` VACÍO,
+        // así que un cartucho DESPLEGADO —cuyo digest SÍ está en el escaneo
+        // de CARTRIDGE_DIR— fallaba la admisión con
+        // `manifest_not_admitted_by_backend` por un mapa que se construía
+        // vacío en este camino y lleno en el del intent. Medido en producción:
+        // ese motivo explica 2.488 de 20.000 outcomes. Los digests describen
+        // la librería desplegada, que se conoce en boot: no se fabrica nada.
+        manifest_digests: v4_manifest_digests().clone(),
         max_evaluations: 1,
+        // COST-PRODUCERS-01: el stub no computa costes (sin gas observado ni
+        // config del intent) → vacío = DATA_GAP honesto, nunca ceros.
+        base_cost_lines: Vec::new(),
+        // REDEMPTION-PRODUCER-01: el stub no lee estado on-chain de baskets.
+        redemption_state: std::collections::BTreeMap::new(),
     });
     // Single-revision Phase-1 guard: this process serves exactly the bundle it
     // booted with; a restart rebuilds a fresh (equally-honest) bundle.
@@ -560,8 +588,15 @@ fn outcomes_emission_enabled() -> bool {
 
 /// Outcomes stream — SEPARATE from `arbx:opps:detected` (which is never touched).
 const ROUTE_DISCOVERY_OUTCOMES_STREAM: &str = "arbx:route_discovery:outcomes";
-/// Approximate cap (`XADD ... MAXLEN ~`). ~2 weeks of ticks fit comfortably.
-const OUTCOMES_STREAM_MAXLEN: u64 = 1_000_000;
+/// Outcomes stream cap (`XADD ... MAXLEN ~`). STREAM-MAXLEN-01 (2026-10-02,
+/// incidente medido en producción): el tope anterior de 1.000.000 llenó Redis
+/// (maxmemory 1G, policy noeviction) y rechazó TODA escritura — heartbeat,
+/// quote anchor, tick y el propio stream quedaron congelados; los endpoints
+/// del DApp devolvían 404/503 fail-honest durante horas. Cada entrada pesa
+/// ~800B: 1M ≈ 800MB. El histórico vive en PG (route_discovery_outcomes,
+/// retención diaria); Redis es SOLO el bus caliente. 150.000 entradas ≈
+/// ~120-150MB — cabe con holgura junto al resto del keyspace (~75MB) en 1G.
+const OUTCOMES_STREAM_MAXLEN: u64 = 150_000;
 
 /// Persist a resolved shadow eval outcome (fire-and-forget, fail-closed).
 async fn emit_shadow_outcome(
@@ -571,6 +606,9 @@ async fn emit_shadow_outcome(
     intent: &RouteIntent,
     res: &CartridgeEvalResult,
     had_reserves: bool,
+    // SHADOW-CANONICAL-01: sustrato de datos de ESTA evaluación. Se publica para
+    // que una fila jamás pueda leerse como "real" sin serlo.
+    substrate: ShadowSubstrate,
 ) {
     if !outcomes_emission_enabled() {
         return; // gate off → nothing emitted
@@ -586,9 +624,25 @@ async fn emit_shadow_outcome(
     // schema is additive and default-off — it never alters v1 behaviour or touches
     // `arbx:opps:detected`.
     let payload = if outcomes_v2_schema_enabled() {
-        build_rd_outcome_v2(chain_id, cartridge_id, intent, res, had_reserves, ts_ms)
+        build_rd_outcome_v2(
+            chain_id,
+            cartridge_id,
+            intent,
+            res,
+            had_reserves,
+            substrate,
+            ts_ms,
+        )
     } else {
-        build_rd_outcome_v1(chain_id, cartridge_id, intent, res, had_reserves, ts_ms)
+        build_rd_outcome_v1(
+            chain_id,
+            cartridge_id,
+            intent,
+            res,
+            had_reserves,
+            substrate,
+            ts_ms,
+        )
     };
 
     let json = match serde_json::to_string(&payload) {
@@ -685,12 +739,50 @@ fn invariant_of(protocol_debug: &str) -> &'static str {
 }
 
 /// Pure builder for the legacy `rd_outcome_v1` payload (flat single-leg).
+///
+/// REPAIRS-OBSERVABILITY-01 (2026-10-01, enmienda): extrae el diagnóstico v4
+/// hacia el outcome durable. Contrato del PRODUCTOR (rhai_agent_bridge.rs
+/// `repairs_push` L178): cada repair es `{"field": ..., "reason": ...}` — se
+/// conservan AMBOS: distinguir un fallo de identidad de plan de un operador
+/// sin resultado exige la causa, no solo el componente. El `reason` general
+/// usa el campo preservado por el parser (`CartridgeEvalResult.reason`, que
+/// el parser EXCLUYE del proposal sellado) y cae al del proposal solo si el
+/// parser no trajo ninguno. Sin esto, la razón dominante
+/// (`applicable_data_or_constraint_gap`, 69% medido) no permite saber CUÁL
+/// reparación bloquea. Sólo observabilidad: sin cambios en reglas ni
+/// umbrales; los números son los propios del proposal (R8).
+fn v4_repairs_summary(res: &CartridgeEvalResult) -> serde_json::Value {
+    let Some(p) = res.metadata.get("proposal_v4") else {
+        return serde_json::Value::Null;
+    };
+    let repairs: Vec<&serde_json::Value> = p
+        .get("repairs")
+        .and_then(|r| r.as_array())
+        .map(|arr| arr.iter().collect())
+        .unwrap_or_default();
+    serde_json::json!({
+        "status": p.get("status").cloned().unwrap_or(serde_json::Value::Null),
+        "reason": res
+            .reason
+            .clone()
+            .or_else(|| {
+                p.get("reason")
+                    .and_then(|r| r.as_str())
+                    .map(std::string::ToString::to_string)
+            })
+            .map(serde_json::Value::String)
+            .unwrap_or(serde_json::Value::Null),
+        "repairs": repairs,
+    })
+}
+
 fn build_rd_outcome_v1(
     chain_id: u64,
     cartridge_id: &str,
     intent: &RouteIntent,
     res: &CartridgeEvalResult,
     had_reserves: bool,
+    substrate: ShadowSubstrate,
     ts_ms: u64,
 ) -> serde_json::Value {
     let first = intent.legs.first();
@@ -715,8 +807,16 @@ fn build_rd_outcome_v1(
         "confidence": res.confidence,
         "urgency": res.urgency.clone(),
         "reason": res.reason.clone(),
+        // REPAIRS-OBSERVABILITY-01: diagnóstico v4 (status/reason/nombres de
+        // repairs) desde el proposal sellado. Null si no hay proposal_v4.
+        "v4_repairs": v4_repairs_summary(res),
         "had_reserves": had_reserves,
         "mode": "shadow",
+        // SHADOW-CANONICAL-01 — sustrato REAL de la evaluación: `intent_bundle`
+        // (SnapshotBundle real del intent) o `static_boot_stub` (contexto
+        // DATA_GAP estático). Campo ADITIVO: el sink de api-server valida solo
+        // sus campos requeridos y lo ignora.
+        "context_provenance": substrate.as_str(),
     })
 }
 
@@ -734,6 +834,7 @@ fn build_rd_outcome_v2(
     intent: &RouteIntent,
     res: &CartridgeEvalResult,
     had_reserves: bool,
+    substrate: ShadowSubstrate,
     ts_ms: u64,
 ) -> serde_json::Value {
     let hop_count = intent.legs.len();
@@ -787,6 +888,8 @@ fn build_rd_outcome_v2(
         "strategy_kind": cartridge_id,
         "cartridge_id": cartridge_id,
         "mode": "shadow",
+        // SHADOW-CANONICAL-01 — ver build_rd_outcome_v1: sustrato real usado.
+        "context_provenance": substrate.as_str(),
         "is_opportunity": res.is_opportunity,
         "status": if res.is_opportunity { "shadow_visible" } else { "rejected_with_reason" },
         "topology": {
@@ -824,6 +927,8 @@ fn build_rd_outcome_v2(
         "priority_score": serde_json::Value::Null,
         "urgency": res.urgency.clone(),
         "reason": res.reason.clone(),
+        // REPAIRS-OBSERVABILITY-01: mismo diagnóstico v4 que v1.
+        "v4_repairs": v4_repairs_summary(res),
         "had_reserves": had_reserves,
         "simulation": {
             "status": "disabled",
@@ -955,12 +1060,52 @@ fn category_to_strategy_label(
     }
 }
 
+/// Sustrato de datos con el que se resolvió UNA fila del stream shadow.
+///
+/// SHADOW-CANONICAL-01 — existe para que el stream NUNCA presente como real una
+/// evaluación hecha contra el stub Phase-1: el `mode` sigue siendo `"shadow"`
+/// (correcto: es el stream shadow), pero `context_provenance` declara si la
+/// evaluación usó el `SnapshotBundle` REAL del intent o el contexto DATA_GAP
+/// estático. Antes de este cambio TODAS las filas describían el stub sin
+/// declararlo, y el `costs.financing :: mandatory_route_cost_missing` de ~100%
+/// de las 600 filas medidas era el síntoma.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ShadowSubstrate {
+    /// `SnapshotBundle` REAL del intent, registrado en el `ContextRouter`.
+    IntentBundle,
+    /// Contexto DATA_GAP estático (`boot-chain-{chain_id}`): no se pudo componer
+    /// el bundle real. La razón exacta queda en `cartridge.intent_context_unavailable`.
+    StaticBootStub,
+}
+
+impl ShadowSubstrate {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::IntentBundle => "intent_bundle",
+            Self::StaticBootStub => "static_boot_stub",
+        }
+    }
+}
+
 /// Shadow-evaluates every ACTIVE cartridge against one live route intent and emits
 /// the result to logs/telemetry. **Read-only / observe-only**: it never constructs a
 /// `StrategyCandidate`, never touches `process_candidate`, and never reaches the
 /// execution pipeline. Designed to be `tokio::spawn`-ed off the orchestrator hot
 /// path so it adds no latency to intent processing. Per-cartridge errors are logged,
 /// never propagated (one bad cartridge cannot affect the others or the scanner).
+///
+/// SHADOW-CANONICAL-01 (2026-10-03) — §34.1 hot-path mode-invariant: esta ruta
+/// compone y registra el MISMO contexto v4 real por intent que la ruta ACTIVE
+/// (`build_and_register_intent_context`) y sella sus ids en `pool_data`, de modo
+/// que los bindings v4 resuelven el grafo/precios/costes REALES del intent. Los
+/// modos difieren SÓLO en el terminus de ejecución: aquí NO hay emisor, NO se
+/// persiste oportunidad y NO se emite nada a `arbx:opps:detected` — la única
+/// salida sigue siendo `arbx:route_discovery:outcomes` más los logs.
+///
+/// `deps` es `None` cuando el llamador no dispone de las dependencias de
+/// composición (config del operador, registro de operadores, router); la
+/// evaluación cae entonces al contexto DATA_GAP estático y lo declara con la
+/// razón exacta (`no_context_deps`) en vez de simular datos reales.
 ///
 /// Concurrency is globally bounded by [`SHADOW_MAX_CONCURRENCY`]; at capacity an
 /// evaluation is dropped rather than queued (observe-only). NOTE: a cartridge's own
@@ -972,6 +1117,7 @@ pub async fn shadow_evaluate_intent(
     runner: Arc<CartridgeRunner>,
     intent: RouteIntent,
     chain_id: u64,
+    deps: Option<IntentContextDeps>,
 ) {
     // Bound global shadow-eval concurrency; drop (don't queue) when at capacity.
     let _permit = match shadow_semaphore().clone().try_acquire_owned() {
@@ -1034,7 +1180,53 @@ pub async fn shadow_evaluate_intent(
         Some(p) => runner.read_pool_reserves(&format!("{:#x}", p)).await,
         None => None,
     };
-    let pool_data = build_cartridge_pool_data(&intent, reserves_source.as_ref());
+    // SHADOW-CANONICAL-01 (2026-10-03) — §34.1 hot-path mode-invariant: la ruta
+    // SHADOW evalúa contra el MISMO sustrato de datos que la ruta ACTIVE. Antes
+    // construía SOLO `build_cartridge_pool_data` y no registraba contexto, así
+    // que los bindings v4 (`agent_v4_quote`/`operators`/`economic_check`/
+    // `discover`) resolvían al stub estático de boot (`boot-chain-{chain_id}`:
+    // `base_cost_lines`/`prices`/`edges`/`size_schedule_raw` VACÍOS) y toda fila
+    // del stream describía ese stub — de ahí el
+    // `costs.financing :: mandatory_route_cost_missing` en ~100% de las 600
+    // filas medidas. Ahora se compone y registra el contexto REAL del intent y
+    // se sellan sus ids en `pool_data`, idéntico a la ruta ACTIVE.
+    let v4_context = match deps.as_ref() {
+        Some(deps) => {
+            build_and_register_intent_context(
+                &runner,
+                &intent,
+                chain_id,
+                &deps.cfg_provider,
+                &deps.math_registry,
+                deps.router.as_ref(),
+            )
+            .await
+        }
+        None => {
+            // Sin dependencias de composición (config del operador, registro de
+            // operadores, router) NO se puede armar el bundle real: la ruta cae
+            // al comportamiento Phase-1 y lo declara con la razón exacta.
+            intent_context_unavailable(chain_id, &intent, "no_context_deps");
+            IntentContextOutcome {
+                guard: None,
+                census: IntentContextCensus::default(),
+            }
+        }
+    };
+    // Sustrato REALMENTE usado por ESTA evaluación: se publica en cada fila del
+    // stream para que ninguna fila pueda presentarse como real sin serlo.
+    let substrate = if v4_context.guard.is_some() {
+        ShadowSubstrate::IntentBundle
+    } else {
+        ShadowSubstrate::StaticBootStub
+    };
+    let (v4_stamp_context, v4_stamp_snapshot) = v4_context.stamp_ids(chain_id);
+    // Guard con Drop: el contexto del intent se retira del router en TODA
+    // salida (return, panic o fin del bucle) — misma garantía que la ruta ACTIVE.
+    let _v4_intent_guard = v4_context.guard;
+    let mut pool_data = build_cartridge_pool_data(&intent, reserves_source.as_ref());
+    pool_data.insert("context_id".into(), rhai::Dynamic::from(v4_stamp_context));
+    pool_data.insert("snapshot_id".into(), rhai::Dynamic::from(v4_stamp_snapshot));
 
     for (id, _category) in pertinent {
         match runner.evaluate(&id, pool_data.clone()).await {
@@ -1051,6 +1243,7 @@ pub async fn shadow_evaluate_intent(
                         estimated_profit = res.estimated_profit,
                         confidence = res.confidence,
                         urgency = %res.urgency,
+                        substrate = substrate.as_str(),
                         "cartridge shadow OPPORTUNITY detected (observe-only, no execution)"
                     );
                 } else {
@@ -1058,6 +1251,7 @@ pub async fn shadow_evaluate_intent(
                         event = "cartridge.shadow_eval_negative",
                         chain_id,
                         cartridge_id = %id,
+                        substrate = substrate.as_str(),
                         "cartridge shadow eval: no opportunity"
                     );
                 }
@@ -1072,6 +1266,7 @@ pub async fn shadow_evaluate_intent(
                     &intent,
                     &res,
                     reserves_source.is_some(),
+                    substrate,
                 )
                 .await;
             }
@@ -1089,15 +1284,40 @@ pub async fn shadow_evaluate_intent(
     }
 }
 
+/// SHADOW-CANONICAL-01 — dependencias que el camino SHADOW necesita para
+/// componer el MISMO contexto por-intent que el camino ACTIVE. Espeja 1:1 lo
+/// que `active_evaluate_and_emit` recibe del `OrchestratorContext` (config del
+/// operador, registro nativo de operadores y router de contextos); todo lo
+/// demás (índice de identidad, snapshot de precios, conexión Redis, gas) lo
+/// deriva el helper desde el propio `runner`, igual que la ruta ACTIVE.
+///
+/// Sin estas dependencias no se puede componer el bundle REAL: el camino
+/// shadow conserva entonces su comportamiento Phase-1 (contexto DATA_GAP
+/// estático) y lo declara con la razón exacta — jamás simula tener datos.
+pub struct IntentContextDeps {
+    pub cfg_provider: Arc<crate::orchestrator::ConfigProvider>,
+    pub math_registry: Arc<math_engine::OperatorRegistry>,
+    pub router: Option<Arc<crate::context_router::ContextRouter>>,
+}
+
 /// Fase 3a — retira el contexto por-intent del ContextRouter en TODA salida
-/// de la tarea ACTIVE (return temprano, `?`/`continue` no aplican a nivel de
-/// función, panic o fin normal del loop). Sin este guard, cada intent dejaría
-/// una entrada ocupando la capacidad 256 del router hasta reiniciar.
-struct V4IntentContextGuard {
+/// de la tarea (return temprano, panic o fin normal del loop). Sin este guard,
+/// cada intent dejaría una entrada ocupando la capacidad 256 del router hasta
+/// reiniciar. Lo comparten la ruta ACTIVE y la ruta SHADOW: SHADOW-CANONICAL-01
+/// registra el mismo contexto real, así que necesita la misma retirada.
+pub struct IntentContextGuard {
     router: Option<Arc<crate::context_router::ContextRouter>>,
     context_id: String,
 }
-impl Drop for V4IntentContextGuard {
+impl IntentContextGuard {
+    /// `context_id` con el que quedó registrado el contexto real del intent.
+    /// Es el valor que el camino ACTIVE (y ahora también el SHADOW) sella en
+    /// `pool_data` para que los cartuchos v4 lo copien a su propio ctx.
+    pub fn context_id(&self) -> &str {
+        &self.context_id
+    }
+}
+impl Drop for IntentContextGuard {
     fn drop(&mut self) {
         if let Some(router) = self.router.take() {
             if let Err(e) = router.remove(&self.context_id) {
@@ -1144,8 +1364,8 @@ async fn v4_slot0(
     redis: &mut redis::aio::ConnectionManager,
     chain_id: u64,
     pool_addr_lower: &str,
-    cache: &mut std::collections::HashMap<String, Option<(String, u128)>>,
-) -> Option<(String, u128)> {
+    cache: &mut std::collections::HashMap<String, Option<(String, u128, u64)>>,
+) -> Option<(String, u128, u64)> {
     if let Some(hit) = cache.get(pool_addr_lower) {
         return hit.clone();
     }
@@ -1155,10 +1375,124 @@ async fn v4_slot0(
         .flatten()
         .and_then(|entry| {
             let liquidity: u128 = entry.liquidity.parse().ok()?;
-            Some((entry.sqrt_price_x96, liquidity))
+            // V3-LEG-GRAPH-01: el ts del round de sync acompaña al slot0 — es
+            // la identidad de coherencia del Edge V3 (todas las entradas del
+            // mismo round comparten ts, verificado en producción).
+            Some((entry.sqrt_price_x96, liquidity, entry.ts))
         });
     cache.insert(pool_addr_lower.to_owned(), slot0.clone());
     slot0
+}
+
+// ── OPERATOR-DISPATCH-WIRING-01 (2026-10-02) ─────────────────────────────────
+// El bundle del intent construía SnapshotServices SIN dispatcher de operadores:
+// `operators()` caía al soporte derivado (evidencia vacía) y los recibos nativos
+// quedaban FAIL constante. Esto adjunta el registro nativo REAL cuando el
+// intent produjo un MarketState con precios observados.
+
+/// MarketState desde los edges del intent — SOLO piernas V2 (reservas
+/// orientadas por token0_addr + decimales ya resueltos). El precio V3 desde
+/// slot0 exige la verificación contra referencia de EXACT-CLASS-01 y queda
+/// como seguimiento: jamás alimentar a los operadores un precio posiblemente
+/// mal orientado. Sin precios → None → no se adjunta dispatch (R8).
+///
+/// MARKET-FEATURES-WIRE-01 (2026-10-03): `features` entra como PARÁMETRO. Este
+/// sitio construía el mapa con `HashMap::new()` — nacía vacío y moría vacío, de
+/// modo que todo lector de `features` en la ruta v4 recibía nada. Ante el hueco,
+/// varios operadores no repartían DATA_GAP: fabricaban un valor con
+/// `unwrap_or(...)` (premium flash a 0.0, `max_capital` a $1.0, fee a 30 bps).
+/// La lectura async de los productores vive en el llamador
+/// (`build_and_register_intent_context`, que es async); esta función es sync por
+/// contrato y sólo recibe el mapa YA producido. R8 fail-honest: una clave
+/// ausente significa "no computado" y aquí NO se rellena jamás con un default.
+fn v4_market_state_from_edges(
+    edges: &[crate::agent_graph::Edge],
+    block_number: u64,
+    gas_price_gwei: f64,
+    features: std::collections::HashMap<String, f64>,
+) -> Option<std::sync::Arc<math_engine::MarketState>> {
+    use math_engine::MarketState;
+    let mut price_matrix: Vec<Vec<f64>> = Vec::new();
+    let mut pair_keys: Vec<String> = Vec::new();
+    let mut liquidity_reserves: Vec<(f64, f64)> = Vec::new();
+    for e in edges {
+        if e.protocol != "cpmm_v2" {
+            continue;
+        }
+        let (Some(ri_raw), Some(ro_raw)) = (&e.reserve_in_raw, &e.reserve_out_raw) else {
+            continue;
+        };
+        let (Ok(ri), Ok(ro)) = (
+            ethers::types::U256::from_dec_str(ri_raw),
+            ethers::types::U256::from_dec_str(ro_raw),
+        ) else {
+            continue;
+        };
+        let Some(price) = crate::math_evidence::normalized_price(
+            ri,
+            ro,
+            e.token_in_decimals,
+            e.token_out_decimals,
+        ) else {
+            continue;
+        };
+        price_matrix.push(vec![price]);
+        pair_keys.push(crate::math_evidence::canonical_pair_key(
+            &e.token_in,
+            &e.token_out,
+        ));
+        liquidity_reserves.push((
+            ri_raw.parse::<f64>().unwrap_or(0.0),
+            ro_raw.parse::<f64>().unwrap_or(0.0),
+        ));
+    }
+    if price_matrix.is_empty() {
+        return None;
+    }
+    Some(std::sync::Arc::new(MarketState {
+        price_matrix,
+        pair_keys,
+        liquidity_reserves,
+        gas_price_gwei,
+        block_timestamp: 0, // no viaja en el intent — honesto (observe-only)
+        block_number,
+        features,
+    }))
+}
+
+/// Admission ESTRUCTURAL de los inputs compartidos del MarketState. Alcance
+/// declarado: valida que el estado que consumen los operadores tiene precios,
+/// claves de par alineadas, gas finito positivo y bloque conocido — y emite un
+/// recibo con la identidad del plan. NO es la admisión por-operador con
+/// lineage completo (varios operadores viejos no la satisfacen — skill
+/// arbx-rhai-cartridge-v4); esa es seguimiento. Un operador que consuma inputs
+/// no cubiertos por esta validación estructural reparte su propio DATA_GAP.
+struct V4StructuralInputAdmission;
+impl crate::native_operator_adapter::OperatorInputAdmission for V4StructuralInputAdmission {
+    fn validate(
+        &self,
+        _id: u8,
+        state: &math_engine::MarketState,
+        snapshot_id: &str,
+        plan_hash: &str,
+    ) -> Result<String, String> {
+        if state.price_matrix.is_empty() {
+            return Err("market_state_price_matrix_empty".into());
+        }
+        if state.pair_keys.len() != state.price_matrix.len() {
+            return Err("market_state_pair_keys_misaligned".into());
+        }
+        if !state.gas_price_gwei.is_finite() || state.gas_price_gwei <= 0.0 {
+            return Err("market_state_gas_not_positive".into());
+        }
+        if state.block_number == 0 {
+            return Err("market_state_block_unknown".into());
+        }
+        Ok(format!(
+            "structural:{snapshot_id}:{plan_hash}:{}px",
+            state.price_matrix.len()
+        ))
+    }
 }
 
 // ── AGENT v4 Fase 3b — admisión EXPLÍCITA de manifiestos ─────────────────────
@@ -1338,16 +1672,624 @@ fn v4_edge_protocol_and_fee(
     }
 }
 
+// ── SHADOW-CANONICAL-01 (2026-10-03) — composición PURA del grafo por-intent ──
+// El grafo v4 del intent se compone en dos mitades separadas a propósito:
+//   · la LECTURA (async): reservas/slot0/decimales desde Redis, con las mismas
+//     claves y el mismo orden que ya usaba la ruta ACTIVE;
+//   · la COMPOSICIÓN (pura): decidir qué piernas entran, con qué orientación y
+//     con qué razón exacta se omiten las demás.
+// La frontera hace la composición testeable SIN Redis y, sobre todo, garantiza
+// que las rutas ACTIVE y SHADOW producen el MISMO grafo: no hay dos
+// implementaciones que puedan divergir, hay una sola función pura invocada por
+// ambos caminos (§34.1 hot-path mode-invariant).
+
+/// Cuerpo ya resuelto de una pierna V2 o V3. Identidad de coherencia incluida:
+/// el `sync_ts` del ROUND (todas las entradas de un round comparten `ts`), que
+/// es la única frontera honesta para rutas mixtas V2/V3 — jamás un hash
+/// fabricado (R8).
+pub(crate) enum IntentLegBody {
+    V2 {
+        reserve_in_raw: String,
+        reserve_out_raw: String,
+        sync_ts: u64,
+    },
+    V3 {
+        sqrt_price_x96: String,
+        liquidity: u128,
+        sync_ts: u64,
+    },
+}
+
+/// Lectura resuelta de UNA pierna del intent. `Skip(reason)` lleva la razón
+/// EXACTA de omisión (misma taxonomía que el histograma de producción:
+/// `missing_pool_hint`, `degenerate_self_pair`, `reserves_missing`,
+/// `v3_slot0_missing`, `token0_addr_missing`, `token0_addr_out_of_route`,
+/// `token_in_decimals_missing`, `token_out_decimals_missing`).
+pub(crate) enum IntentLegRead {
+    Skip(&'static str),
+    Ready {
+        /// `{:#x}` del `pool_hint` (la lectura sólo ocurre con pool presente).
+        pool_id: String,
+        body: IntentLegBody,
+        /// `(decimales token_in, decimales token_out)` resueltos.
+        decimals: (u8, u8),
+    },
+}
+
+/// Resultado de componer el grafo v4 de un intent.
+pub(crate) struct IntentEdgeComposition {
+    pub edges: Vec<crate::agent_graph::Edge>,
+    /// `token_in` de la PRIMERA pierna admitida — el `start_token` que
+    /// `build_v4_intent_bundle` exige. `None` cuando ninguna pierna entró.
+    pub first_token_in: Option<String>,
+    /// Histograma de omisiones (LOGFLOOD-01: una línea agregada, sin muestreo).
+    pub skip_reasons: std::collections::BTreeMap<&'static str, u64>,
+}
+
+/// SHADOW-CANONICAL-01 — compone el grafo v4 a partir de lecturas YA resueltas.
+/// Pura: sin Redis, sin env, sin reloj. `reads` va alineada 1:1 con
+/// `intent.legs`; una pierna sin lectura se omite con su razón.
+pub(crate) fn compose_intent_edges(
+    chain_id: u64,
+    ctx_id: &str,
+    intent: &RouteIntent,
+    reads: &[IntentLegRead],
+) -> IntentEdgeComposition {
+    let mut edges: Vec<crate::agent_graph::Edge> = Vec::new();
+    let mut first_token_in: Option<String> = None;
+    let mut skip_reasons: std::collections::BTreeMap<&'static str, u64> =
+        std::collections::BTreeMap::new();
+    for (leg, read) in intent.legs.iter().zip(reads.iter()) {
+        match read {
+            IntentLegRead::Skip(reason) => {
+                *skip_reasons.entry(reason).or_insert(0) += 1;
+            }
+            IntentLegRead::Ready {
+                pool_id,
+                body,
+                decimals,
+            } => {
+                if first_token_in.is_none() {
+                    first_token_in = Some(format!("{:#x}", leg.token_in));
+                }
+                edges.push(intent_edge_from_ready(
+                    chain_id, ctx_id, leg, pool_id, body, *decimals,
+                ));
+            }
+        }
+    }
+    IntentEdgeComposition {
+        edges,
+        first_token_in,
+        skip_reasons,
+    }
+}
+
+/// Compone UNA arista del grafo v4 a partir de una pierna ya resuelta. La
+/// identidad de coherencia es el `ts` del ROUND de sync (V2 y V3 del mismo
+/// round lo comparten — verificado en producción), nunca un hash fabricado.
+/// El protocolo y su fee salen de `v4_edge_protocol_and_fee` — la MISMA
+/// derivación (y la única) que usa la lectura para elegir reservas o slot0.
+fn intent_edge_from_ready(
+    chain_id: u64,
+    ctx_id: &str,
+    leg: &crate::route_intent::RouteIntentLeg,
+    pool_id: &str,
+    body: &IntentLegBody,
+    decimals: (u8, u8),
+) -> crate::agent_graph::Edge {
+    let (protocol, fee_units, fee_denominator) = v4_edge_protocol_and_fee(leg);
+    let (reserve_in_raw, reserve_out_raw, sqrt_price_x96_raw, liquidity, block_identity) =
+        match body {
+            IntentLegBody::V2 {
+                reserve_in_raw,
+                reserve_out_raw,
+                sync_ts,
+            } => (
+                Some(reserve_in_raw.clone()),
+                Some(reserve_out_raw.clone()),
+                None,
+                None,
+                format!("sync-ts-{sync_ts}"),
+            ),
+            IntentLegBody::V3 {
+                sqrt_price_x96,
+                liquidity,
+                sync_ts,
+            } => (
+                None,
+                None,
+                Some(sqrt_price_x96.clone()),
+                Some(*liquidity),
+                format!("sync-ts-{sync_ts}"),
+            ),
+        };
+    crate::agent_graph::Edge {
+        edge_id: pool_id.to_owned(),
+        pool_id: pool_id.to_owned(),
+        chain_id,
+        token_in: format!("{:#x}", leg.token_in),
+        token_out: format!("{:#x}", leg.token_out),
+        protocol: protocol.to_owned(),
+        snapshot_id: ctx_id.to_owned(),
+        block_hash: block_identity,
+        reserve_in_raw,
+        reserve_out_raw,
+        fee_units,
+        fee_denominator,
+        token_in_decimals: decimals.0,
+        token_out_decimals: decimals.1,
+        // Adaptador que respalda estos edges: la caché de reservas del
+        // searcher (procedencia real, no una versión de protocolo).
+        adapter_version: "reserves_cache_v1".to_string(),
+        sqrt_price_x96_raw,
+        liquidity,
+    }
+}
+
+/// BASKET-WORKER-01 (2026-10-03) — presupuesto TOTAL (wall-clock) de la lectura
+/// on-chain de baskets dentro de la ruta del intent. El lector ya acota cada
+/// `eth_call` a 3s; este tope acota la ESPERA COMPLETA del intent (≤2 baskets
+/// relevantes, 2 llamadas cada uno) para que un RPC degradado jamás estire el
+/// hot path. Presupuesto vencido ⇒ mapa vacío y FAIL honesto del verificador.
+const BASKET_READ_BUDGET_MS: u64 = 1_500;
+
+/// BASKET-WORKER-01 — los DOS tokens que `SnapshotServices::verify` consulta en
+/// `redemption_state`: el `token_in` de la PRIMERA arista y el `token_out` de la
+/// ÚLTIMA del grafo REAL que va al bundle (las aristas omitidas por R8 ya no
+/// cuentan). Puro: sin env ni RPC, para poder probarlo directamente.
+fn v4_redemption_tokens(edges: &[crate::agent_graph::Edge]) -> Vec<String> {
+    let mut tokens: Vec<String> = Vec::with_capacity(2);
+    if let Some(first) = edges.first() {
+        tokens.push(first.token_in.to_ascii_lowercase());
+    }
+    if let Some(last) = edges.last() {
+        let token_out = last.token_out.to_ascii_lowercase();
+        if !tokens.contains(&token_out) {
+            tokens.push(token_out);
+        }
+    }
+    tokens
+}
+
+/// BASKET-WORKER-01 — subconjunto RELEVANTE de los baskets del operador
+/// (`ARBX_BASKET_CONTRACTS`): sólo las direcciones que SON uno de los tokens
+/// consultados arriba. Gate de COSTE del hot path: un basket configurado que no
+/// participa en ESTA ruta no se consulta, y sin ningún basket relevante el
+/// llamador NO toca la red (cero RPC). Puro: sin env ni RPC.
+fn v4_relevant_baskets(configured: &[String], lookup_tokens: &[String]) -> Vec<String> {
+    configured
+        .iter()
+        .filter(|basket| lookup_tokens.contains(*basket))
+        .cloned()
+        .collect()
+}
+
+/// BASKET-WORKER-01 — estado on-chain de los baskets relevantes a este intent
+/// (o mapa vacío). Camino honesto y de coste acotado:
+///
+/// 1. Sin aristas, o sin basket configurado que participe en la ruta → mapa
+///    vacío SIN RPC (el verificador reporta el FAIL honesto con su razón).
+/// 2. BASKET-OWNER-01: con `ARBX_BASKET_CONTRACTS` configurado pero SIN
+///    `ARBX_BASKET_OWNER` utilizable (ausente o malformada) → mapa vacío SIN
+///    RPC. Sin owner no hay `maxRedeem` que consultar: el de `address(0)` es 0
+///    en cualquier ERC-4626 estándar y el verificador lo leería como "el
+///    importe excede el límite" — un diagnóstico FALSO. "Sin estado" es lo
+///    honesto mientras el operador no termine de configurar (R8).
+/// 3. Endpoints del operador: `RPC_HTTP_<chain_id>`, la MISMA var que alimenta
+///    `HttpRpcPool`/`price_worker` (jamás una URL literal:
+///    arbx-no-hardcode-doctrine). Sin endpoints → mapa vacío (R8).
+/// 4. Lectura acotada por `BASKET_READ_BUDGET_MS`: RPC caído, error o
+///    presupuesto vencido se registran a debug y dejan el mapa vacío — el
+///    intent NUNCA se rompe y jamás se fabrica un `max_redeem` (R8).
+///
+/// La lectura async vive AQUÍ, en el llamador async: `build_v4_intent_bundle`
+/// es sync por contrato y sólo recibe el resultado ya leído.
+async fn v4_relevant_basket_state(
+    chain_id: u64,
+    edges: &[crate::agent_graph::Edge],
+) -> std::collections::BTreeMap<String, serde_json::Value> {
+    use crate::basket_reader::{
+        basket_owner_from_env, baskets_from_env, plan_read, BasketReadPlan,
+    };
+    use std::collections::BTreeMap;
+
+    // BASKET-OWNER-01: el plan resuelve de una vez QUÉ baskets y CON QUÉ owner
+    // (executor del operador, `ARBX_BASKET_OWNER`). `NoOwner` corta antes de
+    // cualquier RPC: `maxRedeem(0x0)` sería un límite falso (R8).
+    let (baskets, owner) = match plan_read(
+        v4_relevant_baskets(&baskets_from_env(), &v4_redemption_tokens(edges)),
+        basket_owner_from_env(),
+    ) {
+        BasketReadPlan::Ready { baskets, owner } => (baskets, owner),
+        BasketReadPlan::NoContracts => return BTreeMap::new(), // ningún basket en la ruta → CERO RPC
+        BasketReadPlan::NoOwner { contracts, reason } => {
+            debug!(
+                event = "cartridge.basket_owner_unset",
+                chain_id,
+                contracts,
+                reason,
+                "ARBX_BASKET_CONTRACTS configurado sin ARBX_BASKET_OWNER utilizable; \
+                 redemption_state vacío, sin RPC (R8 fail-honest)"
+            );
+            return BTreeMap::new();
+        }
+    };
+    let rpc_urls: Vec<String> = crate::workers::price_worker::rpc_http_url_from_env(chain_id)
+        .into_iter()
+        .collect();
+    if rpc_urls.is_empty() {
+        debug!(
+            event = "cartridge.basket_rpc_unset",
+            chain_id,
+            baskets = baskets.len(),
+            "RPC_HTTP_<chain_id> sin endpoint HTTP; redemption_state vacío (R8 fail-honest)"
+        );
+        return BTreeMap::new();
+    }
+    let read = crate::basket_reader::read_baskets(&baskets, &rpc_urls, &owner);
+    match tokio::time::timeout(
+        std::time::Duration::from_millis(BASKET_READ_BUDGET_MS),
+        read,
+    )
+    .await
+    {
+        Ok(state) => {
+            debug!(
+                event = "cartridge.basket_state_read",
+                chain_id,
+                baskets = baskets.len(),
+                read = state.len(),
+                "estado de redemption on-chain adjuntado al bundle del intent"
+            );
+            state
+        }
+        Err(_) => {
+            debug!(
+                event = "cartridge.basket_read_timeout",
+                chain_id,
+                baskets = baskets.len(),
+                budget_ms = BASKET_READ_BUDGET_MS,
+                "lectura de baskets agotó el presupuesto; redemption_state vacío (R8)"
+            );
+            BTreeMap::new()
+        }
+    }
+}
+
+// ── EXACT-QUOTES-PRODUCER-01 (2026-10-04) — productor ENCADENADO de quotes ────
+// El mapa `exact_quotes` del bundle estaba VACÍO (`Default::default()`): el
+// certificado `protocol_exact_quotes` sólo podía caer a la hipótesis within-tick
+// — medido 61 de 269 filas en las ventanas 04:17:22 y 04:44:52 con
+// `v3_within_tick_is_hypothesis_not_protocol_verified`, y 61 en la ventana
+// 04:00 con la incoherencia de round de t22. AGENT-GRAPH-QUOTE-01 ya invirtió la
+// precedencia (el mapa se consulta PRIMERO) y desacopló `firm_depth`/
+// `firm_unwind` del slot0, así que poblarlo YA paga: esto es el productor.
+//
+// CADENA, no quote suelta: `quote_request_key` liga el IMPORTE exacto y el
+// importe de la pierna `i+1` es la SALIDA de la pierna `i`, así que se recorre
+// la ruta en orden arrastrando el importe. Las piernas CPMM no piden quote (su
+// aritmética entera exacta ya certifica como `cpmm_exact_integer`) pero su salida
+// se computa con ESA MISMA función — la del ledger — para alimentar la
+// siguiente. CERO CPMM como sustituto de una quote V3, cero default, cero
+// aproximación: lo que no cotiza NO entra al mapa.
+
+/// Presupuesto wall-clock TOTAL del productor dentro del intent. Las quotes están
+/// ENCADENADAS (no se pueden paralelizar sin conocer la salida previa) y cada
+/// una es un `eth_call` al QuoterV2 con failover y breaker propios; este tope
+/// acota la espera completa del intent para que un RPC degradado jamás estire el
+/// hot path. Presupuesto vencido ⇒ las piernas restantes quedan SIN entrada y su
+/// ausencia se declara con razón propia (R8).
+const V4_EXACT_QUOTE_BUDGET_MS: u64 = 1_200;
+
+/// Una pierna que NO obtuvo quote exacta: la entrada NO se inserta y la ausencia
+/// viaja con su razón concreta. `detail` conserva el error crudo del quoter para
+/// la línea agregada del log — jamás para rellenar un valor.
+#[derive(Debug, Clone)]
+struct V4ExactQuoteGap {
+    index: usize,
+    edge_id: String,
+    protocol: String,
+    reason: &'static str,
+    detail: String,
+}
+
+/// Resultado del productor. `quotes` SÓLO contiene entradas de FUENTE REAL,
+/// indexadas por `quote_request_key` — la clave amount-bound que `quote_path`
+/// vuelve a computar. `chained_until_raw` es la evidencia de hasta dónde llegó la
+/// cadena (la salida de la última pierna cotizada).
+#[derive(Debug)]
+struct V4ExactQuotes {
+    quotes: std::collections::BTreeMap<String, crate::agent_graph::ExactHopQuote>,
+    gaps: Vec<V4ExactQuoteGap>,
+    chained_until_raw: String,
+}
+
+/// Pool RPC de la cadena, publicado por `spawn_cartridge_runtime` (que lo recibe
+/// de `main.rs`). Ver el comentario de la inserción: el camino del intent corre
+/// en otros tasks y no lo recibe por parámetro.
+type V4ExactQuotePools =
+    std::sync::Mutex<std::collections::HashMap<u64, Arc<shared_rs::rpc_failover::HttpRpcPool>>>;
+/// Proveedores ya construidos, uno por cadena (conservan su caché TTL).
+type V4ExactQuoteProviders = std::sync::Mutex<
+    std::collections::HashMap<u64, Arc<crate::v3_quote_provider::MulticallV3QuoteProvider>>,
+>;
+
+fn v4_exact_quote_pools() -> &'static V4ExactQuotePools {
+    static POOLS: OnceLock<V4ExactQuotePools> = OnceLock::new();
+    POOLS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// Proveedor de quotes V3 (QuoterV2) por cadena, construido PEREZOSAMENTE una
+/// vez sobre el pool registrado: conserva su caché TTL + single-flight + backoff
+/// de lote ENTRE intents (reutiliza la maquinaria existente —
+/// `v3_quote_provider::MulticallV3QuoteProvider` sobre
+/// `amm_math::v3_quote_exact_in_multicall` — jamás un quoter propio). `None` =
+/// sin pool registrado o sin catálogo de quoter para esa cadena: fail-honest, el
+/// mapa queda sin entradas y el certificado lo declara. El fallo NO se cachea:
+/// el pool puede registrarse (o recuperarse) después.
+fn v4_exact_quote_provider(
+    chain_id: u64,
+) -> Option<Arc<crate::v3_quote_provider::MulticallV3QuoteProvider>> {
+    static PROVIDERS: OnceLock<V4ExactQuoteProviders> = OnceLock::new();
+    let cache = PROVIDERS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    {
+        let guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(hit) = guard.get(&chain_id) {
+            return Some(hit.clone());
+        }
+    }
+    let pool = v4_exact_quote_pools()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&chain_id)
+        .cloned();
+    let built = pool.and_then(|p| {
+        crate::v3_quote_provider::MulticallV3QuoteProvider::from_pool_and_chain(p, chain_id)
+    });
+    let built = built.map(Arc::new);
+    if let Some(provider) = built.as_ref() {
+        cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(chain_id, provider.clone());
+    }
+    built
+}
+
+/// Productor de quotes exactas POR PIERNA, ENCADENADO. `quote_v3` inyecta el I/O
+/// (una llamada al QuoterV2 para ESA pierna y ESE importe) de modo que la cadena
+/// — justo la parte que `quote_request_key` hace amount-bound — sea testeable sin
+/// red. Devuelve el mapa listo para el bundle y las ausencias declaradas.
+async fn v4_exact_quotes<F, Fut>(
+    edges: &[crate::agent_graph::Edge],
+    amount_in_raw: &str,
+    budget_ms: u64,
+    mut quote_v3: F,
+) -> V4ExactQuotes
+where
+    F: FnMut(crate::amm_math::V3QuoteRequest) -> Fut,
+    Fut: std::future::Future<Output = Result<String, String>>,
+{
+    let started = std::time::Instant::now();
+    let mut quotes: std::collections::BTreeMap<String, crate::agent_graph::ExactHopQuote> =
+        std::collections::BTreeMap::new();
+    let mut gaps: Vec<V4ExactQuoteGap> = Vec::new();
+    let mut current = amount_in_raw.to_owned();
+
+    for (index, edge) in edges.iter().enumerate() {
+        if started.elapsed().as_millis() >= u128::from(budget_ms) {
+            gaps.push(V4ExactQuoteGap {
+                index,
+                edge_id: edge.edge_id.clone(),
+                protocol: edge.protocol.clone(),
+                reason: "v4_exact_quote_budget_exhausted",
+                detail: format!("{}ms", budget_ms),
+            });
+            break;
+        }
+        if edge.protocol == "cpmm_v2" {
+            // Aritmética ENTERA EXACTA sobre las reservas del MISMO edge — la
+            // función del ledger, no una aproximación nueva. La pierna no pide
+            // quote de protocolo (el ledger la certifica como
+            // `cpmm_exact_integer`), pero su salida alimenta la pierna siguiente.
+            let Some(ri) = edge.reserve_in_raw.as_deref() else {
+                gaps.push(V4ExactQuoteGap {
+                    index,
+                    edge_id: edge.edge_id.clone(),
+                    protocol: edge.protocol.clone(),
+                    reason: "cpmm_leg_missing_reserve_in",
+                    detail: String::new(),
+                });
+                break;
+            };
+            let Some(ro) = edge.reserve_out_raw.as_deref() else {
+                gaps.push(V4ExactQuoteGap {
+                    index,
+                    edge_id: edge.edge_id.clone(),
+                    protocol: edge.protocol.clone(),
+                    reason: "cpmm_leg_missing_reserve_out",
+                    detail: String::new(),
+                });
+                break;
+            };
+            let (Some(fee), Some(den)) = (edge.fee_units, edge.fee_denominator) else {
+                gaps.push(V4ExactQuoteGap {
+                    index,
+                    edge_id: edge.edge_id.clone(),
+                    protocol: edge.protocol.clone(),
+                    reason: "cpmm_leg_missing_fee",
+                    detail: String::new(),
+                });
+                break;
+            };
+            match crate::agent_graph::cpmm_exact_in(&current, ri, ro, fee, den) {
+                Ok(next) => current = next,
+                Err(reason) => {
+                    gaps.push(V4ExactQuoteGap {
+                        index,
+                        edge_id: edge.edge_id.clone(),
+                        protocol: edge.protocol.clone(),
+                        reason: "cpmm_leg_not_computable",
+                        detail: reason,
+                    });
+                    break;
+                }
+            }
+            continue;
+        }
+        if edge.protocol != "uniswap_v3" {
+            // Sin productor para este protocolo: la cadena se corta aquí y la
+            // ausencia se declara. Jamás se aproxima.
+            gaps.push(V4ExactQuoteGap {
+                index,
+                edge_id: edge.edge_id.clone(),
+                protocol: edge.protocol.clone(),
+                reason: "protocol_quote_producer_absent",
+                detail: String::new(),
+            });
+            break;
+        }
+        let (Ok(pool_addr), Ok(token_in_addr), Ok(token_out_addr)) = (
+            edge.pool_id.parse::<ethers::types::Address>(),
+            edge.token_in.parse::<ethers::types::Address>(),
+            edge.token_out.parse::<ethers::types::Address>(),
+        ) else {
+            gaps.push(V4ExactQuoteGap {
+                index,
+                edge_id: edge.edge_id.clone(),
+                protocol: edge.protocol.clone(),
+                reason: "v3_leg_address_not_parseable",
+                detail: format!("{} {} {}", edge.pool_id, edge.token_in, edge.token_out),
+            });
+            break;
+        };
+        let Ok(amount_in) = ethers::types::U256::from_dec_str(&current) else {
+            gaps.push(V4ExactQuoteGap {
+                index,
+                edge_id: edge.edge_id.clone(),
+                protocol: edge.protocol.clone(),
+                reason: "v3_leg_amount_not_decimal",
+                detail: String::new(),
+            });
+            break;
+        };
+        let Some(fee_bps) = edge.fee_units else {
+            gaps.push(V4ExactQuoteGap {
+                index,
+                edge_id: edge.edge_id.clone(),
+                protocol: edge.protocol.clone(),
+                reason: "v3_leg_missing_fee",
+                detail: String::new(),
+            });
+            break;
+        };
+        let request = crate::amm_math::V3QuoteRequest {
+            pool_addr,
+            token_in: token_in_addr,
+            token_out: token_out_addr,
+            amount_in,
+            fee_bps,
+        };
+        match quote_v3(request).await {
+            Ok(amount_out_raw) => {
+                // La entrada se ata al MISMO edge e identidad que el ledger
+                // exige: `quote_path` rechaza cualquier desajuste de edge_id /
+                // snapshot_id / block_hash / tokens / importe / adapter_version
+                // (por eso se construye con la MISMA función de clave).
+                let key = crate::agent_graph::quote_request_key(edge, &current);
+                quotes.insert(
+                    key,
+                    crate::agent_graph::ExactHopQuote {
+                        edge_id: edge.edge_id.clone(),
+                        snapshot_id: edge.snapshot_id.clone(),
+                        block_hash: edge.block_hash.clone(),
+                        token_in: edge.token_in.clone(),
+                        token_out: edge.token_out.clone(),
+                        amount_in_raw: current.clone(),
+                        amount_out_raw: amount_out_raw.clone(),
+                        // Procedencia: el hash canónico de la petición + la
+                        // respuesta REALES. No es un id inventado: identifica
+                        // exactamente el par (edge, importe, salida) que el
+                        // ledger va a consumir.
+                        quote_id: crate::rhai_agent_bridge::canonical_hash(&serde_json::json!({
+                            "producer": "v3_quote_provider",
+                            "model": "quoter_v2_exact_input_single",
+                            "edge_id": edge.edge_id,
+                            "snapshot_id": edge.snapshot_id,
+                            "block_hash": edge.block_hash,
+                            "token_in": edge.token_in,
+                            "token_out": edge.token_out,
+                            "amount_in_raw": current,
+                            "amount_out_raw": amount_out_raw,
+                            "adapter_version": edge.adapter_version,
+                        })),
+                        precision: "protocol_exact_integer".into(),
+                        fees_and_impact_embedded: true,
+                        adapter_version: edge.adapter_version.clone(),
+                        metrics: serde_json::json!({
+                            "status": "COMPUTED",
+                            "model": "quoter_v2_exact_input_single",
+                            "source": "v3_quote_provider",
+                            "fee_bps": fee_bps,
+                            "hop_index": index,
+                        }),
+                    },
+                );
+                current = amount_out_raw;
+            }
+            Err(reason) => {
+                gaps.push(V4ExactQuoteGap {
+                    index,
+                    edge_id: edge.edge_id.clone(),
+                    protocol: edge.protocol.clone(),
+                    reason: "v3_protocol_quote_unavailable",
+                    detail: reason,
+                });
+                break;
+            }
+        }
+    }
+
+    V4ExactQuotes {
+        quotes,
+        gaps,
+        chained_until_raw: current,
+    }
+}
+
 /// Fase 3a — construye el SnapshotBundle REAL del intent: policy honesta
 /// desde la config del operador (`TradingConfigState`), precios canónicos
 /// por token distinto de las piernas (dirección → símbolo del universo de
 /// identidad → precio del snapshot Redis o de trading_config), el tamaño
 /// REAL observado del intent como único tamaño del schedule y la admisión
-/// EXPLÍCITA de manifiestos v4 desplegados (Fase 3b). Los productores aún
-/// ausentes (exact_quotes, domain_plans, canonical_payloads) quedan vacíos:
-/// el contrato v4 los reporta como DATA_GAP con razón explícita — nunca
-/// se fabrican (R8). `None` sólo si el reloj no permite una ventana temporal
-/// honesta.
+/// EXPLÍCITA de manifiestos v4 desplegados (Fase 3b). `exact_quotes` llega
+/// PRODUCIDO por el llamador async (EXACT-QUOTES-PRODUCER-01: quotes reales del
+/// QuoterV2, encadenadas por pierna); lo que sigue ausente (`domain_plans`,
+/// `canonical_payloads`) queda vacío y el contrato v4 lo reporta como DATA_GAP
+/// con razón explícita — nunca se fabrica (R8). `None` sólo si el reloj no
+/// permite una ventana temporal honesta.
+///
+/// BASKET-WORKER-01: el estado de redemption on-chain de los baskets
+/// RELEVANTES a este intent llega YA LEÍDO por el llamador async
+/// (`basket_state`); esta función es sync por contrato y nunca toca la red.
+///
+/// PRICE-COVERAGE-01 (§38): el mapa canónico de precios tiene TRES fuentes
+/// ORDENADAS por confianza — (1) el snapshot de Redis que publica
+/// `price_worker` (`arbx:token_prices:<chain>`, hash de símbolos), (2) el
+/// `token_prices_usd` curado por el operador en `trading_config`, y (3) el
+/// **PriceBus en proceso** (`price_bus_global::get()`, Binance WS bookTicker
+/// fusionado con los anchors Chainlink). La tercera cierra el hueco real de
+/// cobertura: el snapshot es un hash *polado y acotado*
+/// (`MAX_PRICED_TOKENS`) y `token_prices_usd` es una lista curada, así que un
+/// token del grafo puede no estar en ninguno de los dos mientras el bus —la
+/// MISMA pila soberana de la que el snapshot se nutre— sí lo tiene vivo. La
+/// lectura es lock-free y en proceso (`ArcSwap::load`), jamás un RPC por token
+/// en el hot path.
+///
+/// `price_bus: None` (bus no inicializado, p.ej. en tests) degrada honesto:
+/// las dos primeras fuentes siguen, y un token que ninguna cubre queda SIN
+/// entrada (R8) — exactamente la conducta previa, nunca un precio inventado.
 #[allow(clippy::too_many_arguments)]
 fn build_v4_intent_bundle(
     chain_id: u64,
@@ -1359,6 +2301,27 @@ fn build_v4_intent_bundle(
     identity: &shared_rs::token_identity::TokenIdentityIndex,
     price_snapshot: &std::collections::HashMap<String, f64>,
     manifest_digests: &std::collections::BTreeMap<String, String>,
+    // COST-PRODUCERS-01: gas OBSERVADO del runner (el getter ya decodifica
+    // milli-gwei → gwei) — el mismo que alimenta el MarketState del
+    // dispatcher. Sin observación la línea de gas no se emite (R8).
+    gas_price_gwei: f64,
+    // BASKET-WORKER-01: estado on-chain de los baskets RELEVANTES a este
+    // intent (token_in de la primera arista / token_out de la última), leído
+    // por el llamador async. Sin basket en la ruta, sin RPC configurado o con
+    // lectura fallida llega VACÍO: el verificador `redemption_within_limits`
+    // reporta entonces su FAIL honesto y jamás se fabrica un `max_redeem`.
+    basket_state: &std::collections::BTreeMap<String, serde_json::Value>,
+    // PRICE-COVERAGE-01: bus de precios en proceso (tercera fuente, §38). Se
+    // recibe por parámetro en vez de leerse del global dentro de la función
+    // para que el llamador —y los tests— fijen explícitamente la dependencia:
+    // `None` es el degradado honesto (sin bus no hay tercera fuente).
+    price_bus: Option<&shared_rs::price_bus::PriceBus>,
+    // EXACT-QUOTES-PRODUCER-01: las quotes EXACTAS por pierna ya producidas por
+    // el llamador async (`v4_exact_quotes`), indexadas por `quote_request_key`.
+    // Este campo era `Default::default()`: el certificado `protocol_exact_quotes`
+    // sólo podía caer a la hipótesis within-tick. Sólo entran entradas de FUENTE
+    // REAL; un mapa vacío significa "no se pudo cotizar", jamás "cotizó cero".
+    exact_quotes: std::collections::BTreeMap<String, crate::agent_graph::ExactHopQuote>,
 ) -> Option<crate::snapshot_services::SnapshotBundle> {
     let observed_at_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1410,8 +2373,31 @@ fn build_v4_intent_bundle(
             .iter()
             .find(|(k, _)| k.eq_ignore_ascii_case(symbol))
             .map(|(_, v)| (*v, "trading_config"));
+        // PRICE-COVERAGE-01 (§38) — tercera fuente: el PriceBus EN PROCESO.
+        // `price_with_verdict` devuelve `None` tanto en `NoSource` (ni Binance
+        // ni anchor para el símbolo) como en `DivergenceFrozen` (la banda
+        // Binance↔Chainlink se congeló: un depeg o un feed roto DEBE parar la
+        // valuación, no colarse promediado). El `filter` interno repite el
+        // invariante del `filter` externo para que un valor no finito o no
+        // positivo del bus no llegue siquiera a etiquetarse.
+        //
+        // El `evidence_id` nombra la fuente REAL y su veredicto REAL: en
+        // `price_bus:stale_anchor` el número servido es el de Binance sin
+        // verificación de anchor, y eso queda declarado en la evidencia en vez
+        // de disfrazarse de precio verificado. `producer` sigue siendo
+        // "PriceBus" porque el bus ES literalmente el productor — es la
+        // identidad que exige `SnapshotServices::price()`, no una etiqueta
+        // prestada para pasar el gate. El id es `&'static str` (como los de las
+        // dos fuentes previas): el hot path no asigna para etiquetar.
+        let from_bus = price_bus.and_then(|bus| {
+            let (price, verdict) = bus.view().price_with_verdict(symbol);
+            price
+                .filter(|v| v.is_finite() && *v > 0.0)
+                .map(|v| (v, v4_price_bus_evidence_id(verdict)))
+        });
         let Some((usd, evidence_id)) = from_snapshot
             .or(from_config)
+            .or(from_bus)
             .filter(|(v, _)| v.is_finite() && *v > 0.0)
         else {
             continue; // sin precio real positivo → SIN entrada (R8)
@@ -1433,6 +2419,17 @@ fn build_v4_intent_bundle(
             },
         );
     }
+    // COST-PRODUCERS-01: las líneas se computan ANTES del literal del struct
+    // (edges/prices se mueven dentro de él — evaluación de campos en orden).
+    let base_costs = v4_base_cost_lines(
+        cfg,
+        chain_id,
+        start_token,
+        amount_in_raw,
+        edges.first().map(|e| e.token_in_decimals).unwrap_or(18),
+        gas_price_gwei,
+        &prices,
+    );
     Some(crate::snapshot_services::SnapshotBundle {
         context_id: ctx_snapshot_id.to_owned(),
         snapshot_id: ctx_snapshot_id.to_owned(),
@@ -1451,7 +2448,7 @@ fn build_v4_intent_bundle(
         // conocido para este contexto (spec Fase 3a).
         size_schedule_raw: vec![amount_in_raw.to_owned()],
         prices,
-        exact_quotes: Default::default(),
+        exact_quotes,
         route_support: Default::default(),
         domain_plans: Default::default(),
         canonical_payloads: Default::default(),
@@ -1459,7 +2456,914 @@ fn build_v4_intent_bundle(
         // (mev_id → source_digest auto-declarado por cada script).
         manifest_digests: manifest_digests.clone(),
         max_evaluations: 8,
+        // COST-PRODUCERS-01: líneas BASE con productores reales del dueño del
+        // contexto (gas observado × unidades de config, financiación según la
+        // tasa declarada, comisiones embebidas en las cotizaciones).
+        base_cost_lines: base_costs,
+        // BASKET-WORKER-01: estado on-chain REAL de los baskets del operador
+        // que participan en ESTA ruta (leído por el llamador async). Vacío =
+        // sin dato → el verificador reporta el FAIL honesto (R8).
+        redemption_state: basket_state.clone(),
     })
+}
+
+/// COST-PRODUCERS-01 (2026-10-02): las tres líneas de coste que el bridge
+/// exige para `atomic_quote` (gas, financing, execution_fees), cada una con
+/// su PRODUCTOR real y su tratamiento declarado. Antes `quote()` dejaba
+/// `costs=[]` cuando el soporte precomputado por plan no existía (el caso de
+/// TODA ruta del grafo en la vía del intent) y el bridge reportaba
+/// `mandatory_route_cost_missing` — el bloqueo dominante medido en outcomes.
+///
+/// - **gas** (external, se resta una vez): unidades de la CONFIG del operador
+///   (`gas_estimate_units`) × gas OBSERVADO del runner × precio base. Sin
+///   alguno de los tres → la línea no se emite (DATA_GAP honesto, no cero).
+/// - **financiación**: reserva conservadora al importe del intent ×
+///   `flashloan_fee_pct` de la config — si el plan usa flash este es el
+///   coste; con capital propio el coste real es 0 y la reserva SOBREestima
+///   (sesgo conservador, jamás infla el neto). Tasa 0 (config actual) →
+///   `not_applicable` con evidencia explícita. La lectura on-chain del
+///   premium real (`FLASHLOAN_PREMIUM_TOTAL`) sigue pendiente (doctrina
+///   flash-loan: fees on-chain, jamás hardcode) — por eso la fuente ES la
+///   config del operador, no un literal.
+/// - **execution_fees** (embedded): las comisiones e impacto YA viven dentro
+///   de las cotizaciones del ledger (`fees_and_impact_embedded`) — se
+///   declara para satisfacer el contrato del bridge SIN restar dos veces.
+fn v4_base_cost_lines(
+    cfg: &shared_rs::trading_config::TradingConfigState,
+    chain_id: u64,
+    start_token: &str,
+    amount_in_raw: &str,
+    start_token_decimals: u8,
+    gas_price_gwei: f64,
+    prices: &std::collections::BTreeMap<(u64, String), crate::snapshot_services::CanonicalPrice>,
+) -> Vec<crate::rhai_agent_bridge::CostLine> {
+    use crate::rhai_agent_bridge::CostLine;
+    let mut lines: Vec<CostLine> = Vec::new();
+
+    // ── GAS: unidades de config × gwei observado × 1e-9 → ETH → USD base ──
+    let base_usd = cfg.base_token_price_usd;
+    if cfg.gas_estimate_units > 0 && gas_price_gwei > 0.0 && base_usd > 0.0 {
+        let gas_usd = cfg.gas_estimate_units as f64 * gas_price_gwei * 1e-9 * base_usd;
+        if gas_usd.is_finite() && gas_usd > 0.0 {
+            lines.push(CostLine {
+                kind: "gas".into(),
+                treatment: "external".into(),
+                usd: Some(format!("{gas_usd:.6}")),
+                reason: Some(format!(
+                    "{}units x {:.4}gwei x {:.4}usd (config:gas_estimate_units, runner:host_gas_price_gwei)",
+                    cfg.gas_estimate_units, gas_price_gwei, base_usd
+                )),
+                evidence_id: "config:gas_estimate_units+runner:observed_gas".into(),
+            });
+        }
+    }
+
+    // ── FINANCIACIÓN: tasa DECLARADA por el operador en la config ──
+    //
+    // V4-SNAPSHOT-PRODUCERS-01 (2026-10-04): la línea de financiación NO puede
+    // OMITIRSE. Antes, con `flashloan_fee_pct > 0` y sin precio canónico del
+    // start token, el `if let Some(amount_usd)` no tenía `else`: la línea
+    // desaparecía en silencio y el bridge reportaba
+    // `costs.financing::mandatory_route_cost_missing` — una razón que MIENTE,
+    // porque el productor existe y lo que falta es el precio. Medido en
+    // producción (chain 1, 2026-10-03): `flashloan_fee_pct = 0.0009 > 0`,
+    // `token_prices_usd` = 21 símbolos, hash de precios `arbx:token_prices:1` =
+    // 447 símbolos frente a un universo de identidad de 2747 tokens → las rutas
+    // long-tail llegan sin precio, y ese reparto aparecía 64/269 veces.
+    //
+    // R8: un coste obligatorio NO COMPUTABLE se DECLARA (línea presente, `usd`
+    // ausente, razón explícita), nunca se omite ni se sustituye por un valor por
+    // defecto. La línea queda `external` — la financiación APLICA (tasa > 0):
+    // declararla `not_applicable` sería afirmar que el coste no existe y
+    // inflaría el neto.
+    if cfg.flashloan_fee_pct > 0.0 {
+        // Importe del intent valorado al precio del start token del bundle.
+        let amount_usd = prices
+            .get(&(chain_id, start_token.to_string()))
+            .and_then(|p| p.usd.parse::<f64>().ok())
+            .and_then(|px| {
+                amount_in_raw
+                    .parse::<f64>()
+                    .ok()
+                    .map(|raw| raw / 10f64.powi(start_token_decimals as i32) * px)
+            });
+        match amount_usd {
+            // Valorado: la reserva es tasa-declarada × importe del intent.
+            Some(amount_usd_val) => {
+                let fin_usd = amount_usd_val * cfg.flashloan_fee_pct / 100.0;
+                if fin_usd.is_finite() && fin_usd > 0.0 {
+                    lines.push(CostLine {
+                        kind: "financing".into(),
+                        treatment: "external".into(),
+                        usd: Some(format!("{fin_usd:.6}")),
+                        reason: Some(format!(
+                            "reserva conservadora al flash: {:.4}usd x {:.4}% (config:flashloan_fee_pct; capital propio => coste real 0)",
+                            amount_usd_val, cfg.flashloan_fee_pct
+                        )),
+                        evidence_id: "config:flashloan_fee_pct".into(),
+                    });
+                } else {
+                    lines.push(CostLine {
+                        kind: "financing".into(),
+                        treatment: "external".into(),
+                        usd: None,
+                        reason: Some(format!(
+                            "reserva flash NO COMPUTADA: importe valorado no positivo (config:flashloan_fee_pct={:.6}%) — el importe NO se estima (R8)",
+                            cfg.flashloan_fee_pct
+                        )),
+                        evidence_id: "config:flashloan_fee_pct+uncomputed:non_positive_reserve".into(),
+                    });
+                }
+            }
+            // Sin precio canónico del start token: DECLARADA, jamás omitida.
+            None => lines.push(CostLine {
+                kind: "financing".into(),
+                treatment: "external".into(),
+                usd: None,
+                reason: Some(format!(
+                    "reserva flash NO COMPUTADA: sin precio canonico del start token {start_token} \
+                     en el bundle (prices map miss) — tasa {:.6}% declarada en \
+                     config:flashloan_fee_pct; el importe NO se estima (R8)",
+                    cfg.flashloan_fee_pct
+                )),
+                evidence_id: "config:flashloan_fee_pct+unpriced:start_token".into(),
+            }),
+        }
+    } else {
+        // Tasa 0 (config actual): capital propio — not_applicable con
+        // evidencia explícita (el contrato CostLine lo exige).
+        lines.push(CostLine {
+            kind: "financing".into(),
+            treatment: "not_applicable".into(),
+            usd: None,
+            reason: Some(
+                "flashloan_fee_pct=0 en trading_config (capital propio, sin reserva flash)".into(),
+            ),
+            evidence_id: "config:flashloan_fee_pct:zero".into(),
+        });
+    }
+
+    // ── COMISIONES: embebidas en las cotizaciones — declaradas, no restadas ──
+    lines.push(CostLine {
+        kind: "execution_fees".into(),
+        treatment: "embedded".into(),
+        usd: None,
+        reason: Some(
+            "fees_and_impact_embedded en el ledger de quotes (ya reflejadas; no se restan dos veces)"
+                .into(),
+        ),
+        evidence_id: "quote:ledger:fees_and_impact_embedded".into(),
+    });
+
+    lines
+}
+
+/// PRICE-COVERAGE-01 (§38) — `evidence_id` de un precio servido por el PriceBus
+/// EN PROCESO: nombra la fuente (`price_bus`) y el veredicto REAL con el que el
+/// bus lo sirvió, para que la evidencia diga la verdad completa (un número de
+/// Binance sin anchor de verificación se declara `stale_anchor`, no se disfraza
+/// de verificado).
+///
+/// `&'static str` y no `format!`: el `evidence_id` de las otras dos fuentes ya
+/// es estático y el hot path no debe asignar sólo para etiquetar. El `match` es
+/// exhaustivo a propósito — un `Verdict` nuevo rompe la compilación en vez de
+/// degradar en silencio, y `price_bus_evidence_ids_mirror_the_verdict_slugs`
+/// fija que cada slug siga siendo el de `Verdict::as_str()`.
+fn v4_price_bus_evidence_id(verdict: shared_rs::price_bus::Verdict) -> &'static str {
+    use shared_rs::price_bus::Verdict;
+    match verdict {
+        Verdict::Ok => "price_bus:ok",
+        Verdict::StaleBinance => "price_bus:stale_binance",
+        Verdict::StaleAnchor => "price_bus:stale_anchor",
+        // Mismo slug que `Verdict::as_str()`, que es como el resto del sistema
+        // publica esta razón.
+        Verdict::DivergenceFrozen => "price_bus:price_divergence_binance_chainlink",
+        Verdict::NoSource => "price_bus:no_live_price",
+    }
+}
+
+/// SHADOW-CANONICAL-01 — LECTURA de las piernas del intent con las MISMAS
+/// claves Redis y el MISMO orden que usaba la ruta ACTIVE (reservas V2
+/// orientadas por `token0_addr` / slot0 V3, y después decimales). El orden
+/// importa: fija qué razón de omisión se reporta cuando fallan varios datos.
+/// Cachea por intent para no repetir GETs del mismo token/pool entre piernas.
+async fn read_intent_legs(
+    runner: &Arc<CartridgeRunner>,
+    redis: &mut redis::aio::ConnectionManager,
+    intent: &RouteIntent,
+    chain_id: u64,
+) -> Vec<IntentLegRead> {
+    // Camino feliz (el normal): UNA pasada y, si las piernas resueltas comparten
+    // round, se devuelve tal cual — la alineación no cuesta nada cuando la caché
+    // no está rotando.
+    let mut reads = read_intent_legs_pass(runner, redis, intent, chain_id).await;
+    if intent_legs_share_one_round(&reads) {
+        return reads;
+    }
+    let started = std::time::Instant::now();
+    let mut passes: u8 = 1;
+    while passes < INTENT_ROUND_ALIGN_MAX_PASSES
+        && started.elapsed().as_millis() < u128::from(INTENT_ROUND_ALIGN_BUDGET_MS)
+    {
+        let laggards = leg_round_laggard_indices(&reads);
+        if laggards.is_empty() {
+            break;
+        }
+        let rounds: Vec<Option<u64>> = reads.iter().map(leg_round_ts).collect();
+        debug!(
+            event = "cartridge.v4_intent_round_split",
+            chain_id,
+            tx_hash = %intent.tx_hash,
+            pass = passes,
+            laggards = ?laggards,
+            newest_round = ?newest_leg_round(&reads),
+            rounds = ?rounds,
+            "piernas del intent repartidas entre rounds de sync; re-lectura acotada de las rezagadas (R8)"
+        );
+        // El writer refresca la población POOL A POOL (medido: ~3 s para 557
+        // pools), así que un re-read inmediato devolvería el MISMO valor viejo.
+        // Este backoff acotado es el que deja llegar al round nuevo.
+        tokio::time::sleep(std::time::Duration::from_millis(
+            INTENT_ROUND_ALIGN_BACKOFF_MS,
+        ))
+        .await;
+        // Cachés FRESCAS por pasada: el `slot0_cache` de la lectura anterior
+        // serviría el valor del round viejo y la alineación nunca convergería.
+        // Los decimales no dependen del round y no hacen falta entre pasadas.
+        let mut decimal_cache: std::collections::HashMap<String, Option<u8>> =
+            std::collections::HashMap::new();
+        let mut slot0_cache: std::collections::HashMap<String, Option<(String, u128, u64)>> =
+            std::collections::HashMap::new();
+        for index in laggards {
+            // `reads` va alineada 1:1 con `intent.legs` (una lectura por pierna,
+            // en orden) ⇒ el índice del laggard identifica la pierna.
+            let Some(leg) = intent.legs.get(index) else {
+                continue;
+            };
+            reads[index] = read_intent_leg(
+                runner,
+                redis,
+                leg,
+                chain_id,
+                &mut decimal_cache,
+                &mut slot0_cache,
+            )
+            .await;
+        }
+        passes += 1;
+    }
+    reads
+}
+
+/// PROTOCOL-COHERENCE-01 (2026-10-04) — el `ts` del round de sync es la
+/// identidad de coherencia de una ruta atómica, y la caché NO la sostiene
+/// durante la rotación: el writer refresca la población pool a pool, así que
+/// existe una ventana en la que parte de las entradas ya están en el bloque N+1
+/// y el resto sigue en N. MEDIDO en producción (solo-lectura, 2026-10-04):
+/// `arbx:pool_reserves:1:*` (557 entradas) partido en la misma muestra entre
+/// `blk 26116479` (30) y `blk 26116480` (527), y en otra entre `blk ...480`
+/// (384) y `blk ...481` (173); `arbx:v3_slot0:1:*` (318) con `ts` idéntico
+/// dentro de cada round. Una ruta con piernas de DOS rounds mezcla estado de
+/// dos bloques distintos: `quote_path_progress` la rechaza con
+/// `mixed_block_or_domain_in_atomic_route` y TODOS los recibos de la ruta caen
+/// — medido como
+/// `protocol_exact_quotes::hop_Some(1):mixed_block_or_domain_in_atomic_route`
+/// (61 de 269) más `same_snapshot::edges_span_multiple_sync_rounds_or_snapshots`
+/// (37) en el gate v4 (ventana 2026-10-04 04:00).
+///
+/// Por eso la lectura ALINEA el round antes de componer: si las piernas
+/// resueltas quedaron en rounds distintos, re-lee SÓLO las rezagadas (las demás
+/// ya están en el round más nuevo) dentro de un presupuesto wall-clock acotado.
+/// Si el presupuesto se agota sin alinear, devuelve la lectura TAL CUAL y es el
+/// llamador quien declara el contexto NO COMPUTADO (R8/R10) — jamás se
+/// re-etiqueta la identidad para tapar que el grafo mezcla dos bloques.
+const INTENT_ROUND_ALIGN_BUDGET_MS: u64 = 600;
+const INTENT_ROUND_ALIGN_MAX_PASSES: u8 = 4;
+const INTENT_ROUND_ALIGN_BACKOFF_MS: u64 = 150;
+
+/// El `ts` del round de sync de una pierna RESUELTA. `None` en las omitidas: una
+/// pierna omitida no aporta estado al grafo y por tanto no puede desalinearlo.
+fn leg_round_ts(read: &IntentLegRead) -> Option<u64> {
+    match read {
+        IntentLegRead::Ready { body, .. } => Some(match body {
+            IntentLegBody::V2 { sync_ts, .. } | IntentLegBody::V3 { sync_ts, .. } => *sync_ts,
+        }),
+        IntentLegRead::Skip(_) => None,
+    }
+}
+
+/// Round MÁS NUEVO observado entre las piernas resueltas del intent.
+fn newest_leg_round(reads: &[IntentLegRead]) -> Option<u64> {
+    reads.iter().filter_map(leg_round_ts).max()
+}
+
+/// Todas las piernas RESUELTAS comparten UN round ⇔ el grafo es coherente: una
+/// sola frontera de estado, una sola identidad de bloque para la ruta atómica.
+/// 0 o 1 pierna resuelta son coherentes por vacuidad (no hay ruta que mezcle).
+fn intent_legs_share_one_round(reads: &[IntentLegRead]) -> bool {
+    match newest_leg_round(reads) {
+        None => true,
+        Some(newest) => reads.iter().filter_map(leg_round_ts).all(|ts| ts == newest),
+    }
+}
+
+/// Índices de las piernas RESUELTAS que quedaron en un round ANTERIOR al más
+/// nuevo: son exactamente las que hay que re-leer para alinear el grafo.
+fn leg_round_laggard_indices(reads: &[IntentLegRead]) -> Vec<usize> {
+    let Some(newest) = newest_leg_round(reads) else {
+        return Vec::new();
+    };
+    reads
+        .iter()
+        .enumerate()
+        .filter(|(_, read)| leg_round_ts(read).is_some_and(|ts| ts < newest))
+        .map(|(index, _)| index)
+        .collect()
+}
+
+/// Lectura de UNA pierna del intent (el cuerpo que antes vivía inline en el
+/// bucle de `read_intent_legs`, ahora invocable para la pasada completa y para
+/// la re-lectura acotada de una rezagada).
+async fn read_intent_leg(
+    runner: &Arc<CartridgeRunner>,
+    redis: &mut redis::aio::ConnectionManager,
+    leg: &crate::route_intent::RouteIntentLeg,
+    chain_id: u64,
+    decimal_cache: &mut std::collections::HashMap<String, Option<u8>>,
+    slot0_cache: &mut std::collections::HashMap<String, Option<(String, u128, u64)>>,
+) -> IntentLegRead {
+    // Gate de COSTE: una pierna sin pool o degenerada se descarta ANTES de
+    // cualquier I/O (idéntico a la ruta ACTIVE previa).
+    let Some(pool) = leg.pool_hint else {
+        return IntentLegRead::Skip("missing_pool_hint");
+    };
+    let token_in = format!("{:#x}", leg.token_in);
+    let token_out = format!("{:#x}", leg.token_out);
+    if token_in == token_out {
+        // Una pierna degenerada invalidaría TODO el grafo
+        // (enumerate_cycles: invalid_or_duplicate_graph_edge); se omite.
+        return IntentLegRead::Skip("degenerate_self_pair");
+    }
+    // El protocolo decide la FUENTE del dato (V3 → slot0; resto →
+    // reservas). El fee lo deriva la composición desde la misma función
+    // pura, así que aquí sólo se necesita el protocolo.
+    let (protocol, _, _) = v4_edge_protocol_and_fee(leg);
+    let pool_id = format!("{:#x}", pool);
+    // V3-LEG-GRAPH-01 (RESERVES-CACHE-01, 2026-10-01): el protocolo se
+    // computa ANTES del gate de reservas. Un pool V3 NO tiene
+    // getReserves(): su dato vive en `arbx:v3_slot0`, jamás en
+    // `arbx:pool_reserves`. Exigirle la entrada V2 descartaba TODA pierna
+    // V3 con el motivo engañoso `reserves_missing` — 98% de las piernas
+    // descartadas en producción (medido 2026-10-01). El Edge ya soporta V3
+    // (reserve_in_raw: Option) y quote_path lo resuelve con
+    // v3_spot_within_tick (orientación derivada de token_in/token_out).
+    let body = if protocol == "uniswap_v3" {
+        match v4_slot0(redis, chain_id, &pool_id, slot0_cache).await {
+            Some((sp, liq, ts)) => IntentLegBody::V3 {
+                sqrt_price_x96: sp,
+                liquidity: liq,
+                sync_ts: ts,
+            },
+            // Sin slot0 cacheado → skip con motivo PROPIO, no el engañoso.
+            None => return IntentLegRead::Skip("v3_slot0_missing"),
+        }
+    } else {
+        let Some(entry) = runner.read_pool_reserves(&pool_id).await else {
+            return IntentLegRead::Skip("reserves_missing");
+        };
+        // Orientación exacta: token0_addr declara cuál reserva es "in"
+        // para esta pierna. Sin token0_addr o con token0 fuera de la
+        // ruta → OMITIR (R8: sin dual-orientation ni inferencia).
+        let Some(token0) = entry.token0_addr.as_deref() else {
+            return IntentLegRead::Skip("token0_addr_missing");
+        };
+        let pair = if token0 == token_in {
+            (entry.r0.clone(), entry.r1.clone())
+        } else if token0 == token_out {
+            (entry.r1.clone(), entry.r0.clone())
+        } else {
+            return IntentLegRead::Skip("token0_addr_out_of_route");
+        };
+        // Identidad de coherencia del ROUND DE SYNC (PLAN-SUPPORT-WIRING-
+        // 01): V2 y V3 del mismo round comparten ts (verificado en
+        // producción), mientras que blk solo existe en V2 y ts solo se
+        // usaba en V3 — con identidades distintas, quote_path_progress
+        // rechazaba TODA ruta mixta con mixed_block_or_domain. El ts del
+        // round ES la frontera real de coherencia (todas las entradas se
+        // escribieron juntas). JAMÁS se fabrica un hash (R8).
+        IntentLegBody::V2 {
+            reserve_in_raw: pair.0,
+            reserve_out_raw: pair.1,
+            sync_ts: entry.ts,
+        }
+    };
+    let Some(dec_in) = v4_token_decimals(redis, chain_id, &token_in, decimal_cache).await else {
+        return IntentLegRead::Skip("token_in_decimals_missing");
+    };
+    let Some(dec_out) = v4_token_decimals(redis, chain_id, &token_out, decimal_cache).await else {
+        return IntentLegRead::Skip("token_out_decimals_missing");
+    };
+    IntentLegRead::Ready {
+        pool_id,
+        body,
+        decimals: (dec_in, dec_out),
+    }
+}
+
+/// Una pasada completa: una lectura por pierna, en el orden del intent (el
+/// orden fija qué razón de omisión se reporta cuando fallan varios datos).
+async fn read_intent_legs_pass(
+    runner: &Arc<CartridgeRunner>,
+    redis: &mut redis::aio::ConnectionManager,
+    intent: &RouteIntent,
+    chain_id: u64,
+) -> Vec<IntentLegRead> {
+    let mut decimal_cache: std::collections::HashMap<String, Option<u8>> =
+        std::collections::HashMap::new();
+    let mut slot0_cache: std::collections::HashMap<String, Option<(String, u128, u64)>> =
+        std::collections::HashMap::new();
+    let mut reads: Vec<IntentLegRead> = Vec::with_capacity(intent.legs.len());
+    for leg in &intent.legs {
+        reads.push(
+            read_intent_leg(
+                runner,
+                redis,
+                leg,
+                chain_id,
+                &mut decimal_cache,
+                &mut slot0_cache,
+            )
+            .await,
+        );
+    }
+    reads
+}
+
+/// Censo del grafo v4 compuesto para UN intent.
+///
+/// OBSERVABILITY-V4-EDGES-01: existe SEPARADO del guard porque el diagnóstico
+/// debe distinguir "grafo vacío" de "router lleno" — el censo es válido aunque
+/// el registro no llegue a ocurrir. La ruta ACTIVE lo emite en su summary
+/// (una línea por tx, nunca por intent: R9).
+#[derive(Debug, Default, Clone)]
+pub struct IntentContextCensus {
+    pub edges_built: usize,
+    pub legs_skipped: std::collections::BTreeMap<&'static str, u64>,
+}
+
+/// SHADOW-CANONICAL-01 — resultado de intentar componer y registrar el
+/// contexto v4 REAL del intent.
+pub struct IntentContextOutcome {
+    /// `Some` ⇔ el contexto REAL quedó registrado en el router bajo
+    /// `intent-{uuid}`, y su `Drop` lo retira al terminar la evaluación.
+    /// `None` ⇔ la evaluación debe caer al contexto DATA_GAP estático; la razón
+    /// exacta ya quedó registrada a debug (`cartridge.intent_context_unavailable`).
+    pub guard: Option<IntentContextGuard>,
+    pub census: IntentContextCensus,
+}
+
+impl IntentContextOutcome {
+    /// Fallback honesto: sin contexto real, con el censo ya computado.
+    fn unavailable(
+        census: IntentContextCensus,
+        chain_id: u64,
+        intent: &RouteIntent,
+        reason: &'static str,
+    ) -> Self {
+        intent_context_unavailable(chain_id, intent, reason);
+        Self {
+            guard: None,
+            census,
+        }
+    }
+
+    /// `context_id`/`snapshot_id` que los cartuchos v4 deben copiar a su ctx,
+    /// o los ids DATA_GAP estáticos cuando no hubo contexto real. `SnapshotServices::check`
+    /// exige `ctx["context_id"] == bundle.context_id` y lo mismo para el snapshot.
+    pub fn stamp_ids(&self, chain_id: u64) -> (String, String) {
+        match &self.guard {
+            Some(g) => (g.context_id().to_owned(), g.context_id().to_owned()),
+            None => (
+                format!("boot-chain-{chain_id}"),
+                format!("boot-genesis-{chain_id}"),
+            ),
+        }
+    }
+}
+
+/// SHADOW-CANONICAL-01 — compone y REGISTRA el contexto v4 REAL del intent.
+///
+/// Es la ÚNICA implementación de esta lógica: la ruta ACTIVE y la ruta SHADOW
+/// la invocan por igual, de modo que ambas evaluaciones usan el MISMO sustrato
+/// de datos (§34.1 hot-path mode-invariant: los modos difieren SÓLO en el
+/// terminus de ejecución, jamás en la matemática ni en los datos de entrada).
+///
+/// Preserva, pieza por pieza, el bloque que la ruta ACTIVE tenía inline:
+/// 1. snapshot de la config del operador y (con él) el índice de identidad
+///    address-keyed, más el snapshot de precios canónicos;
+/// 2. grafo de aristas desde las reservas/slot0/decimales REALES de Redis
+///    (orientación exacta por `token0_addr`; omisión honesta con razón propia);
+/// 3. estado on-chain de los baskets relevantes (cero RPC sin basket en ruta);
+/// 4. `MarketState` para el dispatcher de operadores nativos (sólo aristas V2);
+/// 5. gas OBSERVADO del runner (una sola lectura del getter);
+/// 6. `build_v4_intent_bundle` (mismos inputs, mismos manifiestos);
+/// 7. `SnapshotServices::new` + `with_operator_dispatch` con
+///    `V4StructuralInputAdmission`;
+/// 8. `router.insert` bajo el `context_id` del intent.
+///
+/// Coste: UNA invocación por intent (no por cartucho) y dentro del semáforo
+/// global que ya acota ambas rutas; las lecturas Redis están cacheadas por
+/// intent (reservas/slot0/decimales) o por proceso (identidad, TTL 30s), y la
+/// única lectura on-chain (baskets) tiene gate de relevancia + presupuesto.
+pub async fn build_and_register_intent_context(
+    runner: &Arc<CartridgeRunner>,
+    intent: &RouteIntent,
+    chain_id: u64,
+    cfg_provider: &Arc<crate::orchestrator::ConfigProvider>,
+    math_registry: &Arc<math_engine::OperatorRegistry>,
+    router: Option<&Arc<crate::context_router::ContextRouter>>,
+) -> IntentContextOutcome {
+    let ctx_id = format!("intent-{}", uuid::Uuid::new_v4());
+    // Snapshot config ONCE for all candidates (same as orchestrator).
+    let cfg_snapshot = cfg_provider.snapshot(chain_id).await;
+    // ARBX-R-0002: address-keyed token identity, built ONCE per intent and
+    // threaded into every candidate. Cartridges emit ADDRESSES in
+    // `candidate.token_addresses`; under the legacy symbol-compare every one
+    // failed the operator's symbol allowlist (TokenNotAllowed:<addr> 100% —
+    // the AGLD/1INCH flood). Identity mode binds (chain_id, address); the 30s
+    // cache is shared with the scanner path (same composition site).
+    let identity_idx = match cfg_snapshot.as_ref() {
+        Some(state) => {
+            let mut redis_conn = runner.redis_connection().await;
+            Some(crate::token_identity::index_for(&mut redis_conn, chain_id, state).await)
+        }
+        None => None,
+    };
+    // FIX (review V2 #9): fetch the live price snapshot ONCE per intent (not per
+    // cartridge) and thread it into every candidate evaluation. Empty snapshot
+    // degrades to the evaluator's ConfigPriceOracle fallback — never fabricated.
+    let price_snapshot: std::collections::HashMap<String, f64> = {
+        let mut redis_conn = runner.redis_connection().await;
+        let oracle = shared_rs::price_oracle::RedisCachedPriceOracle::snapshot_from_redis(
+            &mut redis_conn,
+            chain_id,
+        )
+        .await;
+        oracle.into_snapshot()
+    };
+    // ── AGENT v4 Fase 3a — grafo REAL del intent ──────────────────────────
+    // Edges orientados desde las reservas REALES de Redis (orientación EXACTA
+    // por token0_addr — jamás heurística de magnitud: R8). Una pierna sin
+    // pool, sin reservas, sin token0_addr, sin decimales o degenerada se OMITE
+    // con razón explícita.
+    let reads = {
+        let mut redis_conn = runner.redis_connection().await;
+        read_intent_legs(runner, &mut redis_conn, intent, chain_id).await
+    };
+    let IntentEdgeComposition {
+        edges: v4_edges,
+        first_token_in: v4_first_token_in,
+        skip_reasons: v4_skip_reasons,
+    } = compose_intent_edges(chain_id, &ctx_id, intent, &reads);
+    // LOGFLOOD-01: omisiones por-pierna a DEBUG con histograma agregado de
+    // razones (sin muestreo — R8), una sola línea por intent.
+    if !v4_skip_reasons.is_empty() {
+        debug!(
+            event = "cartridge.v4_intent_legs_skipped",
+            chain_id,
+            tx_hash = %intent.tx_hash,
+            legs_total = intent.legs.len(),
+            edges_built = v4_edges.len(),
+            ?v4_skip_reasons,
+            "piernas omitidas al componer el grafo v4 del intent (omisión honesta, sin heurísticas)"
+        );
+    }
+    let census = IntentContextCensus {
+        edges_built: v4_edges.len(),
+        legs_skipped: v4_skip_reasons,
+    };
+    // PROTOCOL-COHERENCE-01 (2026-10-04): si tras la alineación acotada las
+    // piernas RESUELTAS siguen repartidas entre dos rounds de sync, el grafo
+    // mezcla estado de dos bloques y NINGUNA ruta puede ser atómica: el propio
+    // contrato lo detecta en `quote_path_progress`
+    // (`mixed_block_or_domain_in_atomic_route`) y con él caen TODOS los recibos
+    // de la ruta — medido en el gate v4 como
+    // `protocol_exact_quotes::hop_Some(1):mixed_block_or_domain_in_atomic_route`
+    // (61 de 269) y `same_snapshot::edges_span_multiple_sync_rounds_or_snapshots`
+    // (37), más los cuatro recibos económicos dependientes de la cotización
+    // (65 cada uno). Componer el bundle con esa identidad mixta es AFIRMAR una
+    // coherencia que el dato desmiente: se declara el contexto NO COMPUTADO con
+    // la razón real (R8/R10) en vez de fabricar una identidad única que taparía
+    // la incoherencia. El fallback ya existe y es el mismo de `no_graph_edges`.
+    if !intent_legs_share_one_round(&reads) {
+        let rounds: Vec<Option<u64>> = reads.iter().map(leg_round_ts).collect();
+        debug!(
+            event = "cartridge.v4_intent_round_unaligned",
+            chain_id,
+            tx_hash = %intent.tx_hash,
+            legs_total = intent.legs.len(),
+            edges_built = v4_edges.len(),
+            newest_round = ?newest_leg_round(&reads),
+            laggards = ?leg_round_laggard_indices(&reads),
+            rounds = ?rounds,
+            "piernas del intent en rounds de sync distintos tras la alineación acotada: contexto NO COMPUTADO (R8)"
+        );
+        return IntentContextOutcome::unavailable(
+            census,
+            chain_id,
+            intent,
+            "legs_span_multiple_sync_rounds",
+        );
+    }
+    // BASKET-WORKER-01 (2026-10-03): estado on-chain de los baskets ERC-4626
+    // RELEVANTES a este intent. La lectura async vive AQUÍ (el llamador) y el
+    // bundle sync la recibe ya leída. Gate de coste: sin basket del operador
+    // entre los tokens del grafo el mapa queda VACÍO SIN RPC; con RPC caído,
+    // timeout o presupuesto vencido el intent sigue igual (R8 fail-honest).
+    let v4_basket_state = v4_relevant_basket_state(chain_id, &v4_edges).await;
+    // OPERATOR-DISPATCH-WIRING-01 (2026-10-02): MarketState REAL desde los
+    // edges ya computados (reservas V2 orientadas + decimales), para adjuntar
+    // el dispatcher de operadores nativos al contexto del intent. Sólo edges
+    // V2: su precio por reservas es no ambiguo; el precio V3 desde slot0 exige
+    // la verificación contra referencia del EXACT-CLASS-01 y queda como
+    // seguimiento — jamás alimentar a los operadores un precio posiblemente mal
+    // orientado. Sin estado → no se adjunta dispatch (receipts honestos).
+    // COST-PRODUCERS-01: la misma lectura de gas (getter; el atómico guarda
+    // MILLI-gwei y el getter decodifica) alimenta el MarketState y la línea de
+    // gas del bundle.
+    let v4_intent_gas_gwei: f64;
+    let v4_dispatch_state: Option<std::sync::Arc<math_engine::MarketState>>;
+    {
+        let block = runner
+            .host_block_number_handle()
+            .load(std::sync::atomic::Ordering::Relaxed);
+        v4_intent_gas_gwei = runner.host_gas_price_gwei();
+        // MARKET-FEATURES-WIRE-01: features REALES para el MarketState del
+        // dispatch v4. La lectura async vive AQUÍ (el llamador async) y el
+        // constructor sync recibe el mapa ya producido — mismo idioma que
+        // `v4_basket_state` arriba. Hoy la única fuente viva alcanzable sin
+        // tocar la zona congelada es `regime_features_from_redis`
+        // (`parity_deviation` desde el PriceBus de Redis); no inserta la clave
+        // si ningún stable tiene precio válido, así que el mapa puede llegar
+        // VACÍO — y eso es "no computado", nunca un cero fabricado (R8).
+        let v4_features = {
+            let mut features_redis = runner.redis_connection().await;
+            crate::math_evidence::regime_features_from_redis(&mut features_redis, chain_id).await
+        };
+        v4_dispatch_state =
+            v4_market_state_from_edges(&v4_edges, block, v4_intent_gas_gwei, v4_features);
+    }
+    if v4_edges.is_empty() {
+        // Nombre de evento CONSERVADO del bloque original de la ruta ACTIVE (las
+        // consultas/greps de producción siguen funcionando; la razón exacta
+        // viaja además en `cartridge.intent_context_unavailable`).
+        debug!(
+            event = "cartridge.v4_intent_no_edges",
+            chain_id,
+            tx_hash = %intent.tx_hash,
+            "grafo v4 vacío tras omisiones R8; la evaluación usa el contexto estático"
+        );
+        return IntentContextOutcome::unavailable(census, chain_id, intent, "no_graph_edges");
+    }
+    // Gate de composición. Razón EXACTA por input ausente (ACTIVE-REPAIRS-01:
+    // un agregado que no dice QUÉ falta es inobservable) — mismo gate que la
+    // ruta ACTIVE tenía inline.
+    let Some(cfg) = cfg_snapshot.as_ref() else {
+        return IntentContextOutcome::unavailable(
+            census,
+            chain_id,
+            intent,
+            "no_trading_config_snapshot",
+        );
+    };
+    let Some(identity) = identity_idx.as_ref() else {
+        return IntentContextOutcome::unavailable(
+            census,
+            chain_id,
+            intent,
+            "no_token_identity_index",
+        );
+    };
+    let Some(start_token) = v4_first_token_in.as_deref() else {
+        return IntentContextOutcome::unavailable(census, chain_id, intent, "no_start_token");
+    };
+    let Some(router) = router else {
+        return IntentContextOutcome::unavailable(census, chain_id, intent, "no_context_router");
+    };
+    // EXACT-QUOTES-PRODUCER-01 (2026-10-04): quotes EXACTAS por pierna,
+    // ENCADENADAS (la salida de la pierna `i` es la entrada de la `i+1`) contra
+    // el QuoterV2 real. La lectura async vive AQUÍ — ANTES de que `v4_edges` se
+    // mueva al bundle. Sólo entran entradas de FUENTE REAL: una pierna que no
+    // cotiza NO inserta nada y su ausencia queda declarada; el
+    // `Default::default()` que había en el bundle era un NO COMPUTADO
+    // disfrazado de mapa vacío (R8/R10).
+    //
+    // POR QUÉ NO SE RECHAZA EL CONTEXTO ENTERO cuando una pierna no cotiza: la
+    // ausencia ya se DECLARA por pierna (evento agregado con su razón + la
+    // entrada que no entra) y el certificado cae al respaldo within-tick con su
+    // motivo, que es la conducta de HOY. Rechazar el contexto borraría esa
+    // evaluación — las 61 filas medidas de `v3_within_tick_is_hypothesis_…` se
+    // miden sobre rutas que SÍ se cotizan y se evalúan: negarlas no arregla
+    // ninguna, sólo esconde la medición. Lo que se elimina es la FABRICACIÓN
+    // (rellenar el hueco con un valor), no la evaluación honesta con respaldo.
+    let v4_exact = {
+        let amount_raw = intent.amount_in.to_string();
+        match v4_exact_quote_provider(chain_id) {
+            Some(provider) => {
+                v4_exact_quotes(
+                    &v4_edges,
+                    &amount_raw,
+                    V4_EXACT_QUOTE_BUDGET_MS,
+                    move |req| {
+                        let provider = provider.clone();
+                        async move {
+                            use crate::state_projector::V3QuoteProvider as _;
+                            match provider
+                                .quote_exact_input_single(
+                                    req.pool_addr,
+                                    req.token_in,
+                                    req.token_out,
+                                    req.amount_in,
+                                    req.fee_bps,
+                                )
+                                .await
+                            {
+                                // Salida cero = el quoter contestó y el pool no
+                                // entrega nada: NO es una quote exacta usable.
+                                Ok(out) if !out.is_zero() => Ok(out.to_string()),
+                                Ok(_) => Err("quoter_returned_zero".to_string()),
+                                Err(e) => Err(e.to_string()),
+                            }
+                        }
+                    },
+                )
+                .await
+            }
+            // Sin pool RPC registrado o sin catálogo de quoter para la cadena: se
+            // declara la AUSENCIA DE PRODUCTOR, no se inventa una quote.
+            None => {
+                v4_exact_quotes(
+                    &v4_edges,
+                    &amount_raw,
+                    V4_EXACT_QUOTE_BUDGET_MS,
+                    |_req| async { Err("no_quoter_or_rpc_pool_for_chain".to_string()) },
+                )
+                .await
+            }
+        }
+    };
+    let V4ExactQuotes {
+        quotes: v4_exact_quote_map,
+        gaps: v4_exact_quote_gaps,
+        chained_until_raw: v4_exact_quote_chained,
+    } = v4_exact;
+    // LOGFLOOD-01: UNA línea agregada por intent (jamás una por pierna). El
+    // resumen se arma LEYENDO cada campo del hueco: el detalle crudo del quoter
+    // es lo que hace diagnosticable la ausencia (y no queda código muerto).
+    if !v4_exact_quote_gaps.is_empty() {
+        let gap_summary: Vec<String> = v4_exact_quote_gaps
+            .iter()
+            .map(|g| {
+                format!(
+                    "hop{}:{}:{}:{}:{}",
+                    g.index, g.edge_id, g.protocol, g.reason, g.detail
+                )
+            })
+            .collect();
+        debug!(
+            event = "cartridge.v4_exact_quotes_absent",
+            chain_id,
+            tx_hash = %intent.tx_hash,
+            edges_built = v4_edges.len(),
+            quoted = v4_exact_quote_map.len(),
+            chained_until_raw = %v4_exact_quote_chained,
+            gaps = ?gap_summary,
+            "piernas sin quote exacta de protocolo: la entrada NO se inserta y la ausencia queda declarada (R8)"
+        );
+    }
+    // PRICE-COVERAGE-01 (§38): tercera fuente del mapa de precios — el bus de
+    // precios EN PROCESO. `get()` clona un `Arc` ya inicializado o devuelve
+    // `None` cuando `main.rs` todavía no llamó a `init()` (tests, arranques
+    // parciales); con `None` la composición se queda con las dos fuentes de
+    // Redis/config y no inventa nada (R8). Coste: un load atómico, sin I/O.
+    let price_bus = crate::price_bus_global::get();
+    let Some(bundle) = build_v4_intent_bundle(
+        chain_id,
+        &ctx_id,
+        v4_edges,
+        start_token,
+        &intent.amount_in.to_string(),
+        cfg,
+        identity,
+        &price_snapshot,
+        v4_manifest_digests(),
+        v4_intent_gas_gwei,
+        &v4_basket_state,
+        price_bus.as_deref(),
+        v4_exact_quote_map,
+    ) else {
+        // `None` sólo si el reloj no permite una ventana temporal honesta.
+        // Evento CONSERVADO del bloque original de la ruta ACTIVE.
+        debug!(
+            event = "cartridge.v4_intent_clock_invalid",
+            chain_id,
+            tx_hash = %intent.tx_hash,
+            "sin base temporal honesta para el bundle; contexto estático"
+        );
+        return IntentContextOutcome::unavailable(census, chain_id, intent, "bundle_clock_invalid");
+    };
+    // Guarda de revisión de un solo bundle: este intent sirve exactamente el
+    // contexto que acaba de componer (mismo enfoque honesto del contexto
+    // DATA_GAP Phase-1).
+    let v4_revision: crate::snapshot_services::RevisionGuard = Arc::new(|_: &str, _: &str| true);
+    let services =
+        match crate::snapshot_services::SnapshotServices::new(Arc::new(bundle), v4_revision) {
+            Ok(services) => services,
+            Err(e) => {
+                warn!(
+                    event = "cartridge.v4_intent_bundle_rejected",
+                    chain_id,
+                    tx_hash = %intent.tx_hash,
+                    reason = %e,
+                    "bundle v4 del intent rechazado; fallback a DATA_GAP sin romper el flujo"
+                );
+                return IntentContextOutcome::unavailable(
+                    census,
+                    chain_id,
+                    intent,
+                    "bundle_rejected",
+                );
+            }
+        };
+    // OPERATOR-DISPATCH-WIRING-01: adjuntar el dispatcher del registro nativo
+    // cuando hay MarketState real. Sin estado los servicios quedan sin dispatch
+    // y los recibos nativos siguen FAIL honesto.
+    let services = match v4_dispatch_state {
+        Some(state) => {
+            let registry = math_registry.clone();
+            services.with_operator_dispatch(Arc::new(
+                move |ctx: &serde_json::Value,
+                      spec: &serde_json::Value,
+                      cand: &serde_json::Value|
+                      -> Result<serde_json::Value, String> {
+                    // Identidad del plan/snapshot desde el ctx y el candidato
+                    // del propio flujo.
+                    let snapshot_id = ctx
+                        .get("snapshot_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string();
+                    let plan_hash = cand
+                        .get("plan_hash")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string();
+                    crate::native_operator_adapter::evaluate_declared(
+                        &registry,
+                        &state,
+                        spec,
+                        &snapshot_id,
+                        &plan_hash,
+                        &V4StructuralInputAdmission,
+                        crate::operator_toggles::is_disabled,
+                    )
+                },
+            ))
+        }
+        None => services,
+    };
+    match router.insert(ctx_id.clone(), Arc::new(services)) {
+        Ok(()) => IntentContextOutcome {
+            guard: Some(IntentContextGuard {
+                router: Some(router.clone()),
+                context_id: ctx_id,
+            }),
+            census,
+        },
+        Err(e) => {
+            debug!(
+                event = "cartridge.v4_intent_insert_failed",
+                chain_id,
+                tx_hash = %intent.tx_hash,
+                reason = %e,
+                "router sin capacidad para el contexto del intent; contexto estático"
+            );
+            IntentContextOutcome::unavailable(census, chain_id, intent, "router_insert_failed")
+        }
+    }
+}
+
+/// SHADOW-CANONICAL-01 — razón EXACTA por la que una ruta evaluó contra el
+/// contexto DATA_GAP estático en lugar del bundle real del intent. `debug!`
+/// (no `info!`): corre por intent en el block scanner (LOGFLOOD-01).
+fn intent_context_unavailable(chain_id: u64, intent: &RouteIntent, reason: &'static str) {
+    debug!(
+        event = "cartridge.intent_context_unavailable",
+        chain_id,
+        tx_hash = %intent.tx_hash,
+        reason,
+        "sin contexto v4 real para este intent; la evaluación usa el stub DATA_GAP (razón exacta)"
+    );
 }
 
 /// ACTIVE MODE — evaluate cartridges and emit real StrategyCandidates through the full pipeline.
@@ -1618,219 +3522,50 @@ pub async fn active_evaluate_and_emit(
     };
 
     // ── AGENT v4 Fase 3a — SnapshotBundle REAL por intent (ContextRouter) ──
-    // Para ESTE intent se compone un grafo con edges orientados desde las
-    // reservas REALES de Redis (orientación EXACTA por token0_addr — jamás
-    // heurística de magnitud: R8). Una pierna sin pool, sin reservas, sin
-    // token0_addr, sin decimales o degenerada se OMITE con razón explícita.
-    // Con edges reales se registra un contexto "intent-{uuid}" en el router
-    // y pool_data se sella con ese id; sin ellos, la evaluación continúa
-    // contra el contexto DATA_GAP estático (ids boot-chain/boot-genesis),
-    // que responde con razones honestas. Ruta shadow: intacta (Phase-1).
-    let v4_ctx_id = format!("intent-{}", Uuid::new_v4());
-    let v4_static_context_id = format!("boot-chain-{chain_id}");
-    let v4_static_snapshot_id = format!("boot-genesis-{chain_id}");
-    let mut v4_edges: Vec<crate::agent_graph::Edge> = Vec::new();
-    let mut v4_first_token_in: Option<String> = None;
-    let mut v4_skip_reasons: std::collections::BTreeMap<&'static str, u64> =
-        std::collections::BTreeMap::new();
-    let mut v4_decimal_cache: std::collections::HashMap<String, Option<u8>> =
-        std::collections::HashMap::new();
-    let mut v4_slot0_cache: std::collections::HashMap<String, Option<(String, u128)>> =
-        std::collections::HashMap::new();
-    let mut v4_redis = runner.redis_connection().await;
-    for leg in &intent.legs {
-        let Some(pool) = leg.pool_hint else {
-            *v4_skip_reasons.entry("missing_pool_hint").or_insert(0) += 1;
-            continue;
-        };
-        let token_in = format!("{:#x}", leg.token_in);
-        let token_out = format!("{:#x}", leg.token_out);
-        if token_in == token_out {
-            // Una pierna degenerada invalidaría TODO el grafo
-            // (enumerate_cycles: invalid_or_duplicate_graph_edge); se omite.
-            *v4_skip_reasons.entry("degenerate_self_pair").or_insert(0) += 1;
-            continue;
-        }
-        let Some(entry) = runner.read_pool_reserves(&format!("{:#x}", pool)).await else {
-            *v4_skip_reasons.entry("reserves_missing").or_insert(0) += 1;
-            continue;
-        };
-        // Orientación exacta: token0_addr declara cuál reserva es "in" para
-        // esta pierna. Sin token0_addr o con token0 fuera de la ruta →
-        // OMITIR (R8: sin dual-orientation ni inferencia).
-        let Some(token0) = entry.token0_addr.as_deref() else {
-            *v4_skip_reasons.entry("token0_addr_missing").or_insert(0) += 1;
-            continue;
-        };
-        let (reserve_in, reserve_out) = if token0 == token_in {
-            (entry.r0.clone(), entry.r1.clone())
-        } else if token0 == token_out {
-            (entry.r1.clone(), entry.r0.clone())
-        } else {
-            *v4_skip_reasons
-                .entry("token0_addr_out_of_route")
-                .or_insert(0) += 1;
-            continue;
-        };
-        let Some(dec_in) =
-            v4_token_decimals(&mut v4_redis, chain_id, &token_in, &mut v4_decimal_cache).await
-        else {
-            *v4_skip_reasons
-                .entry("token_in_decimals_missing")
-                .or_insert(0) += 1;
-            continue;
-        };
-        let Some(dec_out) =
-            v4_token_decimals(&mut v4_redis, chain_id, &token_out, &mut v4_decimal_cache).await
-        else {
-            *v4_skip_reasons
-                .entry("token_out_decimals_missing")
-                .or_insert(0) += 1;
-            continue;
-        };
-        if v4_first_token_in.is_none() {
-            v4_first_token_in = Some(token_in.clone());
-        }
-        let pool_id = format!("{:#x}", pool);
-        // Protocolo + fee del Edge: V2 → cpmm_v2 con la fee del intent
-        // (quote local); V3 → uniswap_v3 con fee PIPS del intent (rama
-        // within-tick si hay slot0 cacheado); resto → protocolo nominal sin
-        // fee (quote de productor exacto — sin fallback CPMM, doctrina v4).
-        let (edge_protocol, fee_units, fee_denominator) = v4_edge_protocol_and_fee(leg);
-        // V3: slot0 cacheado (misma fuente que get_v3_slot0) → campos del
-        // within-tick. Sin slot0 → None: quote de productor exacto (R8).
-        let (sqrt_price_x96_raw, liquidity) = if edge_protocol == "uniswap_v3" {
-            match v4_slot0(&mut v4_redis, chain_id, &pool_id, &mut v4_slot0_cache).await {
-                Some((sp, liq)) => (Some(sp), Some(liq)),
-                None => (None, None),
-            }
-        } else {
-            (None, None)
-        };
-        v4_edges.push(crate::agent_graph::Edge {
-            edge_id: pool_id.clone(),
-            pool_id,
-            chain_id,
-            token_in,
-            token_out,
-            protocol: edge_protocol,
-            snapshot_id: v4_ctx_id.clone(),
-            // Identidad de bloque REAL observada (número de la entrada de
-            // reservas) con prefijo explícito "blk-": Edge no tiene campo
-            // para número de bloque y JAMÁS se fabrica un hash (R8).
-            block_hash: format!("blk-{}", entry.blk),
-            reserve_in_raw: Some(reserve_in),
-            reserve_out_raw: Some(reserve_out),
-            fee_units,
-            fee_denominator,
-            token_in_decimals: dec_in,
-            token_out_decimals: dec_out,
-            // Adaptador que respalda estos edges: la caché de reservas del
-            // searcher (procedencia real, no una versión de protocolo).
-            adapter_version: "reserves_cache_v1".to_string(),
-            sqrt_price_x96_raw,
-            liquidity,
-        });
-    }
-    // LOGFLOOD-01: omisiones por-pierna a DEBUG con histograma agregado de
-    // razones (sin muestreo — R8), una sola línea por intent.
-    if !v4_skip_reasons.is_empty() {
-        debug!(
-            event = "cartridge.v4_intent_legs_skipped",
-            chain_id,
-            tx_hash = %intent.tx_hash,
-            legs_total = intent.legs.len(),
-            edges_built = v4_edges.len(),
-            ?v4_skip_reasons,
-            "piernas omitidas al componer el grafo v4 del intent (omisión honesta, sin heurísticas)"
-        );
-    }
-
-    let mut v4_registered = false;
-    if v4_edges.is_empty() {
-        debug!(
-            event = "cartridge.v4_intent_no_edges",
-            chain_id,
-            tx_hash = %intent.tx_hash,
-            "grafo v4 vacío tras omisiones R8; la evaluación usa el contexto estático"
-        );
-    } else if let (Some(cfg), Some(identity), Some(start_token), Some(router)) = (
-        cfg_snapshot.as_ref(),
-        identity_idx.as_ref(),
-        v4_first_token_in.as_deref(),
+    // SHADOW-CANONICAL-01 (2026-10-03): la composición del grafo, el bundle
+    // real, los servicios v4 y el registro del contexto viven AHORA en
+    // `build_and_register_intent_context`, compartido con la ruta SHADOW. Las
+    // dos rutas evalúan por tanto contra el MISMO sustrato de datos (reservas/
+    // slot0/decimales reales, precios canónicos, gas observado, líneas de coste
+    // del operador, dispatcher de operadores nativos): §34.1 exige que los
+    // modos difieran SÓLO en el terminus de ejecución. Sin contexto real la
+    // evaluación continúa contra el contexto DATA_GAP estático (ids
+    // boot-chain/boot-genesis), que responde con razones honestas, y la razón
+    // exacta queda registrada a debug por el propio helper.
+    let v4_context = build_and_register_intent_context(
+        &runner,
+        &intent,
+        chain_id,
+        &cfg_provider,
+        &math_registry,
         v4_router.as_ref(),
-    ) {
-        match build_v4_intent_bundle(
-            chain_id,
-            &v4_ctx_id,
-            v4_edges,
-            start_token,
-            &intent.amount_in.to_string(),
-            cfg,
-            identity,
-            &price_snapshot,
-            v4_manifest_digests(),
-        ) {
-            Some(bundle) => {
-                // Guarda de revisión de un solo bundle: este intent sirve
-                // exactamente el contexto que acaba de componer (mismo
-                // enfoque honesto del contexto DATA_GAP Phase-1).
-                let v4_revision: crate::snapshot_services::RevisionGuard =
-                    Arc::new(|_: &str, _: &str| true);
-                match crate::snapshot_services::SnapshotServices::new(Arc::new(bundle), v4_revision)
-                {
-                    Ok(services) => match router.insert(v4_ctx_id.clone(), Arc::new(services)) {
-                        Ok(()) => v4_registered = true,
-                        Err(e) => debug!(
-                            event = "cartridge.v4_intent_insert_failed",
-                            chain_id,
-                            tx_hash = %intent.tx_hash,
-                            reason = %e,
-                            "router sin capacidad para el contexto del intent; contexto estático"
-                        ),
-                    },
-                    Err(e) => warn!(
-                        event = "cartridge.v4_intent_bundle_rejected",
-                        chain_id,
-                        tx_hash = %intent.tx_hash,
-                        reason = %e,
-                        "bundle v4 del intent rechazado; fallback a DATA_GAP sin romper el flujo"
-                    ),
-                }
-            }
-            None => {
-                debug!(
-                    event = "cartridge.v4_intent_clock_invalid",
-                    chain_id,
-                    tx_hash = %intent.tx_hash,
-                    "sin base temporal honesta para el bundle; contexto estático"
-                );
-            }
-        }
-    }
-
-    // Guard con Drop: retira el contexto por-intent del router en TODA salida
-    // de la tarea (incluye panic) — sin fugas de capacidad del router.
-    let _v4_intent_guard = V4IntentContextGuard {
-        router: if v4_registered {
-            v4_router.clone()
-        } else {
-            None
-        },
-        context_id: v4_ctx_id.clone(),
+    )
+    .await;
+    // Sustrato REALMENTE usado: la telemetría de outcomes se comparte con la
+    // ruta SHADOW (mode-invariant, BUG-003/RD-06), así que también aquí se
+    // declara si la evaluación usó el bundle real o el stub DATA_GAP.
+    let v4_registered = v4_context.guard.is_some();
+    let v4_substrate = if v4_registered {
+        ShadowSubstrate::IntentBundle
+    } else {
+        ShadowSubstrate::StaticBootStub
     };
-
+    // OBSERVABILITY-V4-EDGES-01: censo del grafo compuesto para ESTE intent —
+    // válido aunque el registro no ocurriera (distingue "grafo vacío" de
+    // "router lleno"). Se emite en el summary de abajo, una línea por tx.
+    let v4_edges_built = v4_context.census.edges_built;
+    let v4_skip_reasons = v4_context.census.legs_skipped.clone();
     // Sello de identidad del contexto para ESTA evaluación: los cartuchos v4
     // copian estos campos a su ctx y SnapshotServices::check exige
     // ctx["context_id"] == bundle.context_id && ctx["snapshot_id"] ==
     // bundle.snapshot_id. Registrado → ids del intent; fallback → ids
     // estáticos DATA_GAP (coinciden con el contexto registrado en boot).
-    // Ruta ACTIVE únicamente: la shadow conserva su comportamiento Phase-1.
-    let (v4_stamp_context, v4_stamp_snapshot) = if v4_registered {
-        (v4_ctx_id.clone(), v4_ctx_id.clone())
-    } else {
-        (v4_static_context_id, v4_static_snapshot_id)
-    };
+    // Se computa ANTES de mover el guard (toma `&self`).
+    let (v4_stamp_context, v4_stamp_snapshot) = v4_context.stamp_ids(chain_id);
+    // Guard con Drop: retira el contexto por-intent del router en TODA salida
+    // de la tarea (incluye panic) — sin fugas de capacidad del router.
+    let _v4_intent_guard = v4_context.guard;
+
     pool_data.insert("context_id".into(), rhai::Dynamic::from(v4_stamp_context));
     pool_data.insert("snapshot_id".into(), rhai::Dynamic::from(v4_stamp_snapshot));
 
@@ -1841,10 +3576,108 @@ pub async fn active_evaluate_and_emit(
     let pertinent_count = pertinent.len();
     let mut negative_reasons: std::collections::BTreeMap<String, u64> =
         std::collections::BTreeMap::new();
+    // ACTIVE-REPAIRS-01 (2026-10-03): histograma de PARES (campo::razón) de los
+    // repairs v4 — el top-level `reason` es un agregado ("applicable_data_or_
+    // constraint_gap") que NO dice QUÉ requisito falta. Medición que lo destapó:
+    // el stream `arbx:route_discovery:outcomes` solo contiene la ruta SHADOW
+    // (mode=shadow, stub estático Phase-1, 100% de las filas), mientras la ruta
+    // ACTIVE —la única con bundles reales, costes y precios— publica únicamente
+    // este summary. Sin el drill-down aquí, los bloqueos reales de la ruta
+    // activa eran inobservables: cualquier histograma del stream describía el
+    // stub, no la evaluación real.
+    let mut negative_repairs: std::collections::BTreeMap<String, u64> =
+        std::collections::BTreeMap::new();
     let mut negative_total: u64 = 0;
     let mut positive_total: u64 = 0;
 
+    // ── EVIDENCE-WIRING-01 (paso 2/2, 2026-10-01) ───────────────────────────
+    // Ultimo instante (epoch secs) en que se publico evidencia por cartucho. El
+    // bucle corre por cada intent sobre 269 cartuchos, asi que sin este registro
+    // serian 269 escrituras Redis POR TRANSACCION (diluvio, R9). La decision vive
+    // en `should_publish_evidence`, que es pura y esta cubierta por tests.
+    fn evidence_publish_last() -> &'static std::sync::Mutex<std::collections::HashMap<String, u64>>
+    {
+        static LAST: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, u64>>> =
+            std::sync::OnceLock::new();
+        LAST.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+    }
+
     for (cartridge_id, category, declared_primary_ops, declared_secondary_ops) in pertinent {
+        // ── EVIDENCE-WIRING-01: publicar la evidencia declarada de ESTE cartucho
+        // AQUI, en el bucle de EVALUACION y ANTES del gate de dispatch de abajo.
+        //
+        // Antes el unico call site vivia dentro del bloque que construye el
+        // `Opportunity` de cartucho (ruta de emision de candidato). Con
+        // `positive=0` en cada tx ese bloque NUNCA corre, asi que la evidencia
+        // por-cartucho nunca se publicaba y en Redis solo existia la clave
+        // regime-keyed (`arbx:math_evidence:1:dex_arb`). Es una dependencia
+        // circular: la evidencia por-cartucho requiere un positivo, el positivo
+        // requiere operadores computando, y esa evidencia es justo lo que
+        // serviria para diagnosticarlo.
+        //
+        // Ponerlo ANTES del gate importa: los 174 `dispatch_needs_route_data`
+        // hacen `continue` abajo sin evaluarse, y son precisamente los que mas
+        // necesitan quedar diagnosticables.
+        //
+        // R9: el throttle limita a una publicacion por cartucho cada
+        // EVIDENCE_PUBLISH_SECS (muy por debajo del TTL de 120s de la clave), de
+        // modo que la clave se mantiene viva con ~4.5 escrituras/s para 269
+        // cartuchos (269/60) en vez de 269 por transaccion.
+        {
+            const EVIDENCE_PUBLISH_SECS: u64 = 60;
+            let due = {
+                let mut last = evidence_publish_last()
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                crate::math_evidence::should_publish_evidence(
+                    &mut last,
+                    &cartridge_id,
+                    chrono::Utc::now().timestamp().max(0) as u64,
+                    EVIDENCE_PUBLISH_SECS,
+                )
+            };
+            if due {
+                let runner_ev = runner.clone();
+                let registry_ev = math_registry.clone();
+                let reserves_ev = reserves_cache.clone();
+                // MATH-04-FOLLOWUP: el par de tokens viaja con el pool — sin el,
+                // `build_market_state` no puede normalizar la price_matrix y los
+                // operadores devuelven `scalar: null`.
+                let pools_ev: Vec<(Address, Address, Address)> = intent
+                    .legs
+                    .iter()
+                    .filter_map(|l| l.pool_hint.map(|p| (p, l.token_in, l.token_out)))
+                    .collect();
+                let strategy_key_ev = cartridge_id.clone();
+                let primary_ev = declared_primary_ops.clone();
+                let secondary_ev = declared_secondary_ops.clone();
+                let chain_ev = chain_id;
+                tokio::spawn(async move {
+                    let mut redis_ev = runner_ev.redis_connection().await;
+                    let block_number = runner_ev
+                        .host_block_number_handle()
+                        .load(std::sync::atomic::Ordering::Relaxed);
+                    // CORE-01/MATH-01: el atomico guarda MILLI-gwei (wei/1e6);
+                    // `host_gas_price_gwei()` ya decodifica ÷1e3.
+                    let base_fee_gwei = runner_ev.host_gas_price_gwei();
+                    crate::math_evidence::publish_declared_combo_evidence(
+                        &reserves_ev,
+                        &registry_ev,
+                        &mut redis_ev,
+                        &pools_ev,
+                        chain_ev,
+                        &strategy_key_ev,
+                        &primary_ev,
+                        &secondary_ev,
+                        base_fee_gwei,
+                        block_number,
+                        0, // block_timestamp — no viaja en el intent (observe-only)
+                    )
+                    .await;
+                });
+            }
+        }
+
         // ── CORE-04 fix (2026-09-24): apply the workbook dispatch doctrine ──
         // (strategy_dispatch_status.rs) on the CANDIDATE path too. Previously
         // only route_discovery_worker consulted it — a NEEDS_ROUTE_DATA or
@@ -1888,6 +3721,7 @@ pub async fn active_evaluate_and_emit(
                     &intent,
                     &eval_result,
                     reserves_source.is_some(),
+                    v4_substrate,
                 )
                 .await;
 
@@ -1904,10 +3738,22 @@ pub async fn active_evaluate_and_emit(
                         .clone()
                         .unwrap_or_else(|| "none".to_string());
                     *negative_reasons.entry(reason_key).or_insert(0) += 1;
+                    // ACTIVE-REPAIRS-01: drill-down por (campo::razón) del
+                    // proposal sellado de ESTA evaluación negativa.
+                    for r in v4_repairs_summary(&eval_result)["repairs"]
+                        .as_array()
+                        .map(Vec::as_slice)
+                        .unwrap_or_default()
+                    {
+                        let field = r["field"].as_str().unwrap_or("?");
+                        let why = r["reason"].as_str().unwrap_or("?");
+                        *negative_repairs
+                            .entry(format!("{field}::{why}"))
+                            .or_insert(0) += 1;
+                    }
                     negative_total += 1;
                     continue;
                 }
-
                 // ── AGENT v4 interception (integration/agent-cartridges-v4) ──────
                 // A v4 proposal must NEVER flow into the v3 candidate path: the
                 // v3 adapter rebuilds the plan from intent.legs (RHAI-12) and
@@ -1994,6 +3840,7 @@ pub async fn active_evaluate_and_emit(
                         pipeline_latency_ms: None,
                         detected_at: chrono::Utc::now(),
                         trace_id: uuid::Uuid::new_v4(),
+                        economics: None,
                     };
                     if let Err(e) = emitter
                         .emit_rejected(
@@ -2095,6 +3942,7 @@ pub async fn active_evaluate_and_emit(
                     pipeline_latency_ms: None,
                     detected_at: chrono::Utc::now(),
                     trace_id: Uuid::new_v4(), // Generate new trace ID for cartridge path
+                    economics: None,
                 };
 
                 // ── STRAT-IDENT-01: publish THIS strategy's declared-combo §IV
@@ -2107,8 +3955,16 @@ pub async fn active_evaluate_and_emit(
                     let runner_ev = runner.clone();
                     let registry_ev = math_registry.clone();
                     let reserves_ev = reserves_cache.clone();
-                    let pools_ev: Vec<Address> =
-                        intent.legs.iter().filter_map(|l| l.pool_hint).collect();
+                    // MATH-04-FOLLOWUP (2026-09-30): conservar el PAR de tokens de
+                    // cada pierna, no solo el pool — mismo fix que en
+                    // orchestrator.rs. `RouteIntentLeg` ya los lleva; sin ellos la
+                    // price_matrix solo puede llevar el ratio crudo r1/r0 y los
+                    // operadores devuelven `scalar: null`.
+                    let pools_ev: Vec<(Address, Address, Address)> = intent
+                        .legs
+                        .iter()
+                        .filter_map(|l| l.pool_hint.map(|p| (p, l.token_in, l.token_out)))
+                        .collect();
                     let strategy_key_ev = cartridge_id.clone();
                     let primary_ev = declared_primary_ops.clone();
                     let secondary_ev = declared_secondary_ops.clone();
@@ -2350,12 +4206,22 @@ pub async fn active_evaluate_and_emit(
                             // Update the candidate with optimal sizing data (mirrors
                             // native: gross/net on both candidate + opportunity row).
                             let s = *sized;
+                            // ALWAYS-COMPUTE (2026-09-27): the complete economics
+                            // object on the accepted row too (additive wire). Built
+                            // before `s.candidate` moves out of `s`.
+                            let economics_obj =
+                                crate::economics::economics_from_sized(&s, cfg_snapshot.as_ref());
                             let mut c = s.candidate;
                             c.gross_profit_usd = Some(s.gross_profit_usd);
                             c.net_expected_profit_usd = Some(s.estimated_net_profit_usd);
                             c.opportunity.expected_profit_usd = Some(s.gross_profit_usd);
                             c.opportunity.net_expected_profit_usd =
                                 Some(s.estimated_net_profit_usd);
+                            // ALWAYS-COMPUTE (2026-09-27): the complete economics
+                            // object on the accepted row too (additive wire).
+                            if crate::economics::always_compute_enabled() {
+                                c.opportunity.economics = Some(economics_obj);
+                            }
                             // HOPS-LEDGER-04: thread the kernel's exact per-leg
                             // wei through to persistence — attached there onto
                             // the plan-built RouteMetadata. Some only when BOTH
@@ -2367,6 +4233,64 @@ pub async fn active_evaluate_and_emit(
                                 _ => None,
                             };
                             (c, legs)
+                        }
+                        // ALWAYS-COMPUTE (2026-09-27): a rejection whose path HAD
+                        // computed the full economics. The pre-mandate code wiped
+                        // `expected_profit_usd = None` at this exact line — the
+                        // null factory behind the audit's 39/40 null gross on the
+                        // live feed. The row now keeps EVERY number (gross AND
+                        // net, the sized amount, the ledger, the full computation
+                        // object): FAIL = "se hizo el cálculo y no cumple el
+                        // criterio", not "no tengo números".
+                        OptimizeOutcome::RejectedComputed(reason, boxed) => {
+                            let reason_str = reason.as_str().to_owned();
+                            REJECTED_NO_PROFIT_TOTAL
+                                .with_label_values(&[&chain_str, label.as_str(), &reason_str])
+                                .inc();
+                            let s = *boxed;
+                            let mut opp = strategy_candidate.opportunity.clone();
+                            opp.rejection_reason = Some(reason_str.clone());
+                            if crate::economics::always_compute_enabled() {
+                                opp.expected_profit_usd = Some(s.gross_profit_usd);
+                                opp.net_expected_profit_usd = Some(s.estimated_net_profit_usd);
+                                if s.optimal_amount_in > ethers::types::U256::zero() {
+                                    opp.amount_in_wei = s.optimal_amount_in.to_string();
+                                }
+                                opp.economics = Some(crate::economics::economics_from_sized(
+                                    &s,
+                                    cfg_snapshot.as_ref(),
+                                ));
+                            } else {
+                                // Knob OFF: pre-mandate semantics — gross wiped,
+                                // net = the kernel's single scalar payload.
+                                opp.expected_profit_usd = None;
+                                opp.net_expected_profit_usd = Some(s.estimated_net_profit_usd);
+                            }
+                            // PER-HOP upgrade: the rejected ledger attaches to
+                            // the row's RouteMetadata exactly like the native
+                            // path (all-or-nothing; a mismatched length skips).
+                            let route_with_ledger = route_ref.map(|rm| {
+                                let mut rm = rm.clone();
+                                if let (Some(ins), Some(outs)) =
+                                    (s.leg_amounts_in.clone(), s.leg_amounts_out.clone())
+                                {
+                                    let _ = rm.attach_leg_ledger(&ins, &outs);
+                                }
+                                rm
+                            });
+                            if let Err(e) = emitter
+                                .emit_rejected(&opp, label, &reason_str, route_with_ledger.as_ref())
+                                .await
+                            {
+                                warn!(
+                                    event = "cartridge.emit_rejected_failed",
+                                    chain_id,
+                                    cartridge_id = %cartridge_id,
+                                    error = %e,
+                                    "failed to emit optimizer-rejected cartridge candidate"
+                                );
+                            }
+                            continue;
                         }
                         // PER-HOP: the ledger-carrying variant is treated exactly
                         // like Rejected here; the cartridge emission path does not
@@ -2387,6 +4311,20 @@ pub async fn active_evaluate_and_emit(
                             opp.rejection_reason = Some(reason_str.clone());
                             opp.expected_profit_usd = None;
                             opp.net_expected_profit_usd = rejected_net;
+                            // ALWAYS-COMPUTE: no-quote reject ⇒ honest object —
+                            // "partial" when a payload figure exists, else "error"
+                            // with the verbatim reason (gate 2: never fabricated).
+                            if crate::economics::always_compute_enabled() {
+                                opp.economics = Some(match rejected_net {
+                                    Some(v) => crate::economics::economics_partial(
+                                        None,
+                                        Some(v),
+                                        None,
+                                        Some(&reason_str),
+                                    ),
+                                    None => crate::economics::economics_error(&reason_str),
+                                });
+                            }
                             if let Err(e) = emitter
                                 .emit_rejected(&opp, label, &reason_str, route_ref)
                                 .await
@@ -2447,8 +4385,47 @@ pub async fn active_evaluate_and_emit(
         negative = negative_total,
         positive = positive_total,
         reasons = ?negative_reasons,
+        // ACTIVE-REPAIRS-01: top pares (campo::razón) de los repairs v4 de las
+        // evaluaciones negativas de ESTA tx — el drill-down que la ruta activa
+        // no publicaba en ningún sitio. Ordenado y truncado a 12 para no
+        // reproducir LOGFLOOD-01 (R9): una línea por tx.
+        top_repairs = ?{
+            let mut v: Vec<(String, u64)> = negative_repairs
+                .iter()
+                .map(|(k, n)| (k.clone(), *n))
+                .collect();
+            v.sort_by(|a, b| b.1.cmp(&a.1));
+            v.truncate(12);
+            v
+        },
+        // OBSERVABILITY-V4-EDGES-01 (2026-10-01): censo del grafo v4 dentro del
+        // summary que YA existe. Una línea por tx, nunca por intent: esto corre
+        // ~24.800 veces por ventana y un log por ítem reproduciría LOGFLOOD-01
+        // (R9). Sin este dato no se puede distinguir si los cartuchos que
+        // buscan lo hacen sobre un grafo vacío o sobre uno real con piernas
+        // descartadas — todo el diagnóstico de esa ruta estaba en `debug!` y
+        // producción emite en `INFO`, así que la pregunta era inrespondible.
+        v4_edges_built,
+        v4_legs_skipped = ?v4_skip_reasons,
         "cartridge active eval summary (per-reason negatives)"
     );
+}
+
+/// REASON-TAG-NOT-DEBUG-01 — the stable snake_case label for a spine rejection.
+///
+/// `RejectReason::tag()` exists for exactly this purpose; its own doc says it
+/// "Avoids leaking enum variant Debug formatting (which can change across Rust
+/// versions)" (`prioritization-spine/src/decision.rs`). Both rejection sites in
+/// this file formatted the reason with `{:?}` instead, so the wire carried the
+/// Rust VARIANT NAME in PascalCase.
+///
+/// MEASURED (VPS PostgreSQL, 2026-09-27, 87 697 rows / 30 min): `NegativeNetProfit`
+/// on 14 rows, while the code's own mapping defines `negative_net_profit` (and the
+/// other six gate reasons are snake_case). A consumer matching the documented tag
+/// silently missed those rows, and the reason histogram split one condition into
+/// two buckets. Every rejection label in this file goes through here now.
+fn reject_reason_label(reason: &prioritization_spine::decision::RejectReason) -> String {
+    reason.tag().to_string()
 }
 
 /// Process a cartridge-generated candidate through the full evaluation + emission pipeline.
@@ -2558,7 +4535,7 @@ async fn process_cartridge_candidate(
         } => {
             match rejection {
                 Some(reject_reason) => {
-                    let reason = format!("{:?}", reject_reason);
+                    let reason = reject_reason_label(&reject_reason);
                     let mut opp = sc.opportunity.clone();
                     opp.rejection_reason = Some(reason.clone());
                     emitter
@@ -2597,7 +4574,10 @@ async fn process_cartridge_candidate(
         ConfigGateOutcome::StrategyConfigGateBlocked {
             reason: reject_reason,
         } => {
-            let reason = format!("StrategyConfigGateBlocked:{:?}", reject_reason);
+            let reason = format!(
+                "StrategyConfigGateBlocked:{}",
+                reject_reason_label(&reject_reason)
+            );
             let mut opp = sc.opportunity.clone();
             opp.rejection_reason = Some(reason.clone());
             emitter
@@ -2689,6 +4669,35 @@ pub async fn publish_cartridge_registry(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// REASON-TAG-NOT-DEBUG-01. El defecto medido: la fila viva llevaba
+    /// `NegativeNetProfit` (Debug del variante) mientras el propio codigo define
+    /// `negative_net_profit` como tag estable.
+    #[test]
+    fn reject_reason_label_is_the_stable_snake_case_tag() {
+        use prioritization_spine::decision::RejectReason as R;
+        assert_eq!(
+            reject_reason_label(&R::NegativeNetProfit),
+            "negative_net_profit"
+        );
+        assert_eq!(reject_reason_label(&R::LowLiquidity), "low_liquidity");
+        assert_eq!(
+            reject_reason_label(&R::ExcessiveSlippage),
+            "excessive_slippage"
+        );
+    }
+
+    #[test]
+    fn reject_reason_label_never_leaks_debug_formatting() {
+        use prioritization_spine::decision::RejectReason as R;
+        let label = reject_reason_label(&R::NegativeNetProfit);
+        // La firma exacta del defecto: `{:?}` daba el nombre del variante.
+        assert_ne!(label, format!("{:?}", R::NegativeNetProfit));
+        assert!(
+            !label.chars().any(|c| c.is_ascii_uppercase()),
+            "el label debe ser snake_case, llego: {label}"
+        );
+    }
 
     #[test]
     fn parse_defaults_to_off_for_unset_or_unknown() {
@@ -3222,6 +5231,7 @@ mod tests {
             &three_leg_intent(),
             &eval_result(true),
             true,
+            ShadowSubstrate::IntentBundle,
             1_700_000_000_000,
         );
         assert_eq!(v["schema"].as_str().unwrap(), "rd_outcome_v1");
@@ -3229,7 +5239,65 @@ mod tests {
         assert!(v["is_opportunity"].as_bool().unwrap());
         // v1 is flat: no topology object, no route[] array.
         assert!(v.get("topology").is_none());
+
+        // REPAIRS-OBSERVABILITY-01: sin proposal_v4 → null (fail-honest).
+        assert!(v["v4_repairs"].is_null(), "sin proposal_v4 debe ser null");
         assert!(v.get("route").is_none());
+    }
+
+    /// REPAIRS-OBSERVABILITY-01 (enmienda): prueba el contrato del PRODUCTOR
+    /// real — `repairs_push` (rhai_agent_bridge.rs L178) emite
+    /// `{"field": ..., "reason": ...}`, y el parser promueve el `reason` del
+    /// mapa a CartridgeEvalResult.reason EXCLUYÉNDOLO del proposal sellado.
+    /// El primer test de este PR fabricaba objetos con "name" — certificaba
+    /// un contrato distinto del productivo y devolvía lista vacía ante
+    /// repairs reales (defecto señalado en revisión).
+    #[test]
+    fn rd_outcome_v1_carries_v4_repair_names() {
+        let mut res = eval_result(false);
+        // El parser preserva el reason FUERA del proposal (exclusion list).
+        res.reason = Some("applicable_data_or_constraint_gap".to_string());
+        res.metadata.insert(
+            "proposal_v4".to_string(),
+            serde_json::json!({
+                "contract_version": "arbx.cartridge.agent/4",
+                "status": "DATA_GAP",
+                "repairs": [
+                    {"field": "capital_usd", "reason": "capital_missing_or_cap_exceeded"},
+                    {"field": "operators", "reason": "operator_context_mismatch"}
+                ],
+                "net_profit_usd": null
+            }),
+        );
+        let v = build_rd_outcome_v1(
+            1,
+            "mev_01_015_two_leg_arbitrage",
+            &three_leg_intent(),
+            &res,
+            true,
+            ShadowSubstrate::IntentBundle,
+            1_700_000_000_000,
+        );
+        let r = &v["v4_repairs"];
+        assert_eq!(r["status"].as_str().unwrap(), "DATA_GAP");
+        // El reason viene del campo preservado por el parser, no del proposal.
+        assert_eq!(
+            r["reason"].as_str().unwrap(),
+            "applicable_data_or_constraint_gap"
+        );
+        // Formato NATIVO: cada repair conserva field Y reason.
+        let repairs = r["repairs"].as_array().unwrap();
+        assert_eq!(repairs.len(), 2);
+        assert_eq!(repairs[0]["field"].as_str().unwrap(), "capital_usd");
+        assert_eq!(
+            repairs[0]["reason"].as_str().unwrap(),
+            "capital_missing_or_cap_exceeded"
+        );
+        assert_eq!(repairs[1]["field"].as_str().unwrap(), "operators");
+        assert_eq!(
+            repairs[1]["reason"].as_str().unwrap(),
+            "operator_context_mismatch"
+        );
     }
 
     #[test]
@@ -3240,6 +5308,7 @@ mod tests {
             &three_leg_intent(),
             &eval_result(true),
             true,
+            ShadowSubstrate::IntentBundle,
             1_700_000_000_000,
         );
 
@@ -3309,6 +5378,7 @@ mod tests {
             &three_leg_intent(),
             &eval_result(false),
             false,
+            ShadowSubstrate::StaticBootStub,
             1,
         );
         assert!(!v["is_opportunity"].as_bool().unwrap());
@@ -3557,5 +5627,1559 @@ mod v4_edge_protocol_tests {
             assert_eq!(units, None);
             assert_eq!(den, None);
         }
+    }
+
+    // ── BASKET-WORKER-01 (2026-10-03): relevancia de baskets ────────────
+
+    /// Arista mínima: sólo `token_in`/`token_out` importan a la relevancia.
+    fn basket_edge(token_in: &str, token_out: &str) -> crate::agent_graph::Edge {
+        crate::agent_graph::Edge {
+            edge_id: "0xpool".into(),
+            pool_id: "0xpool".into(),
+            chain_id: 1,
+            token_in: token_in.into(),
+            token_out: token_out.into(),
+            protocol: "cpmm_v2".into(),
+            snapshot_id: "snap".into(),
+            block_hash: "sync-ts-1".into(),
+            reserve_in_raw: Some("1".into()),
+            reserve_out_raw: Some("1".into()),
+            fee_units: Some(30),
+            fee_denominator: Some(10_000),
+            token_in_decimals: 18,
+            token_out_decimals: 18,
+            adapter_version: "reserves_cache_v1".into(),
+            sqrt_price_x96_raw: None,
+            liquidity: None,
+        }
+    }
+
+    #[test]
+    fn redemption_tokens_are_first_token_in_and_last_token_out() {
+        // Los DOS tokens que `SnapshotServices::verify` consulta en
+        // `redemption_state` — los del mismo grafo que va al bundle.
+        let edges = vec![basket_edge("0xAAA", "0xBBB"), basket_edge("0xBBB", "0xCCC")];
+        assert_eq!(v4_redemption_tokens(&edges), vec!["0xaaa", "0xccc"]);
+    }
+
+    #[test]
+    fn redemption_tokens_collapse_when_the_cycle_closes_on_one_token() {
+        // Ciclo cerrado A→B→A: primera `in` y última `out` son el MISMO token
+        // (una sola consulta, sin duplicar la lectura on-chain).
+        let edges = vec![basket_edge("0xAAA", "0xBBB"), basket_edge("0xBBB", "0xAAA")];
+        assert_eq!(v4_redemption_tokens(&edges), vec!["0xaaa"]);
+    }
+
+    #[test]
+    fn redemption_tokens_of_an_empty_graph_are_empty() {
+        // Sin grafo no hay tokens: el llamador devuelve mapa vacío sin RPC.
+        assert!(v4_redemption_tokens(&[]).is_empty());
+    }
+
+    #[test]
+    fn relevant_baskets_keep_only_tokens_present_in_the_route() {
+        let configured = vec!["0xaaa".to_string(), "0xbbb".to_string()];
+        let lookup = vec!["0xaaa".to_string()];
+        assert_eq!(v4_relevant_baskets(&configured, &lookup), vec!["0xaaa"]);
+    }
+
+    #[test]
+    fn relevant_baskets_is_empty_without_a_basket_in_the_route() {
+        // Gate de COSTE: sin basket del operador en la ruta el mapa queda
+        // vacío y NO se hace ninguna llamada RPC (hot path intacto).
+        let lookup = vec!["0xaaa".to_string(), "0xccc".to_string()];
+        assert!(v4_relevant_baskets(&["0xdead".to_string()], &lookup).is_empty());
+        assert!(v4_relevant_baskets(&[], &lookup).is_empty());
+    }
+}
+
+/// SHADOW-CANONICAL-01 — la ruta SHADOW evalúa contra el MISMO sustrato de datos
+/// que la ACTIVE (§34.1 hot-path mode-invariant).
+///
+/// Los tests de este módulo son PUROS (sin Redis, sin RPC, sin reloj): la
+/// frontera lectura/composición deja el grafo y el bundle compuestos en
+/// funciones deterministas, de modo que se puede afirmar exactamente qué datos
+/// consumió una evaluación — que es justo lo que estaba indocumentado cuando
+/// todas las filas del stream describían el stub de boot.
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)] // test module — panics are acceptable
+mod shadow_canonical_tests {
+    use super::*;
+    use crate::rhai_agent_bridge::AgentServices;
+    use ethers::types::{Address, H256, U256};
+    use std::collections::HashMap;
+
+    const CHAIN: u64 = 1;
+    const CONTEXT_ID: &str = "intent-shadow-canonical-test";
+    const MEV_ID: &str = "MEV-TEST-01";
+    const DIGEST: &str = "abce7b713e0839bc99a162331e0768d364fa13681a18b7e2f5948538e20be891";
+    /// Importe del intent, en unidades base — el ÚNICO tamaño del schedule.
+    const AMOUNT_RAW: &str = "1000";
+    /// `ts` del round de sync compartido por las dos piernas (identidad de
+    /// coherencia del grafo; nunca un hash fabricado).
+    const SYNC_TS: u64 = 1_700_000_000;
+
+    fn tok(n: u64) -> Address {
+        Address::from_low_u64_be(n)
+    }
+
+    fn hex(a: Address) -> String {
+        format!("{a:#x}")
+    }
+
+    /// Ciclo cerrado A→B→A (dos piernas V2 con fee de 30 bps) — la forma que el
+    /// dispatcher produce para una ruta de dos tokens.
+    fn cycle_intent() -> RouteIntent {
+        use crate::route_intent::{RouteIntentLeg, RouterKind, SwapExactMode};
+        let mk = |a: Address, b: Address, pool: Address| RouteIntentLeg {
+            token_in: a,
+            token_out: b,
+            pool_hint: Some(pool),
+            dex_hint: None,
+            fee_bps: Some(30),
+            protocol_type: ProtocolType::V2,
+        };
+        RouteIntent::new(
+            CHAIN,
+            H256::from_low_u64_be(0xC0FFEE),
+            Address::zero(),
+            RouterKind::UniswapV2,
+            Address::zero(),
+            vec![
+                mk(tok(0xA), tok(0xB), tok(0x1)),
+                mk(tok(0xB), tok(0xA), tok(0x2)),
+            ],
+            U256::from(1000u64),
+            None,
+            SwapExactMode::ExactIn,
+            crate::route_intent::DetectionSource::NewBlock,
+        )
+        .expect("valid intent")
+    }
+
+    /// Lecturas RESUELTAS (reservas orientadas + decimales) para las dos piernas.
+    fn resolved_reads(intent: &RouteIntent) -> Vec<IntentLegRead> {
+        vec![
+            IntentLegRead::Ready {
+                pool_id: hex(intent.legs[0].pool_hint.unwrap()),
+                body: IntentLegBody::V2 {
+                    reserve_in_raw: U256::exp10(21).to_string(),
+                    reserve_out_raw: U256::exp10(20).to_string(),
+                    sync_ts: SYNC_TS,
+                },
+                decimals: (18, 6),
+            },
+            IntentLegRead::Ready {
+                pool_id: hex(intent.legs[1].pool_hint.unwrap()),
+                body: IntentLegBody::V2 {
+                    reserve_in_raw: U256::exp10(20).to_string(),
+                    reserve_out_raw: U256::exp10(21).to_string(),
+                    sync_ts: SYNC_TS,
+                },
+                decimals: (6, 18),
+            },
+        ]
+    }
+
+    /// Config del operador con los TRES productores de coste declarados: gas
+    /// (unidades + precio base), financiación (tasa flash) y precios por token.
+    fn operator_cfg() -> shared_rs::trading_config::TradingConfigState {
+        use shared_rs::trading_config::TradingConfigState;
+        TradingConfigState {
+            chain_id: CHAIN,
+            capital_usd: 10_000.0,
+            base_token_symbol: "WETH".into(),
+            base_token_price_usd: 3_000.0,
+            allowed_token_symbols: vec![],
+            token_prices_usd: HashMap::new(),
+            simulation_capital_usd: None,
+            simulation_per_token_amounts_usd: HashMap::new(),
+            simulation_per_strategy_caps_usd: HashMap::new(),
+            simulation_target_profit_usd: None,
+            simulation_target_roi_pct: None,
+            min_profit_usd: 0.01,
+            min_roi_pct: 0.0,
+            min_landing_probability: 0.0,
+            min_liquidity_confidence: 0.0,
+            max_token_risk_score: 1.0,
+            gas_price_strategy: shared_rs::trading_config::GasPriceStrategy::Fixed,
+            fixed_gas_price_gwei: Some(20.0),
+            gas_estimate_units: 200_000,
+            max_slippage_pct: 1.0,
+            failure_risk_buffer_pct: 0.001,
+            flashloan_fee_pct: 0.09,
+            enabled_strategies: vec!["dex_arb".into()],
+            enabled_dex_ids: None,
+            strategy_configs: HashMap::new(),
+            capital_cost_rate_annual_pct: 0.0,
+            ops_overhead_usd_per_attempt: 0.0,
+            spread_sanity_mult: 3.0,
+            p_copied_volume_threshold_usd: 1_000_000.0,
+            p_copied_max: 0.5,
+            lp_fee_default_pct: 0.003,
+            kelly_multiplier: 0.5,
+            kelly_max_per_trade_fraction: 1.0,
+            kelly_gas_safety_multiplier: 1.0,
+            enabled: true,
+            updated_at: chrono::Utc::now(),
+            updated_by: None,
+        }
+    }
+
+    /// Índice de identidad address-keyed del grafo: A→WETH, B→USDC.
+    fn identity() -> shared_rs::token_identity::TokenIdentityIndex {
+        shared_rs::token_identity::TokenIdentityIndex::resolve(
+            CHAIN,
+            &[],
+            &[
+                (hex(tok(0xA)), "WETH".to_string()),
+                (hex(tok(0xB)), "USDC".to_string()),
+            ],
+        )
+    }
+
+    fn manifests() -> std::collections::BTreeMap<String, String> {
+        let mut m = std::collections::BTreeMap::new();
+        m.insert(MEV_ID.to_string(), DIGEST.to_string());
+        m
+    }
+
+    /// Bundle REAL compuesto por la MISMA función que usan las rutas ACTIVE y
+    /// EXACT-QUOTES-PRODUCER-01 — el productor NO es INERTE y la cadena es
+    /// AMOUNT-BOUND. El I/O del quoter se inyecta (así la cadena se prueba sin
+    /// red) y el mapa resultante se pasa por el `quote_path` REAL — con la
+    /// precedencia ya invertida por AGENT-GRAPH-QUOTE-01 — para demostrar que una
+    /// pierna V3 **con slot0** pasa a `protocol_exact_integer`: exactamente lo que
+    /// era imposible mientras el mapa estaba vacío.
+    #[tokio::test]
+    async fn exact_quotes_producer_chains_and_certifies_a_v3_leg_with_slot0() {
+        let amount = "1000000000000000000";
+        let (pool_v2, pool_v3) = (hex(tok(0x11)), hex(tok(0x22)));
+        let (tok_a, tok_b) = (hex(tok(0xAA)), hex(tok(0xBB)));
+        let block = format!("sync-ts-{SYNC_TS}");
+        let v2 = crate::agent_graph::Edge {
+            edge_id: pool_v2.clone(),
+            pool_id: pool_v2.clone(),
+            chain_id: CHAIN,
+            token_in: tok_a.clone(),
+            token_out: tok_b.clone(),
+            protocol: "cpmm_v2".into(),
+            snapshot_id: CONTEXT_ID.into(),
+            block_hash: block.clone(),
+            reserve_in_raw: Some(U256::exp10(24).to_string()),
+            reserve_out_raw: Some(U256::exp10(24).to_string()),
+            fee_units: Some(30),
+            fee_denominator: Some(10_000),
+            token_in_decimals: 18,
+            token_out_decimals: 18,
+            adapter_version: "reserves_cache_v1".into(),
+            sqrt_price_x96_raw: None,
+            liquidity: None,
+        };
+        // Pierna V3 CON slot0: es la que hoy sale por la hipótesis within-tick.
+        let v3 = crate::agent_graph::Edge {
+            edge_id: pool_v3.clone(),
+            pool_id: pool_v3.clone(),
+            chain_id: CHAIN,
+            token_in: tok_b.clone(),
+            token_out: tok_a.clone(),
+            protocol: "uniswap_v3".into(),
+            snapshot_id: CONTEXT_ID.into(),
+            block_hash: block,
+            reserve_in_raw: None,
+            reserve_out_raw: None,
+            fee_units: Some(3_000),
+            fee_denominator: Some(1_000_000),
+            token_in_decimals: 18,
+            token_out_decimals: 18,
+            adapter_version: "reserves_cache_v1".into(),
+            sqrt_price_x96_raw: Some("79228162514264337593543950336".into()),
+            liquidity: Some(1_000_000_000_000_000_000_000),
+        };
+        // El importe que ENTRA en la pierna 1 es la SALIDA de la pierna 0,
+        // computada con la MISMA función que usa el ledger.
+        let chained = crate::agent_graph::cpmm_exact_in(
+            amount,
+            &U256::exp10(24).to_string(),
+            &U256::exp10(24).to_string(),
+            30,
+            10_000,
+        )
+        .expect("la pierna CPMM del fixture cotiza");
+
+        // (1) CON quoter: el mapa NO queda vacío, la clave encadena la salida
+        //     real de la pierna 0 y el ledger lo CERTIFICA pese al slot0.
+        let quoted = v4_exact_quotes(
+            &[v2.clone(), v3.clone()],
+            amount,
+            V4_EXACT_QUOTE_BUDGET_MS,
+            |req| {
+                assert_eq!(req.fee_bps, 3_000, "el fee de la pierna viaja al quoter");
+                assert_eq!(req.pool_addr, tok(0x22), "el quoter recibe ESA pierna");
+                assert_eq!(
+                    req.amount_in,
+                    U256::from_dec_str(&chained).unwrap(),
+                    "el quoter recibe el importe ENCADENADO"
+                );
+                async move { Ok("700000000000000000".to_string()) }
+            },
+        )
+        .await;
+        assert!(quoted.gaps.is_empty(), "sin huecos: {:?}", quoted.gaps);
+        assert_eq!(quoted.quotes.len(), 1, "sólo la pierna V3 pide quote");
+        assert_eq!(quoted.chained_until_raw, "700000000000000000");
+        let entry = quoted
+            .quotes
+            .get(&crate::agent_graph::quote_request_key(&v3, &chained))
+            .expect("la clave debe usar la SALIDA real de la pierna 0 (amount-bound)");
+        assert_eq!(entry.amount_in_raw, chained);
+        assert_eq!(entry.amount_out_raw, "700000000000000000");
+        assert_eq!(entry.precision, "protocol_exact_integer");
+        assert!(entry.fees_and_impact_embedded);
+        assert!(!entry.quote_id.is_empty(), "procedencia obligatoria");
+        assert_eq!(entry.adapter_version, v3.adapter_version);
+
+        let legs =
+            crate::agent_graph::quote_path(&[v2.clone(), v3.clone()], amount, &quoted.quotes)
+                .expect("la ruta encadenada cotiza");
+        assert_eq!(legs[0]["quote_method"], "cpmm_exact_integer");
+        assert_eq!(
+            legs[1]["quote_method"], "protocol_exact_integer",
+            "el productor activo convierte la hipótesis within-tick en quote certificada"
+        );
+        assert_eq!(legs[1]["amount_out_raw"], "700000000000000000");
+
+        // (2) SIN quoter: NADA se inserta, la ausencia se declara con su razón
+        //     CONCRETA y el respaldo within-tick sigue cotizando — cero regresión
+        //     para lo que ya funcionaba.
+        let unquoted = v4_exact_quotes(
+            &[v2.clone(), v3.clone()],
+            amount,
+            V4_EXACT_QUOTE_BUDGET_MS,
+            |_req| async { Err("rpc_unavailable".to_string()) },
+        )
+        .await;
+        assert!(unquoted.quotes.is_empty(), "sin fuente NO se inserta nada");
+        assert_eq!(unquoted.gaps.len(), 1);
+        assert_eq!(unquoted.gaps[0].index, 1);
+        assert_eq!(unquoted.gaps[0].reason, "v3_protocol_quote_unavailable");
+        assert_eq!(unquoted.gaps[0].detail, "rpc_unavailable");
+        assert_eq!(
+            unquoted.chained_until_raw, chained,
+            "la cadena se detiene donde se detuvo la evidencia, sin inventar salida"
+        );
+        let legs = crate::agent_graph::quote_path(&[v2, v3], amount, &unquoted.quotes)
+            .expect("el respaldo local sigue cotizando");
+        assert_eq!(legs[1]["quote_method"], "v3_spot_within_tick");
+    }
+
+    /// SHADOW (`build_v4_intent_bundle`) desde el grafo compuesto.
+    fn real_bundle() -> crate::snapshot_services::SnapshotBundle {
+        let intent = cycle_intent();
+        let composition =
+            compose_intent_edges(CHAIN, CONTEXT_ID, &intent, &resolved_reads(&intent));
+        assert_eq!(
+            composition.edges.len(),
+            2,
+            "las dos piernas resueltas deben entrar al grafo"
+        );
+        let mut price_snapshot: HashMap<String, f64> = HashMap::new();
+        price_snapshot.insert("WETH".to_string(), 3_000.0);
+        price_snapshot.insert("USDC".to_string(), 1.0);
+        build_v4_intent_bundle(
+            CHAIN,
+            CONTEXT_ID,
+            composition.edges,
+            &hex(tok(0xA)),
+            AMOUNT_RAW,
+            &operator_cfg(),
+            &identity(),
+            &price_snapshot,
+            &manifests(),
+            // gas OBSERVADO del runner (el getter ya decodifica milli-gwei).
+            20.0,
+            &std::collections::BTreeMap::new(),
+            // PRICE-COVERAGE-01: sin bus en este fixture — el snapshot ya cubre
+            // WETH/USDC, así que la tercera fuente no participa (y su ausencia
+            // es el degradado honesto, no una carencia del test).
+            None,
+            // EXACT-QUOTES-PRODUCER-01: sin quotes de protocolo en este fixture
+            // (el mapa estaba vacío antes de este PR; el test no cambia eso).
+            std::collections::BTreeMap::new(),
+        )
+        .expect("un bundle con grafo y config reales SIEMPRE se compone")
+    }
+
+    // ── PRICE-COVERAGE-01 (§38): sustrato del mapa canónico de precios ──────
+    //
+    // El defecto medido: en producción, un token del grafo (LAR, pair
+    // LAR/WETH) tenía IDENTIDAD (`arbx:tokens:1:<addr>` → `{"symbol":"LAR",…}`)
+    // pero NINGUNA fuente de precio, así que el bundle salía sin su entrada y
+    // la cascada `amount_in_usd` → `capital_usd` → cashflows → costes → quote →
+    // operadores quedaba en DATA_GAP. Estos tests fijan las tres propiedades
+    // que el PR debe garantizar: la tercera fuente SÍ valora, la ausencia
+    // honesta se conserva, y jamás entra un valor fabricado.
+
+    /// Bundle compuesto con las TRES fuentes de precio fijadas por el test:
+    /// snapshot de Redis, `token_prices_usd` del operador y bus en proceso.
+    fn bundle_with_price_sources(
+        price_snapshot: &HashMap<String, f64>,
+        token_prices_usd: &HashMap<String, f64>,
+        price_bus: Option<&shared_rs::price_bus::PriceBus>,
+    ) -> crate::snapshot_services::SnapshotBundle {
+        let intent = cycle_intent();
+        let composition =
+            compose_intent_edges(CHAIN, CONTEXT_ID, &intent, &resolved_reads(&intent));
+        assert_eq!(
+            composition.edges.len(),
+            2,
+            "las dos piernas resueltas deben entrar al grafo"
+        );
+        let mut cfg = operator_cfg();
+        cfg.token_prices_usd = token_prices_usd.clone();
+        build_v4_intent_bundle(
+            CHAIN,
+            CONTEXT_ID,
+            composition.edges,
+            &hex(tok(0xA)),
+            AMOUNT_RAW,
+            &cfg,
+            &identity(),
+            price_snapshot,
+            &manifests(),
+            20.0,
+            &std::collections::BTreeMap::new(),
+            price_bus,
+            std::collections::BTreeMap::new(),
+        )
+        .expect("un bundle con grafo y config reales SIEMPRE se compone")
+    }
+
+    fn now_secs() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0)
+    }
+
+    fn now_ns() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0)
+    }
+
+    /// Un anchor Chainlink fresco para el símbolo dado (recv reciente, round
+    /// del aggregator hace 10 s — dentro de la ventana de los estables).
+    fn anchor(answer: f64) -> shared_rs::price_bus::Anchor {
+        shared_rs::price_bus::Anchor {
+            answer,
+            updated_at: now_secs().saturating_sub(10),
+            recv_ns: now_ns(),
+        }
+    }
+
+    /// Precio del token en el mapa del bundle, tal como lo verá
+    /// `SnapshotServices::price`.
+    fn price_of(
+        bundle: &crate::snapshot_services::SnapshotBundle,
+        token: Address,
+    ) -> Option<&crate::snapshot_services::CanonicalPrice> {
+        bundle.prices.get(&(CHAIN, hex(token)))
+    }
+
+    /// Espejo EXACTO de las condiciones que `SnapshotServices::price()` exige
+    /// antes de servir un `CanonicalPrice` (`snapshot_services.rs:831-853`).
+    ///
+    /// `price` es un método de un trait PRIVADO de `snapshot_services`, así que
+    /// no es invocable desde aquí — y este PR tiene prohibido tocar ese módulo
+    /// más allá de lo que exige la procedencia. El espejo fija las MISMAS
+    /// condiciones, en el MISMO orden, devolviendo la MISMA razón de error, de
+    /// modo que un test pueda afirmar "el gate de procedencia se satisface" sin
+    /// debilitarlo ni ensancharlo. Si el contrato cambia, este espejo deja de
+    /// representarlo y el test debe actualizarse junto con él.
+    fn price_contract_violation(
+        bundle: &crate::snapshot_services::SnapshotBundle,
+        token: &str,
+        now_ms: u64,
+    ) -> Option<&'static str> {
+        let Some(p) = bundle.prices.get(&(bundle.chain_id, token.to_owned())) else {
+            return Some("canonical_price_missing");
+        };
+        if p.producer != "PriceBus"
+            || p.evidence_id.is_empty()
+            || p.revision != bundle.policy.price_revision
+            || p.token_address != token
+            || p.chain_id != bundle.chain_id
+        {
+            return Some("canonical_price_provenance_mismatch");
+        }
+        if now_ms < p.observed_at_ms
+            || now_ms > p.valid_until_ms
+            || p.valid_until_ms < p.observed_at_ms
+        {
+            return Some("canonical_price_stale_or_future");
+        }
+        match crate::rhai_agent_bridge::Usd::parse(&p.usd) {
+            Err(_) => Some("invalid_usd_decimal"),
+            Ok(u) if !u.is_positive() => Some("canonical_price_nonpositive"),
+            Ok(_) => None,
+        }
+    }
+
+    fn now_ms() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0)
+    }
+
+    #[test]
+    fn price_bus_evidence_ids_mirror_the_verdict_slugs() {
+        // Anti-deriva: el `evidence_id` estático debe seguir nombrando EXACTAMENTE
+        // el veredicto que el bus reporta (su slug público), para que la
+        // evidencia insertada sea legible con las mismas herramientas que leen
+        // `Verdict::as_str()` en el resto del sistema.
+        use shared_rs::price_bus::Verdict;
+        for v in [
+            Verdict::Ok,
+            Verdict::StaleBinance,
+            Verdict::StaleAnchor,
+            Verdict::DivergenceFrozen,
+            Verdict::NoSource,
+        ] {
+            assert_eq!(
+                v4_price_bus_evidence_id(v),
+                format!("price_bus:{}", v.as_str()),
+                "el evidence_id de {v:?} debe espejar su slug"
+            );
+            assert!(
+                !v4_price_bus_evidence_id(v).is_empty(),
+                "price() exige un evidence_id no vacío"
+            );
+        }
+    }
+
+    #[test]
+    fn bus_source_fills_a_token_missing_from_snapshot_and_config() {
+        // Snapshot de Redis y `token_prices_usd` VACÍOS: antes de
+        // PRICE-COVERAGE-01 el bundle salía sin ninguna entrada. El bus en
+        // proceso (misma pila soberana que alimenta el snapshot) sí tiene los
+        // dos tokens vivos, así que ahora se valoran.
+        use shared_rs::price_bus::{BookTicker, PriceBus, PriceBusConfig};
+        let bus = PriceBus::new(PriceBusConfig::default());
+        // El quote del par ETHUSDC necesita su propio anchor fresco (USDC).
+        bus.update_anchor("USDC", anchor(0.9998));
+        // bookTicker de Binance: WETH se valora con el BID (lo que se puede
+        // vender AHORA — el lado conservador), no con el mid.
+        bus.update_binance(
+            "ETHUSDC",
+            BookTicker {
+                bid: 2_625.46,
+                ask: 2_625.47,
+                event_ms: 0,
+                recv_ns: now_ns(),
+            },
+        );
+        let bundle =
+            bundle_with_price_sources(&HashMap::new(), &HashMap::new(), Some(bus.as_ref()));
+        assert_eq!(
+            bundle.prices.len(),
+            2,
+            "los dos tokens del ciclo deben quedar valorados por el bus"
+        );
+
+        // WETH ← Binance bid × anchor del quote. Sin anchor PROPIO de WETH el
+        // veredicto es `stale_anchor`: la evidencia lo DECLARA (precio servido
+        // sin verificación de anchor) en vez de disfrazarlo de verificado.
+        let weth = price_of(&bundle, tok(0xA)).expect("WETH valorado por el bus");
+        assert_eq!(weth.producer, "PriceBus");
+        assert_eq!(weth.evidence_id, "price_bus:stale_anchor");
+        assert_eq!(weth.chain_id, CHAIN);
+        assert_eq!(weth.token_address, hex(tok(0xA)));
+        let expected = 2_625.46_f64 * 0.9998;
+        let got: f64 = weth.usd.parse().expect("usd es decimal plano");
+        assert!(
+            (got - expected).abs() < 1e-9,
+            "WETH = {got}, esperado {expected}"
+        );
+
+        // USDC ← su anchor Chainlink (no hay libro Binance USDCUSDT en el bus).
+        let usdc = price_of(&bundle, tok(0xB)).expect("USDC valorado por el bus");
+        assert_eq!(usdc.producer, "PriceBus");
+        assert_eq!(usdc.evidence_id, "price_bus:stale_binance");
+        assert_eq!(usdc.usd, "0.9998");
+
+        // El contrato `SnapshotServices::price` se satisface SIN tocarlo:
+        // producer "PriceBus" (el bus ES literalmente el productor), evidencia
+        // no vacía, revisión compartida y ventana temporal coherente. El espejo
+        // devuelve la MISMA razón que devolvería `price()`; aquí debe ser `None`
+        // (= serviría el precio) para los DOS tokens.
+        let now = now_ms();
+        for token in [tok(0xA), tok(0xB)] {
+            assert_eq!(
+                price_contract_violation(&bundle, &hex(token), now),
+                None,
+                "el precio del bus debe pasar el gate de procedencia sin relajarlo"
+            );
+        }
+    }
+
+    #[test]
+    fn snapshot_and_config_still_outrank_the_bus() {
+        // La tercera fuente NO desplaza a las dos primeras: si el snapshot (o
+        // la config del operador) ya trae el token, ese valor manda y la
+        // evidencia sigue siendo la de siempre. PRICE-COVERAGE-01 sólo AÑADE
+        // cobertura; no reordena las fuentes existentes.
+        use shared_rs::price_bus::{PriceBus, PriceBusConfig};
+        let bus = PriceBus::new(PriceBusConfig::default());
+        bus.update_anchor("USDC", anchor(0.5)); // valor deliberadamente distinto
+        let mut snapshot: HashMap<String, f64> = HashMap::new();
+        snapshot.insert("USDC".to_string(), 0.999_844_88);
+        let bundle = bundle_with_price_sources(&snapshot, &HashMap::new(), Some(bus.as_ref()));
+        let usdc = price_of(&bundle, tok(0xB)).expect("USDC");
+        assert_eq!(usdc.usd, "0.99984488", "el snapshot debe ganarle al bus");
+        assert_eq!(usdc.evidence_id, "price_snapshot");
+    }
+
+    #[test]
+    fn a_token_absent_from_every_source_keeps_no_entry() {
+        // Bus VIVO pero sin dato para WETH ni USDC, snapshot y config vacíos:
+        // SIN entrada. Es el caso LAR medido en producción — identidad sí,
+        // precio no — y la respuesta honesta es `None`, jamás un relleno.
+        use shared_rs::price_bus::{PriceBus, PriceBusConfig};
+        let bus = PriceBus::new(PriceBusConfig::default());
+        let bundle =
+            bundle_with_price_sources(&HashMap::new(), &HashMap::new(), Some(bus.as_ref()));
+        assert!(
+            bundle.prices.is_empty(),
+            "sin precio real positivo no se inserta NINGUNA entrada (R8): {:?}",
+            bundle.prices.keys().collect::<Vec<_>>()
+        );
+
+        // El `None` honesto se conserva: el espejo del contrato devuelve la
+        // razón exacta que devolvería `price()` — no un precio de relleno.
+        let now = now_ms();
+        for token in [tok(0xA), tok(0xB)] {
+            assert_eq!(
+                price_contract_violation(&bundle, &hex(token), now),
+                Some("canonical_price_missing"),
+                "sin fuente real el token queda SIN precio (R8)"
+            );
+        }
+    }
+
+    #[test]
+    fn bus_absent_degrades_to_the_two_redis_sources() {
+        // `price_bus: None` (bus no inicializado) NO inventa nada: la
+        // composición se queda con snapshot + config, exactamente la conducta
+        // previa a este PR. Es el degradado honesto que documenta la firma.
+        let mut snapshot: HashMap<String, f64> = HashMap::new();
+        snapshot.insert("USDC".to_string(), 1.0);
+        let bundle = bundle_with_price_sources(&snapshot, &HashMap::new(), None);
+        assert_eq!(
+            bundle.prices.len(),
+            1,
+            "sólo el token que el snapshot cubre"
+        );
+        assert_eq!(
+            price_of(&bundle, tok(0xB)).map(|p| p.evidence_id.as_str()),
+            Some("price_snapshot")
+        );
+        assert!(
+            price_of(&bundle, tok(0xA)).is_none(),
+            "WETH no está en ninguna de las dos fuentes ⇒ SIN entrada"
+        );
+    }
+
+    #[test]
+    fn bus_price_tracks_the_live_source_and_is_never_a_constant() {
+        // El número insertado sigue a la fuente viva: dos anchors distintos
+        // producen dos precios distintos. Un fallback constante (1.0, 0.0, o
+        // cualquier valor fijo) daría el MISMO resultado en ambos casos, así
+        // que este test es la cerradura anti-constante del PR.
+        use shared_rs::price_bus::{PriceBus, PriceBusConfig};
+        let priced_at = |answer: f64| {
+            let bus = PriceBus::new(PriceBusConfig::default());
+            bus.update_anchor("USDC", anchor(answer));
+            let bundle =
+                bundle_with_price_sources(&HashMap::new(), &HashMap::new(), Some(bus.as_ref()));
+            let usdc = price_of(&bundle, tok(0xB)).cloned().expect("USDC");
+            (usdc.usd, usdc.evidence_id)
+        };
+        let (low, ev_low) = priced_at(0.9998);
+        let (high, ev_high) = priced_at(1_000_000.0);
+        assert_ne!(
+            low, high,
+            "el precio debe seguir al anchor; un valor constante sería el delator"
+        );
+        assert_eq!(low, "0.9998");
+        assert_eq!(high, "1000000");
+        assert_eq!(ev_low, "price_bus:stale_binance");
+        assert_eq!(ev_high, "price_bus:stale_binance");
+    }
+
+    #[test]
+    fn a_frozen_bus_pair_yields_no_entry() {
+        // Banda Binance↔Chainlink CONGELADA por divergencia: el bus devuelve
+        // `None` (Verdict::DivergenceFrozen) y el bundle DEBE respetarlo — un
+        // depeg o un feed roto para la valuación, no se promedia ni se cuela.
+        //
+        // Mecánica del bus (price_bus.rs `sample_divergence`): la banda se
+        // muestrea cuando llega el dato del SÍMBOLO — un `bookTicker` de ETHUSDC
+        // muestrea "ETH" y un anchor muestrea su propio símbolo. Para congelar
+        // WETH hay que refrescar SU anchor con el libro ya desviado; por eso el
+        // bucle calienta con `update_anchor("WETH", …)` y no con ETH a secas.
+        use shared_rs::price_bus::{BookTicker, PriceBus, PriceBusConfig, Verdict};
+        let bus = PriceBus::new(PriceBusConfig::default());
+        bus.update_anchor("USDC", anchor(1.0)); // quote del par ETHUSDC
+        let ticker = |bid: f64, ask: f64| BookTicker {
+            bid,
+            ask,
+            event_ms: 0,
+            recv_ns: now_ns(),
+        };
+        // Calienta la banda de WETH con la ventana de muestras del bus
+        // (band_warmup = 30) y divergencias pequeñas: nada se congela.
+        for i in 0..30 {
+            bus.update_binance("ETHUSDC", ticker(2_600.0 + (i % 3) as f64 * 0.5, 2_601.0));
+            bus.update_anchor("WETH", anchor(2_600.0));
+        }
+        assert_eq!(
+            bus.view().price_with_verdict("WETH").1,
+            Verdict::Ok,
+            "la banda caliente con divergencia pequeña NO debe congelar"
+        );
+        // Libro ~3% desviado del anchor + refresco del anchor ⇒ la muestra cae
+        // fuera de la banda (2σ, suelo 1%) ⇒ el par se CONGELA.
+        bus.update_binance("ETHUSDC", ticker(2_680.0, 2_680.5));
+        bus.update_anchor("WETH", anchor(2_600.0));
+        assert_eq!(
+            bus.view().price_with_verdict("WETH").1,
+            Verdict::DivergenceFrozen,
+            "el par WETH debe quedar congelado en el bus"
+        );
+
+        let bundle =
+            bundle_with_price_sources(&HashMap::new(), &HashMap::new(), Some(bus.as_ref()));
+        assert!(
+            price_of(&bundle, tok(0xA)).is_none(),
+            "un par congelado NO se valora: sin entrada, no un promedio"
+        );
+        // USDC no está congelado (sin libro Binance): su anchor sigue mandando,
+        // y la evidencia declara que la valuación vino del anchor.
+        assert_eq!(
+            price_of(&bundle, tok(0xB)).map(|p| p.evidence_id.as_str()),
+            Some("price_bus:stale_binance")
+        );
+    }
+
+    fn spec() -> serde_json::Value {
+        serde_json::json!({
+            "mev_id": MEV_ID,
+            "detector_id": "R_CLOSED_CYCLE",
+            "source_digest": DIGEST,
+            "logic": "closed_route",
+            "allowed_search_hops": [2],
+            // Sin roles de operador declarados: este fixture mide el sustrato de
+            // COSTES, no el gate de operadores nativos.
+            "operator_requirements": [],
+        })
+    }
+
+    fn ctx() -> serde_json::Value {
+        serde_json::json!({ "context_id": CONTEXT_ID, "snapshot_id": CONTEXT_ID })
+    }
+
+    /// `field::reason` de cada repair — la forma exacta que publica el stream
+    /// (`v4_repairs.repairs[]`).
+    fn repair_tags(repairs: &serde_json::Value) -> Vec<String> {
+        repairs
+            .as_array()
+            .map(|rows| {
+                rows.iter()
+                    .filter_map(|r| {
+                        Some(format!(
+                            "{}::{}",
+                            r.get("field")?.as_str()?,
+                            r.get("reason")?.as_str()?
+                        ))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    // ── Composición del grafo (frontera pura) ───────────────────────────────
+
+    #[test]
+    fn resolved_legs_compose_a_real_graph_for_the_intent() {
+        let intent = cycle_intent();
+        let c = compose_intent_edges(CHAIN, CONTEXT_ID, &intent, &resolved_reads(&intent));
+
+        assert_eq!(c.edges.len(), 2, "una pierna resuelta por leg");
+        assert!(
+            c.skip_reasons.is_empty(),
+            "sin omisiones: {:?}",
+            c.skip_reasons
+        );
+        // Orientación EXACTA por intención de la pierna (no heurística).
+        assert_eq!(c.edges[0].token_in, hex(intent.legs[0].token_in));
+        assert_eq!(c.edges[0].token_out, hex(intent.legs[0].token_out));
+        assert_eq!(c.edges[1].token_in, hex(intent.legs[1].token_in));
+        // El fee del intent viaja con su PROTOCOLO (V2 = bps/10_000).
+        assert_eq!(c.edges[0].fee_units, Some(30));
+        assert_eq!(c.edges[0].fee_denominator, Some(10_000));
+        assert_eq!(c.edges[0].protocol, "cpmm_v2");
+        // Identidad de coherencia = ts del ROUND de sync compartido.
+        assert_eq!(c.edges[0].block_hash, format!("sync-ts-{SYNC_TS}"));
+        assert_eq!(c.edges[1].block_hash, c.edges[0].block_hash);
+        // Decimales resueltos por pierna.
+        assert_eq!(c.edges[0].token_in_decimals, 18);
+        assert_eq!(c.edges[0].token_out_decimals, 6);
+        // El start_token del bundle es el `token_in` de la PRIMERA pierna.
+        assert_eq!(c.first_token_in.as_deref(), Some(hex(tok(0xA)).as_str()));
+        // Todo edge queda ATADO al snapshot del intent.
+        assert!(c.edges.iter().all(|e| e.snapshot_id == CONTEXT_ID));
+    }
+
+    /// PROTOCOL-COHERENCE-01 — la PARTICIÓN que decide si un intent se puede
+    /// evaluar. Con las piernas resueltas en UN round el grafo lleva UNA sola
+    /// identidad de bloque (ruta atómica coherente: el gate puede avanzar); con
+    /// las piernas repartidas entre DOS rounds lleva DOS identidades — lo que
+    /// `quote_path_progress` rechaza con `mixed_block_or_domain_in_atomic_route`,
+    /// la razón medida en el gate v4. Se prueban las DOS direcciones: un test
+    /// que sólo cubriera el caso coherente no probaría la partición.
+    #[test]
+    fn leg_round_alignment_partitions_coherent_from_split_reads() {
+        let intent = cycle_intent();
+
+        // (1) COHERENTE — el caso normal: el writer escribe la población con el
+        //     MISMO `ts`, así que las dos piernas comparten round.
+        let coherent = resolved_reads(&intent);
+        assert!(
+            intent_legs_share_one_round(&coherent),
+            "dos piernas del mismo round son un grafo coherente"
+        );
+        assert!(leg_round_laggard_indices(&coherent).is_empty());
+        assert_eq!(newest_leg_round(&coherent), Some(SYNC_TS));
+        let composed_ok = compose_intent_edges(CHAIN, CONTEXT_ID, &intent, &coherent);
+        assert_eq!(
+            composed_ok.edges[0].block_hash, composed_ok.edges[1].block_hash,
+            "un solo round ⇒ UNA identidad de bloque para la ruta atómica"
+        );
+
+        // (2) REPARTIDO — la rotación cae EN MEDIO de la lectura (medido en
+        //     producción: la población queda partida, p.ej. 30 entradas en el
+        //     bloque N y 527 en N+1). El predicado lo declara y nombra la
+        //     rezagada...
+        let mut split = resolved_reads(&intent);
+        split[1] = IntentLegRead::Ready {
+            pool_id: hex(intent.legs[1].pool_hint.unwrap()),
+            body: IntentLegBody::V2 {
+                reserve_in_raw: U256::exp10(20).to_string(),
+                reserve_out_raw: U256::exp10(21).to_string(),
+                sync_ts: SYNC_TS + 1,
+            },
+            decimals: (6, 18),
+        };
+        assert!(
+            !intent_legs_share_one_round(&split),
+            "piernas de dos rounds NO son un grafo coherente"
+        );
+        assert_eq!(leg_round_laggard_indices(&split), vec![0]);
+        assert_eq!(newest_leg_round(&split), Some(SYNC_TS + 1));
+        // ...y el grafo que se compondría lleva DOS identidades: el bundle no
+        // puede afirmar coherencia sobre esto, por eso el llamador declara el
+        // contexto NO COMPUTADO con `legs_span_multiple_sync_rounds`.
+        let composed_split = compose_intent_edges(CHAIN, CONTEXT_ID, &intent, &split);
+        assert_ne!(
+            composed_split.edges[0].block_hash, composed_split.edges[1].block_hash,
+            "dos rounds ⇒ dos identidades de bloque (lo que el contrato rechaza)"
+        );
+        assert_eq!(
+            composed_split.edges[0].block_hash,
+            format!("sync-ts-{SYNC_TS}")
+        );
+        assert_eq!(
+            composed_split.edges[1].block_hash,
+            format!("sync-ts-{}", SYNC_TS + 1)
+        );
+
+        // (3) Una pierna OMITIDA no tiene round: no puede desalinear el grafo ni
+        //     contarse como rezagada.
+        let with_skip = vec![
+            IntentLegRead::Skip("missing_pool_hint"),
+            IntentLegRead::Ready {
+                pool_id: hex(intent.legs[0].pool_hint.unwrap()),
+                body: IntentLegBody::V2 {
+                    reserve_in_raw: U256::exp10(21).to_string(),
+                    reserve_out_raw: U256::exp10(20).to_string(),
+                    sync_ts: SYNC_TS,
+                },
+                decimals: (18, 6),
+            },
+            IntentLegRead::Skip("reserves_missing"),
+            IntentLegRead::Ready {
+                pool_id: hex(intent.legs[1].pool_hint.unwrap()),
+                body: IntentLegBody::V2 {
+                    reserve_in_raw: U256::exp10(20).to_string(),
+                    reserve_out_raw: U256::exp10(21).to_string(),
+                    sync_ts: SYNC_TS,
+                },
+                decimals: (6, 18),
+            },
+        ];
+        assert!(
+            intent_legs_share_one_round(&with_skip),
+            "sólo cuentan las piernas resueltas: las omitidas no aportan round"
+        );
+        assert!(leg_round_laggard_indices(&with_skip).is_empty());
+
+        // (4) 0 y 1 pierna resuelta: coherencia VACUA (no hay ruta que mezcle).
+        assert!(intent_legs_share_one_round(&[]));
+        assert_eq!(newest_leg_round(&[]), None);
+        assert!(leg_round_laggard_indices(&[]).is_empty());
+        assert!(intent_legs_share_one_round(&[IntentLegRead::Skip(
+            "v3_slot0_missing"
+        )]));
+    }
+
+    #[test]
+    fn unresolved_legs_leave_an_honest_empty_graph_with_exact_reasons() {
+        let intent = cycle_intent();
+        // Ninguna lectura resolvió: cada pierna se omite con SU razón exacta.
+        let reads = vec![
+            IntentLegRead::Skip("reserves_missing"),
+            IntentLegRead::Skip("token_in_decimals_missing"),
+        ];
+        let c = compose_intent_edges(CHAIN, CONTEXT_ID, &intent, &reads);
+
+        assert!(c.edges.is_empty(), "sin lecturas resueltas no hay grafo");
+        assert!(c.first_token_in.is_none());
+        assert_eq!(c.skip_reasons.get("reserves_missing"), Some(&1));
+        assert_eq!(c.skip_reasons.get("token_in_decimals_missing"), Some(&1));
+
+        // Fallback honesto: sin grafo el contexto REAL no se compone, así que la
+        // evaluación se sella con los ids DATA_GAP estáticos y queda declarada
+        // como `static_boot_stub` — jamás presentada como bundle real.
+        let outcome = IntentContextOutcome {
+            guard: None,
+            census: IntentContextCensus {
+                edges_built: c.edges.len(),
+                legs_skipped: c.skip_reasons.clone(),
+            },
+        };
+        assert_eq!(outcome.census.edges_built, 0);
+        assert_eq!(
+            outcome.stamp_ids(CHAIN),
+            (
+                format!("boot-chain-{CHAIN}"),
+                format!("boot-genesis-{CHAIN}")
+            )
+        );
+    }
+
+    #[test]
+    fn the_guard_releases_the_router_slot_on_drop() {
+        // El contexto por-intent ocupa una entrada del router (capacidad 256 en
+        // producción): sin el guard con Drop, cada intent la agotaría hasta
+        // reiniciar. Vale para AMBAS rutas, que ahora comparten el guard.
+        let router = Arc::new(crate::context_router::ContextRouter::new(1).expect("router"));
+        let rev: crate::snapshot_services::RevisionGuard = Arc::new(|_: &str, _: &str| true);
+        let services =
+            crate::snapshot_services::SnapshotServices::new(Arc::new(real_bundle()), rev)
+                .expect("services");
+        router
+            .insert(CONTEXT_ID.to_string(), Arc::new(services))
+            .expect("el router tiene capacidad para una entrada");
+        {
+            let _guard = IntentContextGuard {
+                router: Some(router.clone()),
+                context_id: CONTEXT_ID.to_string(),
+            };
+            assert_eq!(_guard.context_id(), CONTEXT_ID);
+        }
+        // Capacidad liberada: la MISMA entrada puede volver a registrarse.
+        let rev2: crate::snapshot_services::RevisionGuard = Arc::new(|_: &str, _: &str| true);
+        let services2 =
+            crate::snapshot_services::SnapshotServices::new(Arc::new(real_bundle()), rev2)
+                .expect("services");
+        router
+            .insert(CONTEXT_ID.to_string(), Arc::new(services2))
+            .expect("el Drop del guard debe haber liberado la entrada");
+    }
+
+    // ── Sustrato de datos ⇒ costes (la medición del defecto) ────────────────
+
+    #[test]
+    fn real_bundle_costs_are_non_empty_and_carry_no_mandatory_cost_repair() {
+        let bundle = real_bundle();
+        let kinds: Vec<&str> = bundle
+            .base_cost_lines
+            .iter()
+            .map(|l| l.kind.as_str())
+            .collect();
+        // El bundle REAL siempre declara los productores de coste: gas (unidades
+        // de config × gas observado × precio base) y financiación (tasa del
+        // operador sobre el importe del intent valorado).
+        assert!(kinds.contains(&"gas"), "kinds = {kinds:?}");
+        assert!(kinds.contains(&"financing"), "kinds = {kinds:?}");
+        assert!(kinds.contains(&"execution_fees"), "kinds = {kinds:?}");
+        assert!(
+            bundle.base_cost_lines.iter().any(|l| l.usd.is_some()),
+            "al menos una línea de coste debe traer su USD real"
+        );
+
+        let rev: crate::snapshot_services::RevisionGuard = Arc::new(|_: &str, _: &str| true);
+        let services = crate::snapshot_services::SnapshotServices::new(Arc::new(bundle), rev);
+        let services = services.expect("el bundle real debe ser admitido");
+        let router = Arc::new(crate::context_router::ContextRouter::new(4).expect("router"));
+        router
+            .insert(CONTEXT_ID.to_string(), Arc::new(services))
+            .expect("insert del contexto real");
+
+        // La evaluación que hace un cartucho v4: descubrir sobre el grafo del
+        // contexto y cotizar el candidato contra el MISMO contexto.
+        let c = ctx();
+        let discovery = router
+            .discover(&c, &spec())
+            .expect("discover sobre el grafo real");
+        assert_eq!(discovery["status"], "READY");
+        let candidate = discovery["candidates"]
+            .as_array()
+            .and_then(|v| v.first())
+            .cloned()
+            .expect("el ciclo cerrado A→B→A debe producir un candidato");
+        let quote = router
+            .quote(&c, &spec(), &candidate)
+            .expect("quote del candidato real");
+        let quote = serde_json::to_value(&quote).expect("quote serializable");
+
+        let costs = quote["costs"]
+            .as_array()
+            .expect("el quote real trae costs[]");
+        assert!(
+            !costs.is_empty(),
+            "el bundle real produce costes NO vacíos (era el stub vacío el que no)"
+        );
+        let cost_kinds: Vec<&str> = costs.iter().filter_map(|l| l["kind"].as_str()).collect();
+        assert!(cost_kinds.contains(&"gas"), "costs = {cost_kinds:?}");
+        assert!(cost_kinds.contains(&"financing"), "costs = {cost_kinds:?}");
+
+        let check = crate::rhai_agent_bridge::economic_check(
+            router.as_ref(),
+            &c,
+            &spec(),
+            &candidate,
+            &quote,
+            &serde_json::json!({}),
+            &[],
+        );
+        let tags = repair_tags(&check["repairs"]);
+        assert!(
+            !tags
+                .iter()
+                .any(|t| t.ends_with("mandatory_route_cost_missing")),
+            "el bundle real NO puede reportar costes obligatorios ausentes: {tags:?}"
+        );
+        assert!(
+            !tags
+                .iter()
+                .any(|t| t == "costs.financing::mandatory_route_cost_missing"),
+            "costs.financing :: mandatory_route_cost_missing es la firma del STUB: {tags:?}"
+        );
+    }
+
+    #[test]
+    fn the_empty_cost_substrate_reproduces_the_measured_repair_signature() {
+        // Contraste: el MISMO candidato/cotización, pero con el sustrato de
+        // coste del stub Phase-1 (costs=[] + los tres kinds obligatorios, que es
+        // exactamente lo que `SnapshotServices::quote` emite cuando
+        // `base_cost_lines` está vacío). Es la firma medida en producción:
+        // `costs.financing :: mandatory_route_cost_missing` en ~100% de las filas.
+        let rev: crate::snapshot_services::RevisionGuard = Arc::new(|_: &str, _: &str| true);
+        let services =
+            crate::snapshot_services::SnapshotServices::new(Arc::new(real_bundle()), rev)
+                .expect("services");
+        let router = Arc::new(crate::context_router::ContextRouter::new(4).expect("router"));
+        router
+            .insert(CONTEXT_ID.to_string(), Arc::new(services))
+            .expect("insert");
+
+        let c = ctx();
+        let discovery = router.discover(&c, &spec()).expect("discover");
+        let candidate = discovery["candidates"]
+            .as_array()
+            .and_then(|v| v.first())
+            .cloned()
+            .expect("candidato");
+        let mut stub_quote = serde_json::to_value(
+            router
+                .quote(&c, &spec(), &candidate)
+                .expect("quote del candidato"),
+        )
+        .expect("quote serializable");
+        stub_quote["costs"] = serde_json::json!([]);
+        stub_quote["required_cost_kinds"] =
+            serde_json::json!(["gas", "financing", "execution_fees"]);
+
+        let check = crate::rhai_agent_bridge::economic_check(
+            router.as_ref(),
+            &c,
+            &spec(),
+            &candidate,
+            &stub_quote,
+            &serde_json::json!({}),
+            &[],
+        );
+        let tags = repair_tags(&check["repairs"]);
+        for kind in ["gas", "financing", "execution_fees"] {
+            let want = format!("costs.{kind}::mandatory_route_cost_missing");
+            assert!(
+                tags.contains(&want),
+                "el sustrato sin productores de coste debe reportar {want}: {tags:?}"
+            );
+        }
+        assert!(
+            !check["net_profit_usd"].is_number(),
+            "sin costes completos el neto NO se computa (jamás un cero decorativo)"
+        );
+    }
+
+    // ── V4-SNAPSHOT-PRODUCERS-01 — la financiación se DECLARA, no se omite ───
+    //
+    // Medición de producción (chain 1, 2026-10-03, `trading_config`):
+    // `flashloan_fee_pct = 0.0009` (> 0), `token_prices_usd` = 21 símbolos,
+    // `gas_estimate_units = 250000`, `base_token_price_usd = 2693.5435`.
+    // Mientras el hash `arbx:token_prices:1` cubre 447 símbolos y el universo de
+    // identidad tiene 2747 tokens, una ruta long-tail llega SIN precio canónico.
+    // Antes de este cambio la rama de financiación sólo empujaba la línea dentro
+    // del `if let Some(amount_usd)`: sin precio la línea DESAPARECÍA y el bridge
+    // reportaba `costs.financing::mandatory_route_cost_missing` (64/269 medidos)
+    // — una razón que miente, porque el productor existe. Estos tests fijan las
+    // dos direcciones y el motivo VERDADERO.
+
+    fn cost_line_of<'a>(
+        lines: &'a [crate::rhai_agent_bridge::CostLine],
+        kind: &str,
+    ) -> &'a crate::rhai_agent_bridge::CostLine {
+        lines.iter().find(|l| l.kind == kind).unwrap_or_else(|| {
+            panic!(
+                "falta la línea obligatoria {kind}; presentes: {:?}",
+                lines.iter().map(|l| l.kind.as_str()).collect::<Vec<&str>>()
+            )
+        })
+    }
+
+    fn canonical_price_of_a(usd: &str) -> crate::snapshot_services::CanonicalPrice {
+        let now = now_ms();
+        crate::snapshot_services::CanonicalPrice {
+            chain_id: CHAIN,
+            token_address: hex(tok(0xA)),
+            usd: usd.to_string(),
+            revision: "cfg-test".to_string(),
+            observed_at_ms: now.saturating_sub(1_000),
+            valid_until_ms: now + 60_000,
+            evidence_id: "test:canonical_price".to_string(),
+            producer: "PriceBus".to_string(),
+        }
+    }
+
+    #[test]
+    fn financing_line_is_declared_when_the_start_token_has_no_canonical_price() {
+        let cfg = operator_cfg();
+        assert!(
+            cfg.flashloan_fee_pct > 0.0,
+            "el fixture del operador declara una tasa flash > 0 (como producción)"
+        );
+        // SIN ninguna entrada de precio: el caso medido de las rutas long-tail.
+        let no_prices = std::collections::BTreeMap::new();
+        let lines = v4_base_cost_lines(
+            &cfg,
+            CHAIN,
+            &hex(tok(0xA)),
+            AMOUNT_RAW,
+            18,
+            20.0,
+            &no_prices,
+        );
+
+        let financing = cost_line_of(&lines, "financing");
+        assert_eq!(
+            financing.usd, None,
+            "sin precio canónico el importe NO se computa: ni ceros ni estimaciones (R8)"
+        );
+        assert_eq!(
+            financing.treatment, "external",
+            "la financiación APLICA (tasa declarada > 0): not_applicable afirmaría que el coste no existe"
+        );
+        assert!(
+            financing.reason.as_deref().is_some_and(|r| !r.is_empty()),
+            "un coste NO COMPUTADO exige razón explícita"
+        );
+        assert!(
+            !financing.evidence_id.is_empty(),
+            "el contrato CostLine exige evidence_id no vacío"
+        );
+        // Las otras dos obligatorias no dependen del precio del token.
+        assert_eq!(cost_line_of(&lines, "execution_fees").treatment, "embedded");
+        assert!(
+            cost_line_of(&lines, "gas").usd.is_some(),
+            "el gas se computa con el precio base de la CONFIG, no con el del token"
+        );
+    }
+
+    #[test]
+    fn financing_line_carries_the_declared_rate_when_the_start_token_is_priced() {
+        use crate::snapshot_services::CanonicalPrice;
+        let cfg = operator_cfg();
+        let mut prices: std::collections::BTreeMap<(u64, String), CanonicalPrice> =
+            std::collections::BTreeMap::new();
+        prices.insert((CHAIN, hex(tok(0xA))), canonical_price_of_a("2"));
+        // 1e18 unidades raw = 1 token a 2 USD → importe 2 USD → reserva
+        // 2 × 0.09% = 0.0018 USD (positiva, no subnormal en el formato de 6).
+        let lines = v4_base_cost_lines(
+            &cfg,
+            CHAIN,
+            &hex(tok(0xA)),
+            "1000000000000000000",
+            18,
+            20.0,
+            &prices,
+        );
+        let financing = cost_line_of(&lines, "financing");
+        assert_eq!(financing.treatment, "external");
+        let usd: f64 = financing
+            .usd
+            .as_deref()
+            .expect("con precio canónico la reserva SÍ se computa")
+            .parse()
+            .expect("usd decimal");
+        assert!(usd > 0.0, "reserva positiva: {usd}");
+        assert_eq!(
+            financing.evidence_id, "config:flashloan_fee_pct",
+            "la evidencia debe nombrar la fuente REAL (la config del operador)"
+        );
+    }
+
+    #[test]
+    fn economic_check_distinguishes_an_absent_line_from_a_declared_uncomputable_one() {
+        let rev: crate::snapshot_services::RevisionGuard = Arc::new(|_: &str, _: &str| true);
+        let services =
+            crate::snapshot_services::SnapshotServices::new(Arc::new(real_bundle()), rev)
+                .expect("services");
+        let router = Arc::new(crate::context_router::ContextRouter::new(4).expect("router"));
+        router
+            .insert(CONTEXT_ID.to_string(), Arc::new(services))
+            .expect("insert");
+        let c = ctx();
+        let discovery = router.discover(&c, &spec()).expect("discover");
+        let candidate = discovery["candidates"]
+            .as_array()
+            .and_then(|v| v.first())
+            .cloned()
+            .expect("candidato");
+        let quote = serde_json::to_value(
+            router
+                .quote(&c, &spec(), &candidate)
+                .expect("quote del candidato"),
+        )
+        .expect("quote serializable");
+
+        let run = |q: &serde_json::Value| {
+            crate::rhai_agent_bridge::economic_check(
+                router.as_ref(),
+                &c,
+                &spec(),
+                &candidate,
+                q,
+                &serde_json::json!({}),
+                &[],
+            )
+        };
+
+        // (a) CON la línea computada: no hay coste obligatorio ausente.
+        let tags_with = repair_tags(&run(&quote)["repairs"]);
+        assert!(
+            !tags_with
+                .iter()
+                .any(|t| t == "costs.financing::mandatory_route_cost_missing"),
+            "con la línea presente esa razón mentiría: {tags_with:?}"
+        );
+
+        // (b) SIN la línea (ausencia real de productor): la razón exacta medida.
+        let mut without = quote.clone();
+        let filtered: Vec<serde_json::Value> = without["costs"]
+            .as_array()
+            .expect("costs[]")
+            .iter()
+            .filter(|l| l["kind"] != "financing")
+            .cloned()
+            .collect();
+        without["costs"] = serde_json::json!(filtered);
+        let absent = run(&without);
+        let tags_absent = repair_tags(&absent["repairs"]);
+        assert!(
+            tags_absent
+                .iter()
+                .any(|t| t == "costs.financing::mandatory_route_cost_missing"),
+            "sin productor la razón debe ser la de ausencia: {tags_absent:?}"
+        );
+        assert_eq!(absent["candidate_eligible"], serde_json::json!(false));
+        assert_eq!(
+            absent["net_profit_usd"],
+            serde_json::Value::Null,
+            "sin coste completo el neto queda NO COMPUTADO (jamás un cero decorativo)"
+        );
+
+        // (c) Línea DECLARADA pero no computable (el caso de producción tras este
+        //     cambio): el motivo es el VERDADERO — el importe no se pudo computar
+        //     — no la ausencia del productor.
+        let mut declared = quote.clone();
+        for line in declared["costs"].as_array_mut().expect("costs[]") {
+            if line["kind"] == "financing" {
+                line["usd"] = serde_json::Value::Null;
+                line["reason"] = serde_json::json!(
+                    "reserva flash NO COMPUTADA: sin precio canonico del start token"
+                );
+                line["evidence_id"] =
+                    serde_json::json!("config:flashloan_fee_pct+unpriced:start_token");
+            }
+        }
+        let tags_declared = repair_tags(&run(&declared)["repairs"]);
+        assert!(
+            tags_declared
+                .iter()
+                .any(|t| t == "costs.financing::missing_or_invalid_cost"),
+            "una línea declarada sin valor debe reportarse como tal: {tags_declared:?}"
+        );
+        assert!(
+            !tags_declared
+                .iter()
+                .any(|t| t == "costs.financing::mandatory_route_cost_missing"),
+            "la línea ESTÁ declarada: la razón de 'sin productor' mentiría: {tags_declared:?}"
+        );
+    }
+
+    #[test]
+    fn the_v4_bindings_resolve_the_registered_real_context() {
+        // Extremo a extremo por el MISMO camino que un cartucho: engine Rhai +
+        // `rhai_agent_bridge::register` + ContextRouter. Antes de
+        // SHADOW-CANONICAL-01 la ruta SHADOW no registraba contexto alguno, así
+        // que `agent_v4_quote` caía al stub y devolvía costes VACÍOS.
+        let rev: crate::snapshot_services::RevisionGuard = Arc::new(|_: &str, _: &str| true);
+        let services =
+            crate::snapshot_services::SnapshotServices::new(Arc::new(real_bundle()), rev)
+                .expect("services");
+        let router = Arc::new(crate::context_router::ContextRouter::new(4).expect("router"));
+        router
+            .insert(CONTEXT_ID.to_string(), Arc::new(services))
+            .expect("insert");
+
+        let mut engine = rhai::Engine::new();
+        crate::rhai_agent_bridge::register(&mut engine, router.clone());
+        let mut scope = rhai::Scope::new();
+        scope.push("ctx_id", CONTEXT_ID.to_string());
+        scope.push("mev_id", MEV_ID.to_string());
+        scope.push("digest", DIGEST.to_string());
+        let script = r#"
+            let ctx = #{ "context_id": ctx_id, "snapshot_id": ctx_id };
+            let spec = #{ "mev_id": mev_id, "detector_id": "R_CLOSED_CYCLE",
+                         "source_digest": digest, "logic": "closed_route",
+                         "allowed_search_hops": [2], "operator_requirements": [] };
+            let discovery = agent_v4_discover(ctx, spec);
+            let candidates = discovery["candidates"];
+            if candidates == () || candidates.len() == 0 {
+                return #{ "discovery": "NO_CANDIDATE", "costs": 0 };
+            }
+            let quote = agent_v4_quote(ctx, spec, candidates[0]);
+            let costs = quote["costs"];
+            let n = if costs == () { 0 } else { costs.len() };
+            #{ "discovery": "READY", "costs": n, "quote_status": quote["status"] }
+        "#;
+        let out = engine
+            .eval_with_scope::<rhai::Map>(&mut scope, script)
+            .expect("el script v4 debe evaluar");
+        assert_eq!(
+            out.get("discovery").map(|d| d.to_string()),
+            Some("READY".to_string()),
+            "el binding debe descubrir sobre el grafo del contexto registrado"
+        );
+        let costs = out
+            .get("costs")
+            .and_then(|d| d.as_int().ok())
+            .expect("costs debe ser entero");
+        assert!(
+            costs > 0,
+            "agent_v4_quote sobre el contexto REAL devuelve costes no vacíos"
+        );
+    }
+
+    #[test]
+    fn shadow_outcome_rows_declare_the_real_substrate() {
+        // `mode` sigue siendo "shadow" (es el stream shadow), pero la fila
+        // declara si la evaluación usó el bundle real o el stub — antes TODAS
+        // las filas describían el stub sin decirlo.
+        let intent = cycle_intent();
+        let real = build_rd_outcome_v1(
+            CHAIN,
+            "dex_arb",
+            &intent,
+            &CartridgeEvalResult {
+                is_opportunity: false,
+                estimated_profit: 0.0,
+                confidence: 0.0,
+                metadata: HashMap::new(),
+                urgency: "low".to_string(),
+                reason: Some("no_opportunity".to_string()),
+            },
+            true,
+            ShadowSubstrate::IntentBundle,
+            1_700_000_000_000,
+        );
+        assert_eq!(real["mode"], "shadow");
+        assert_eq!(real["context_provenance"], "intent_bundle");
+
+        let stub = build_rd_outcome_v2(
+            CHAIN,
+            "dex_arb",
+            &intent,
+            &CartridgeEvalResult {
+                is_opportunity: false,
+                estimated_profit: 0.0,
+                confidence: 0.0,
+                metadata: HashMap::new(),
+                urgency: "low".to_string(),
+                reason: Some("no_opportunity".to_string()),
+            },
+            false,
+            ShadowSubstrate::StaticBootStub,
+            1_700_000_000_000,
+        );
+        assert_eq!(stub["mode"], "shadow");
+        assert_eq!(stub["context_provenance"], "static_boot_stub");
+    }
+
+    // ── MARKET-FEATURES-WIRE-01 (2026-10-03): el mapa de features del v4 ──
+    //
+    // El defecto que estos tests cierran: `v4_market_state_from_edges`
+    // construía `features` con `HashMap::new()`. Todo lector de `features` en la
+    // ruta v4 recibía nada y varios operadores, ante el hueco, FABRICABAN un
+    // valor con `unwrap_or` (premium flash a 0.0, capital a $1.0, fee a 30 bps)
+    // en vez de repartir DATA_GAP. Los tests ejercitan el sitio REAL — la
+    // construcción del MarketState que va al dispatch v4 —, no una copia.
+
+    /// Las claves que los operadores nativos y `regime_router` LEEN del mapa.
+    /// Ante productor sin dato, NINGUNA debe existir.
+    const OPERATOR_READ_FEATURE_KEYS: [&str; 6] = [
+        "volatility",
+        "health_factor",
+        "oracle_price",
+        "onchain_price",
+        "parity_deviation",
+        "pool_fee",
+    ];
+
+    /// Pierna V2 mínima y BIEN FORMADA: es el único tipo de edge que el
+    /// constructor acepta (protocolo `cpmm_v2`, reservas orientadas y decimales
+    /// ya resueltos). Reservas no degeneradas para que `normalized_price`
+    /// compute — con decimales 6/18 la normalización es la que decide el precio.
+    fn market_state_edge() -> crate::agent_graph::Edge {
+        crate::agent_graph::Edge {
+            edge_id: "0xfeat".into(),
+            pool_id: "0xfeat".into(),
+            chain_id: 1,
+            token_in: "0xusdc".into(),
+            token_out: "0xweth".into(),
+            protocol: "cpmm_v2".into(),
+            snapshot_id: "snap".into(),
+            block_hash: "sync-ts-1".into(),
+            reserve_in_raw: Some("1000000000".into()), // 1_000 USDC (6 dec)
+            reserve_out_raw: Some("500000000000000000".into()), // 0.5 WETH (18 dec)
+            fee_units: Some(30),
+            fee_denominator: Some(10_000),
+            token_in_decimals: 6,
+            token_out_decimals: 18,
+            adapter_version: "reserves_cache_v1".into(),
+            sqrt_price_x96_raw: None,
+            liquidity: None,
+        }
+    }
+
+    #[test]
+    fn producer_with_data_reaches_the_v4_dispatch_state() {
+        let edges = vec![market_state_edge()];
+        let mut produced = HashMap::new();
+        produced.insert("parity_deviation".to_owned(), 0.000_5);
+        produced.insert("volatility".to_owned(), 0.42);
+        let state = v4_market_state_from_edges(&edges, 21_000_000, 12.5, produced)
+            .expect("una pierna V2 con decimales resueltos produce MarketState");
+        assert_eq!(state.features.len(), 2, "el mapa producido llega íntegro");
+        assert_eq!(state.features.get("parity_deviation"), Some(&0.000_5));
+        assert_eq!(state.features.get("volatility"), Some(&0.42));
+    }
+
+    #[test]
+    fn producer_without_data_leaves_the_v4_dispatch_state_featureless() {
+        let edges = vec![market_state_edge()];
+        let state = v4_market_state_from_edges(&edges, 21_000_000, 12.5, HashMap::new())
+            .expect("el MarketState se construye aunque no haya ninguna feature");
+        assert!(
+            state.features.is_empty(),
+            "sin productor el mapa queda VACÍO; llegó {:?}",
+            state.features
+        );
+    }
+
+    #[test]
+    fn no_operator_read_key_is_fabricated_when_the_producer_has_no_data() {
+        // Gate anti-fabricación. Si alguien vuelve a insertar un default en el
+        // sitio de construcción — 0.0 para `flash_premium`, 1.0 para
+        // `max_capital`, 0.003 para `fee_bps`/`pool_fee` — este test FALLA.
+        let edges = vec![market_state_edge()];
+        let state = v4_market_state_from_edges(&edges, 21_000_000, 12.5, HashMap::new())
+            .expect("el MarketState se construye aunque no haya ninguna feature");
+        for key in OPERATOR_READ_FEATURE_KEYS {
+            assert!(
+                !state.features.contains_key(key),
+                "features[{key}] NO debe existir sin productor: el hueco se declara, \
+                 no se rellena con un valor fabricado"
+            );
+        }
+    }
+
+    #[test]
+    fn a_produced_zero_is_a_measurement_and_survives_the_wire() {
+        // R8/R10: `None` = no computado, `Some(0.0)` = computado y exactamente
+        // cero. Una serie de precios plana sobre un lapso real es volatilidad
+        // CERO — es una medición y debe viajar. El test fija la distinción para
+        // que nadie "corrija" la fabricación borrando también los ceros reales.
+        let edges = vec![market_state_edge()];
+        let mut produced = HashMap::new();
+        produced.insert("volatility".to_owned(), 0.0);
+        let state = v4_market_state_from_edges(&edges, 21_000_000, 12.5, produced)
+            .expect("una pierna V2 con decimales resueltos produce MarketState");
+        assert_eq!(
+            state.features.get("volatility"),
+            Some(&0.0),
+            "un cero MEDIDO viaja; la ausencia se representa por clave ausente"
+        );
+    }
+
+    #[test]
+    fn wired_state_still_passes_structural_admission_before_dispatch() {
+        // El MarketState con features pobladas sigue pasando la admisión
+        // estructural que precede al dispatch de operadores: poblarlas no rompe
+        // el camino que las consume.
+        use crate::native_operator_adapter::OperatorInputAdmission;
+        let edges = vec![market_state_edge()];
+        let mut produced = HashMap::new();
+        produced.insert("parity_deviation".to_owned(), 0.000_5);
+        let state = v4_market_state_from_edges(&edges, 21_000_000, 12.5, produced)
+            .expect("una pierna V2 con decimales resueltos produce MarketState");
+        let receipt = V4StructuralInputAdmission.validate(1, &state, "snap", "plan");
+        assert!(receipt.is_ok(), "admisión estructural: {receipt:?}");
+        assert_eq!(state.features.len(), 1);
     }
 }

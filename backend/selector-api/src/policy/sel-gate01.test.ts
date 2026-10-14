@@ -1,6 +1,6 @@
 /**
- * SEL-GATE-01 (2026-09-17) — selector-api must not publish producer-rejected
- * opportunities to `arbx:opps:validated`.
+ * SEL-GATE-01 (2026-09-17) — the producer-rejection GUARD, and what FIX-SELGATE-01
+ * (2026-10-06) changed about it.
  *
  * Incident shape (audits/real-cycles-audit-20260916/00-SYNTHESIS.md, funnel
  * 2026-09-17T04:00Z): 87% of sims burned fork RPC on opportunities the
@@ -16,6 +16,21 @@
  *      set), and leaves clean opportunities untouched;
  *   2. the prefilter call site orders the guard BEFORE the expensive work
  *      (safety fetch + scoring) and BEFORE the persist/publish tail.
+ *
+ * WHAT FIX-SELGATE-01 CHANGED (and why assertion 3 was rewritten, not deleted):
+ * SEL-GATE-01 ALSO accept-gated the publish tail (`if (kind === "accept")`),
+ * which turned `arbx:opps:validated` from a DECISION LOG into an accept-queue.
+ * Since the producer stamps `rejection_reason` on 100% of its rows, the guard
+ * classified every message `producer_rejected` and the queue was empty BY
+ * CONSTRUCTION from 2026-09-17T09:26:12Z — which pinned `simulations`,
+ * `executions` and `paper_trade_runs` at 0 for life.
+ *
+ * The GUARD is preserved unchanged (assertions 1 and 2 still lock it: same
+ * classification, same ordering, same cheap short-circuit before expensive
+ * work). What moved is the ENFORCEMENT POINT: the publisher now emits the
+ * verdict and the reason, and the party that decides what actually EXECUTES
+ * (sim-ctl / the live terminus) filters on `verdict === "accept"`. The filter
+ * was RELOCATED downstream, not removed — and no threshold was relaxed.
  */
 
 import { describe, it, expect } from "vitest";
@@ -87,15 +102,26 @@ describe("SEL-GATE-01 — producer-rejected opportunities never reach the valida
   });
 
   it("guard runs inside prefilter BEFORE safety fetch + scoring + persist", () => {
-    // The consumer's decision path must reach prefilter (which now carries the
-    // producer-rejection guard) before checkToken / scoreOpportunity, and the
-    // publish tail stays accept-gated.
+    // The consumer's decision path must reach prefilter (which carries the
+    // producer-rejection guard) before checkToken / scoreOpportunity. THIS PART
+    // IS UNCHANGED by FIX-SELGATE-01 — the guard is preserved, cheap and early.
     const preIdx = CONSUMER_SRC.indexOf("prefilter(");
     const safetyIdx = CONSUMER_SRC.indexOf("checkToken(");
     const scoreIdx = CONSUMER_SRC.indexOf("scoreOpportunity(");
     expect(preIdx).toBeGreaterThanOrEqual(0);
     expect(safetyIdx).toBeGreaterThan(preIdx);
     expect(scoreIdx).toBeGreaterThan(preIdx);
-    expect(CONSUMER_SRC).toMatch(/decision\.kind === "accept"/);
+  });
+
+  it("FIX-SELGATE-01: the publish tail is NOT accept-gated — validated is a decision log", () => {
+    // Before: `if (decision.kind === "accept") { publishValidated(...) }` — an
+    // accept-queue that the 100%-stamped producer could never satisfy.
+    // Now: every DECIDED opportunity is published with its verdict + reason, and
+    // the accept/reject filter lives downstream.
+    expect(CONSUMER_SRC).not.toMatch(/if \(decision\.kind === "accept"\)\s*\{\s*await this\.publishValidated/);
+    expect(CONSUMER_SRC).toMatch(/await this\.publishValidated\(opportunity, decision\)/);
+    // The payload must carry the verdict contract downstream filters on.
+    expect(CONSUMER_SRC).toMatch(/verdict:\s*decision\.kind/);
+    expect(CONSUMER_SRC).toMatch(/verdict_reason:/);
   });
 });

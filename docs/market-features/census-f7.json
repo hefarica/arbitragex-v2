@@ -1,0 +1,396 @@
+{
+  "generated_from": "check-feature-producers.ps1",
+  "manifest": [
+    {
+      "note": "Redis arbx:token_prices:<chain>; FEATURES-01a (ya en main)",
+      "producer": "backend/searcher-rs/src/math_evidence.rs:250",
+      "key": "parity_deviation",
+      "state": "PRODUCED"
+    },
+    {
+      "note": "indexer de liquidacion cacheado; FEATURES-02 (ya en main)",
+      "producer": "backend/searcher-rs/src/orchestrator.rs:709",
+      "key": "health_factor",
+      "state": "PRODUCED"
+    },
+    {
+      "note": "clave via const VOLATILITY_KEY; productor NO cableado (zona caliente)",
+      "producer": "backend/searcher-rs/src/native_operator_adapter/market_features/mod.rs:158",
+      "key": "volatility",
+      "state": "PRODUCED_PENDING_WIRE"
+    },
+    {
+      "note": "clave via const ORACLE_PRICE_KEY; ancla Chainlink del PriceBus",
+      "producer": "backend/searcher-rs/src/native_operator_adapter/market_features/mod.rs:170",
+      "key": "oracle_price",
+      "state": "PRODUCED_PENDING_WIRE"
+    },
+    {
+      "note": "clave via const ONCHAIN_PRICE_KEY; par atomico con oracle_price",
+      "producer": "backend/searcher-rs/src/native_operator_adapter/market_features/mod.rs:171",
+      "key": "onchain_price",
+      "state": "PRODUCED_PENDING_WIRE"
+    },
+    {
+      "note": "F7: par REAL (fee_units, fee_denominator) del edge — la MISMA lectura que snapshot_services.rs:345 ya consume; cableado pendiente (zona caliente)",
+      "producer": "backend/searcher-rs/src/native_operator_adapter/market_features/mod.rs:223",
+      "key": "pool_fee",
+      "state": "PRODUCED_PENDING_WIRE"
+    },
+    {
+      "note": "F7: lectura ON-CHAIN del proveedor (Pool.FLASHLOAN_PREMIUM_TOTAL()); si falta, la clave se OMITE y se publica el requisito BLOCKED_EXTERNAL. Nunca 0.0 sin acreditacion",
+      "producer": "backend/searcher-rs/src/native_operator_adapter/market_features/mod.rs:228",
+      "key": "flash_premium",
+      "state": "PRODUCED_PENDING_WIRE"
+    },
+    {
+      "note": "op_11 la lee",
+      "producer": "",
+      "key": "bayes_wins",
+      "state": "ABSENT"
+    },
+    {
+      "note": "op_11 la lee",
+      "producer": "",
+      "key": "bayes_losses",
+      "state": "ABSENT"
+    },
+    {
+      "note": "op_11 la lee",
+      "producer": "",
+      "key": "bayes_prior_alpha",
+      "state": "ABSENT"
+    },
+    {
+      "note": "op_11 la lee",
+      "producer": "",
+      "key": "bayes_prior_beta",
+      "state": "ABSENT"
+    },
+    {
+      "note": "F7: el MISMO par del fee en la unidad de op_15/op_21/op_32 (bps, denominador 10_000 de cost_producers::funding); par atomico con pool_fee",
+      "producer": "backend/searcher-rs/src/native_operator_adapter/market_features/mod.rs:224",
+      "key": "fee_bps",
+      "state": "PRODUCED_PENDING_WIRE"
+    },
+    {
+      "note": "canonical_strategy la lee para valorar el gas en USD; sin productor",
+      "producer": "",
+      "key": "eth_price_usd",
+      "state": "ABSENT"
+    },
+    {
+      "note": "F7: min_profit_usd configurado -> unidades minimas del numerario ([token0 numerary], op_21:123)",
+      "producer": "backend/searcher-rs/src/native_operator_adapter/market_features/mod.rs:236",
+      "key": "break_even_target",
+      "state": "PRODUCED_PENDING_WIRE"
+    },
+    {
+      "note": "op_26 la lee para convertir unidades",
+      "producer": "",
+      "key": "token0_per_eth",
+      "state": "ABSENT"
+    },
+    {
+      "note": "op_15/op_21/op_26 la leen",
+      "producer": "",
+      "key": "gas_units",
+      "state": "ABSENT"
+    },
+    {
+      "note": "canonical_strategy la lee (penalizacion nunca dispara)",
+      "producer": "",
+      "key": "decoherencia",
+      "state": "ABSENT"
+    },
+    {
+      "note": "op_28 la lee",
+      "producer": "",
+      "key": "jit_decay_rate",
+      "state": "ABSENT"
+    },
+    {
+      "note": "op_28 la lee",
+      "producer": "",
+      "key": "min_liquidity",
+      "state": "ABSENT"
+    },
+    {
+      "note": "F7: capital_usd configurado -> unidades minimas del numerario (misma familia que b[1+j]=liquidity_reserves[j].0, op_19:188)",
+      "producer": "backend/searcher-rs/src/native_operator_adapter/market_features/mod.rs:232",
+      "key": "max_capital",
+      "state": "PRODUCED_PENDING_WIRE"
+    },
+    {
+      "note": "op_32 la lee",
+      "producer": "",
+      "key": "mo_weight_yield",
+      "state": "ABSENT"
+    },
+    {
+      "note": "op_32 la lee",
+      "producer": "",
+      "key": "mo_weight_risk",
+      "state": "ABSENT"
+    },
+    {
+      "note": "op_32 la lee",
+      "producer": "",
+      "key": "mo_weight_latency",
+      "state": "ABSENT"
+    },
+    {
+      "note": "op_32 la lee",
+      "producer": "",
+      "key": "mo_per_leg_latency_ms",
+      "state": "ABSENT"
+    },
+    {
+      "note": "op_32_nsga2 la lee",
+      "producer": "",
+      "key": "nsga2.count",
+      "state": "ABSENT"
+    },
+    {
+      "note": "op_32_nsga2 la lee",
+      "producer": "",
+      "key": "nsga2.population_size",
+      "state": "ABSENT"
+    },
+    {
+      "note": "RegimeRouter la computa internamente desde pair_keys; sin lector en features",
+      "producer": "",
+      "key": "arbitrage_gap",
+      "state": "NO_CONSUMER"
+    }
+  ],
+  "mission_keys": [
+    "volatility",
+    "oracle_price",
+    "onchain_price",
+    "parity_deviation",
+    "health_factor"
+  ],
+  "producers_in_prod": {
+    "fee_bps": [
+      "backend/searcher-rs/src/native_operator_adapter/market_features/mod.rs:224"
+    ],
+    "oracle_price": [
+      "backend/searcher-rs/src/native_operator_adapter/market_features/mod.rs:179"
+    ],
+    "break_even_target": [
+      "backend/searcher-rs/src/native_operator_adapter/market_features/mod.rs:236"
+    ],
+    "volatility": [
+      "backend/searcher-rs/src/native_operator_adapter/market_features/mod.rs:167"
+    ],
+    "parity_deviation": [
+      "backend/searcher-rs/src/math_evidence.rs:250"
+    ],
+    "pool_fee": [
+      "backend/searcher-rs/src/native_operator_adapter/market_features/mod.rs:223"
+    ],
+    "onchain_price": [
+      "backend/searcher-rs/src/native_operator_adapter/market_features/mod.rs:180"
+    ],
+    "flash_premium": [
+      "backend/searcher-rs/src/native_operator_adapter/market_features/mod.rs:228"
+    ],
+    "health_factor": [
+      "backend/searcher-rs/src/orchestrator.rs:709"
+    ],
+    "max_capital": [
+      "backend/searcher-rs/src/native_operator_adapter/market_features/mod.rs:232"
+    ]
+  },
+  "read_sites": {
+    "jit_decay_rate": [
+      "backend/math-engine/src/operators/op_28_jit_liquidity.rs:58"
+    ],
+    "decoherencia": [
+      "backend/math-engine/src/strategies/canonical_strategy.rs:86"
+    ],
+    "eth_price_usd": [
+      "backend/math-engine/src/strategies/canonical_strategy.rs:157"
+    ],
+    "parity_deviation": [
+      "backend/math-engine/src/control/regime_router.rs:208"
+    ],
+    "bayes_prior_beta": [
+      "backend/math-engine/src/operators/op_11_bayes.rs:44"
+    ],
+    "mo_weight_latency": [
+      "backend/math-engine/src/operators/op_32_multi_objective.rs:568"
+    ],
+    "flash_premium": [
+      "backend/math-engine/src/operators/op_26_flash_loan.rs:66"
+    ],
+    "gas_units": [
+      "backend/math-engine/src/operators/op_15_golden_section.rs:114",
+      "backend/math-engine/src/operators/op_21_newton.rs:111",
+      "backend/math-engine/src/operators/op_26_flash_loan.rs:107"
+    ],
+    "mo_weight_risk": [
+      "backend/math-engine/src/operators/op_32_multi_objective.rs:567"
+    ],
+    "oracle_price": [
+      "backend/math-engine/src/control/regime_router.rs:197"
+    ],
+    "mo_weight_yield": [
+      "backend/math-engine/src/operators/op_32_multi_objective.rs:566"
+    ],
+    "pool_fee": [
+      "backend/math-engine/src/operators/op_15_golden_section.rs:48",
+      "backend/math-engine/src/operators/op_21_newton.rs:54",
+      "backend/math-engine/src/operators/op_26_flash_loan.rs:60",
+      "backend/math-engine/src/operators/op_32_multi_objective.rs:464"
+    ],
+    "bayes_wins": [
+      "backend/math-engine/src/operators/op_11_bayes.rs:35"
+    ],
+    "min_liquidity": [
+      "backend/math-engine/src/operators/op_28_jit_liquidity.rs:108"
+    ],
+    "token0_per_eth": [
+      "backend/math-engine/src/operators/op_26_flash_loan.rs:112"
+    ],
+    "volatility": [
+      "backend/math-engine/src/control/regime_router.rs:107",
+      "backend/math-engine/src/strategies/canonical_strategy.rs:78",
+      "backend/math-engine/src/strategies/canonical_strategy.rs:131"
+    ],
+    "max_capital": [
+      "backend/math-engine/src/operators/op_19_simplex.rs:174"
+    ],
+    "nsga2.count": [
+      "backend/math-engine/src/operators/op_32_nsga2/mod.rs:78"
+    ],
+    "onchain_price": [
+      "backend/math-engine/src/control/regime_router.rs:198"
+    ],
+    "bayes_prior_alpha": [
+      "backend/math-engine/src/operators/op_11_bayes.rs:39"
+    ],
+    "nsga2.population_size": [
+      "backend/math-engine/src/operators/op_32_nsga2/mod.rs:85"
+    ],
+    "bayes_losses": [
+      "backend/math-engine/src/operators/op_11_bayes.rs:36"
+    ],
+    "mo_per_leg_latency_ms": [
+      "backend/math-engine/src/operators/op_32_multi_objective.rs:626"
+    ],
+    "health_factor": [
+      "backend/math-engine/src/control/regime_router.rs:189"
+    ],
+    "break_even_target": [
+      "backend/math-engine/src/operators/op_21_newton.rs:118"
+    ],
+    "fee_bps": [
+      "backend/math-engine/src/operators/op_15_golden_section.rs:46",
+      "backend/math-engine/src/operators/op_21_newton.rs:52",
+      "backend/math-engine/src/operators/op_32_multi_objective.rs:462"
+    ]
+  },
+  "blocking": [
+    {
+      "rule": "R1",
+      "loc": "backend/math-engine/src/strategies/canonical_strategy.rs:131",
+      "message": "fabrica ausencia: features.get(\"volatility\") con unwrap_or literal -> unwrap_or(0.0)",
+      "declared": true
+    },
+    {
+      "rule": "R1",
+      "loc": "backend/math-engine/src/strategies/canonical_strategy.rs:157",
+      "message": "fabrica ausencia: features.get(\"eth_price_usd\") con unwrap_or literal -> unwrap_or(2000.0)",
+      "declared": true
+    }
+  ],
+  "debt": [
+    {
+      "rule": "R1",
+      "loc": "backend/math-engine/src/operators/op_11_bayes.rs:35",
+      "message": "fabrica ausencia: features.get(\"bayes_wins\") con unwrap_or literal -> unwrap_or(0.0)",
+      "reason": "deuda preexistente (math-engine): ausencia -> wins=0.0. Queda enmascarada aguas abajo por `wins+losses<1.0` -> reason_no_history, pero el mecanismo es implicito: cualquier prior inyectado la volveria un computo silencioso."
+    },
+    {
+      "rule": "R1",
+      "loc": "backend/math-engine/src/operators/op_11_bayes.rs:36",
+      "message": "fabrica ausencia: features.get(\"bayes_losses\") con unwrap_or literal -> unwrap_or(0.0)",
+      "reason": "deuda preexistente (math-engine): idem para losses."
+    },
+    {
+      "rule": "R1",
+      "loc": "backend/math-engine/src/operators/op_11_bayes.rs:39",
+      "message": "fabrica ausencia: features.get(\"bayes_prior_alpha\") con unwrap_or literal -> unwrap_or(1.0)",
+      "reason": "deuda preexistente (math-engine): el PRIOR alpha ausente se vuelve 1.0. Distinto de wins/losses: un prior Beta(1,1) uniforme es una DECISION DE MODELO, no una medicion fabricada — pero es un default silencioso que nadie declara, y si la clave falta porque la configuracion no cargo, 1.0 lo oculta. Debe declararse como prior por defecto explicito."
+    },
+    {
+      "rule": "R1",
+      "loc": "backend/math-engine/src/operators/op_11_bayes.rs:44",
+      "message": "fabrica ausencia: features.get(\"bayes_prior_beta\") con unwrap_or literal -> unwrap_or(1.0)",
+      "reason": "deuda preexistente (math-engine): idem para el PRIOR beta."
+    },
+    {
+      "rule": "R1",
+      "loc": "backend/math-engine/src/operators/op_15_golden_section.rs:46",
+      "message": "fabrica ausencia: features.get(\"fee_bps\") con unwrap_or literal -> unwrap_or(0.003)",
+      "reason": "deuda preexistente (math-engine): sin `fee_bps` fabrica 0.003 y sigue computando."
+    },
+    {
+      "rule": "R1",
+      "loc": "backend/math-engine/src/operators/op_15_golden_section.rs:48",
+      "message": "fabrica ausencia: features.get(\"pool_fee\") con unwrap_or literal -> unwrap_or(0.003)",
+      "reason": "deuda preexistente (math-engine): sin `pool_fee` fabrica 0.003 (30 bps) y sigue computando."
+    },
+    {
+      "rule": "R1",
+      "loc": "backend/math-engine/src/operators/op_19_simplex.rs:174",
+      "message": "fabrica ausencia: features.get(\"max_capital\") con unwrap_or literal -> unwrap_or(1.0)",
+      "reason": "deuda preexistente (math-engine): sin `max_capital` fabrica 1.0 (un dolar) y sigue computando."
+    },
+    {
+      "rule": "R1",
+      "loc": "backend/math-engine/src/operators/op_21_newton.rs:52",
+      "message": "fabrica ausencia: features.get(\"fee_bps\") con unwrap_or literal -> unwrap_or(0.003)",
+      "reason": "deuda preexistente (math-engine): sin `fee_bps` fabrica 0.003."
+    },
+    {
+      "rule": "R1",
+      "loc": "backend/math-engine/src/operators/op_21_newton.rs:54",
+      "message": "fabrica ausencia: features.get(\"pool_fee\") con unwrap_or literal -> unwrap_or(0.003)",
+      "reason": "deuda preexistente (math-engine): sin `pool_fee` fabrica 0.003."
+    },
+    {
+      "rule": "R1",
+      "loc": "backend/math-engine/src/operators/op_21_newton.rs:118",
+      "message": "fabrica ausencia: features.get(\"break_even_target\") con unwrap_or literal -> unwrap_or(0.0)",
+      "reason": "deuda preexistente (math-engine): sin `break_even_target` fabrica 0.0 y sigue computando."
+    },
+    {
+      "rule": "R1",
+      "loc": "backend/math-engine/src/operators/op_26_flash_loan.rs:60",
+      "message": "fabrica ausencia: features.get(\"pool_fee\") con unwrap_or literal -> unwrap_or(0.003)",
+      "reason": "deuda preexistente (math-engine): sin `pool_fee` fabrica 0.003."
+    },
+    {
+      "rule": "R1",
+      "loc": "backend/math-engine/src/operators/op_26_flash_loan.rs:66",
+      "message": "fabrica ausencia: features.get(\"flash_premium\") con unwrap_or literal -> unwrap_or(0.0)",
+      "reason": "deuda preexistente (math-engine): sin `flash_premium` fabrica 0.0 (flash gratis)."
+    },
+    {
+      "rule": "R1",
+      "loc": "backend/math-engine/src/operators/op_32_multi_objective.rs:462",
+      "message": "fabrica ausencia: features.get(\"fee_bps\") con unwrap_or literal -> unwrap_or(0.003)",
+      "reason": "deuda preexistente (math-engine): sin `fee_bps` fabrica 0.003."
+    },
+    {
+      "rule": "R1",
+      "loc": "backend/math-engine/src/operators/op_32_multi_objective.rs:464",
+      "message": "fabrica ausencia: features.get(\"pool_fee\") con unwrap_or literal -> unwrap_or(0.003)",
+      "reason": "deuda preexistente (math-engine): sin `pool_fee` fabrica 0.003."
+    }
+  ],
+  "stale_ledger": []
+}

@@ -58,7 +58,6 @@ use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
-#[allow(dead_code)]
 pub struct ChainSupervisor {
     cfg: Arc<AppConfig>,
     killswitch: KillSwitchClient,
@@ -444,7 +443,6 @@ impl ChainSupervisor {
 #[derive(Debug, Clone)]
 struct ChainRuntimeConfig {
     rpc_http_url: String,
-    #[allow(dead_code)]
     rpc_ws_url: Option<String>,
     enabled: bool,
 }

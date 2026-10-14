@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 pub struct DexPotentialAdapter {
+    /// STEP 5 census: held for the TODO(scaffold) wiring below — never read yet.
     #[allow(dead_code)]
     engine: Arc<DexEngine>,
 }

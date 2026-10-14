@@ -17,6 +17,31 @@ interface MetricsData {
   };
 }
 
+// ── WS-CONTRACT-METRICS-01 (audit 2026-09-29) ─────────────────────────────
+// Real wire shape of `metrics:initial` / `metrics:entropy`
+// (backend/api-server/src/routes/health.ts:540 and :564). `calculateEntropy`
+// returns nulls on purpose when there is no data, so the nullables here are the
+// server's own R8 contract — not defensive noise.
+interface MetricsEntropyPayload {
+  entropy?: number | null;
+  raw_entropy?: number | null;
+  service_health_factor?: number | null;
+  delta?: number | null;
+  has_data?: boolean;
+  /** Only present on `metrics:initial`. */
+  convergence?: { rate?: number; target?: number; variance?: number };
+  /**
+   * Only present on `metrics:initial`. HONEST NOTE: `getTopologyMetrics` keys are
+   * `manifolds_observed` / `loops_resolved` / `decoherence_rate`, NOT the camelCase
+   * fields below, and the service route that would fill `activeChains` is not
+   * mounted (see /monitor page notes). Typed as optional-unknown so a consumer must
+   * check before reading; do NOT populate it with invented values.
+   */
+  topology?: MetricsData["topology"];
+  /** Unix seconds (the server sends `Math.floor(Date.now()/1000)`). */
+  timestamp?: number;
+}
+
 // Tipos para telemetría de convergencia
 interface ConvergenceTelemetry {
   iteration: number;
@@ -190,44 +215,45 @@ export function useSocketIO(options: UseSocketIOOptions = {}): UseSocketIOReturn
         }
       });
 
-      // Evento: métricas del sistema
-      socket.on("metrics", (data: MetricsData) => {
+      // ── WS-CONTRACT-METRICS-01 (audit 2026-09-29) ────────────────────────
+      // This hook used to listen for a bare `metrics` event and for
+      // `entropy:update`. The server emits NEITHER: api-server/routes/health.ts
+      // sends `metrics:initial` (L540), `metrics:entropy` (L564, every 5 s) and
+      // `metrics:error` (L551/L573). So MetricsStream and EntropyGauge — both
+      // live components of /monitor — were wired to a channel that never fires:
+      // a rename that landed on the producer only. Payload fields below are read
+      // with the server's real names (`convergence.rate`, not `convergenceRate`)
+      // and R8 applies: a missing field stays null, never a fabricated 0.
+      const applyMetricsPayload = (data: MetricsEntropyPayload) => {
         if (!isMountedRef.current) return;
 
         setEntropy(data.entropy ?? null);
-        setConvergenceRate(data.convergenceRate ?? null);
-        if (data.topology) {
-          setTopology(data.topology);
-        }
-        setLastUpdate(new Date());
-      });
+        setConvergenceRate(data.convergence?.rate ?? null);
+        if (data.topology) setTopology(data.topology);
+        setLastUpdate(
+          typeof data.timestamp === "number" ? new Date(data.timestamp * 1000) : new Date(),
+        );
+      };
 
-      // Evento: actualización de entropía específica
-      socket.on("entropy:update", (data: { value: number; timestamp: string }) => {
+      socket.on("metrics:initial", applyMetricsPayload);
+
+      // Entropy refresh every 5 s (no convergence/topology in this payload).
+      socket.on("metrics:entropy", applyMetricsPayload);
+
+      // Transport/RPC failure while computing metrics. Surfaces as the hook's
+      // error so the panel can show the absence instead of looking frozen.
+      socket.on("metrics:error", (data: { error?: string; detail?: string }) => {
         if (!isMountedRef.current) return;
-
-        setEntropy(data.value);
-        setLastUpdate(new Date(data.timestamp));
+        setError(`${data.error ?? "metrics_error"}${data.detail ? `: ${data.detail}` : ""}`);
       });
 
-      // Evento: telemetría de convergencia
-      socket.on("convergence:telemetry", (data: ConvergenceTelemetry) => {
-        if (!isMountedRef.current) return;
-
-        setConvergenceHistory((prev) => {
-          const newHistory = [...prev, data];
-          // Mantener últimos 50 registros
-          return newHistory.slice(-50);
-        });
-      });
-
-      // Evento: salud de servicios
-      socket.on("services:health", (data: ServiceHealthData) => {
-        if (!isMountedRef.current) return;
-
-        setServiceHealth(data);
-        setLastUpdate(new Date());
-      });
+      // NOT WIRED — declared here for auditability, do NOT invent a producer:
+      //   `convergence:telemetry` — the server emits `convergence_signal`
+      //     (websocket.ts:548) and the frontend already consumes it in
+      //     lib/hooks/useConvergenceStream.ts; this hook's history array is a
+      //     second, incompatible shape.
+      //   `services:health` — no producer anywhere in the backend (0 hits); the
+      //     live path for service health is REST (GET /api/status).
 
       // Evento genérico para datos de telemetría
       socket.on("telemetry", (data: Record<string, unknown>) => {

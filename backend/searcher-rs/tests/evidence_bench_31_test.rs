@@ -10,6 +10,11 @@
 use math_engine::MarketState;
 use std::time::Instant;
 
+/// Clave canonica del par simulado (tokens hex en minusculas, orden
+/// lexicografico, unidos por '|' — formato de FEATURES-01b).
+const PAR_FIXTURE: &str =
+    "0xaaaa0000000000000000000000000000000000aa|0xbbbb0000000000000000000000000000000000bb";
+
 fn rich_state() -> MarketState {
     let mut features = std::collections::HashMap::new();
     features.insert("mempool_arrivals_per_block".to_string(), 0.5);
@@ -27,6 +32,9 @@ fn rich_state() -> MarketState {
             vec![105.0, 210.0, 50.0],
             vec![106.0, 212.0, 51.0],
         ],
+        // FEATURES-01b: una clave canonica por fila (mismo par en las 7
+        // observaciones) para respetar pair_keys.len() == price_matrix.len().
+        pair_keys: vec![PAR_FIXTURE.to_string(); 7],
         liquidity_reserves: vec![(1_000_000.0, 1_050_000.0), (500_000.0, 500_000.0)],
         gas_price_gwei: 20.0,
         block_timestamp: 1_700_000_000,

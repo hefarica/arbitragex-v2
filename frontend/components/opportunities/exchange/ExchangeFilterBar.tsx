@@ -45,6 +45,15 @@ export interface ExchangeFilters {
   minYieldUsd: number | null;
   /** Exact hop count (2/3/4/…) or "all" (operator order 2026-09-20). */
   hops: number | "all";
+  /**
+   * "Mostrar rechazadas" (operator order 2026-09-27): paint the detections that
+   * are NOT real/live economic cards — gate rejections whose producer never
+   * priced them, and source failures — with their own reason instead of leaving
+   * them as a bare count. OFF by default, so the grid is exactly the real/live
+   * card set until the operator asks otherwise. It reveals rows; it never fills
+   * a missing figure with an assumption.
+   */
+  showRejected: boolean;
 }
 
 export const DEFAULT_FILTERS: ExchangeFilters = {
@@ -54,6 +63,7 @@ export const DEFAULT_FILTERS: ExchangeFilters = {
   viableOnly: false,
   minYieldUsd: null,
   hops: "all",
+  showRejected: false,
 };
 
 export interface ExchangeFilterBarProps {
@@ -181,13 +191,43 @@ export function ExchangeFilterBar({
 
       <button
         type="button"
-        onClick={() => onChange({ ...filters, viableOnly: !filters.viableOnly })}
+        onClick={() =>
+          // viableOnly and showRejected are mutually exclusive by construction:
+          // "viable only" drops exactly the rows "mostrar rechazadas" reveals.
+          onChange({ ...filters, viableOnly: !filters.viableOnly, showRejected: false })
+        }
         aria-pressed={filters.viableOnly}
         className={`chip ${filters.viableOnly ? "chip-on" : "chip-off"}`}
         title={filters.viableOnly ? "Showing viable only — click to show all" : "Showing all — click for viable only"}
       >
         {filters.viableOnly ? <Eye size={12} /> : <EyeOff size={12} />}
         {filters.viableOnly ? "Viable" : "All"}
+      </button>
+
+      {/* "Mostrar rechazadas" (operator order 2026-09-27). Reveals the
+          detections that have no closed real/live ladder — each one painted
+          with its own recorded reason. It never invents a figure: a row with no
+          computed economics shows why, not a substituted number. */}
+      <button
+        type="button"
+        data-testid="toggle-show-rejected"
+        onClick={() =>
+          onChange({
+            ...filters,
+            showRejected: !filters.showRejected,
+            viableOnly: false,
+          })
+        }
+        aria-pressed={filters.showRejected}
+        className={`chip ${filters.showRejected ? "chip-on" : "chip-off"}`}
+        title={
+          filters.showRejected
+            ? "Mostrando TODAS las detecciones (rechazadas / sin economía computada incluidas) — click para volver a solo real/live"
+            : "Mostrar rechazadas: pinta también las detecciones rechazadas o sin economía computada, con su razón real"
+        }
+      >
+        {filters.showRejected ? <Eye size={12} /> : <EyeOff size={12} />}
+        Mostrar rechazadas
       </button>
     </div>
   );

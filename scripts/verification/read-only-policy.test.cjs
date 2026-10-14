@@ -26,3 +26,42 @@ test('all exact required checks must pass',()=>{
   assert.equal(verified(checks,['http','catalog','socket']),true);
   assert.equal(verified(checks,['http','catalog','socket','served_sha']),false);
 });
+
+// ── ACK-PARSER-01: the acknowledgement id is part of the frame's STRUCTURE ──
+// Socket.IO puts an optional acknowledgement id between the packet type and the
+// payload: `420[...]` is an EVENT asking for an ack, not an ack. The old parser
+// required the literal prefix `42[`, so it refused a valid frame before it ever
+// looked at the event name.
+test('an acknowledged read subscription crosses in its valid form',()=>{
+  assert.equal(safeEnginePacket('420["subscribe:runtime_ack"]'),true);   // the frame the browser actually emitted
+  assert.equal(safeEnginePacket('42["subscribe:runtime_ack"]'),true);    // unchanged: no ack id
+  assert.equal(safeEnginePacket('4237["subscribe:prices"]'),true);       // multi-digit ack id
+  assert.equal(safeEnginePacket('42999999999999["subscribe:prices"]'),true); // the id VALUE is irrelevant
+});
+test('recognising the syntax authorises nobody and proves no server ack',()=>{
+  // The ack id is a client-chosen integer. Interpreting it says nothing about the
+  // emitter's authority and nothing about whether the server ever acknowledged --
+  // those remain separate checks. A valid frame shape still buys no authorisation.
+  assert.equal(safeEnginePacket('420["subscribe:admin"]'),false);
+  assert.equal(safeEnginePacket('420["runtime:set"]'),false);
+});
+test('the fix is NOT a blind prefix allowance',()=>{
+  for(const frame of ['420','420anything','420{}','420x','42[' ,'420[','42{}[', '420["subscribe:prices"]extra'])
+    assert.equal(safeEnginePacket(frame),false,frame);
+});
+for(const frame of ['42["execute"]','420["execute"]','4217["execute"]','42["sign"]','420["sign"]',
+  '42["runtime:set"]','420["runtime:set"]','4217["runtime:set"]'])
+  test('a write event stays blocked with or without an ack id: '+frame,()=>assert.equal(safeEnginePacket(frame),false));
+for(const frame of ['42/admin,["subscribe:prices"]','420/admin,["subscribe:prices"]','42/,["subscribe:prices"]',
+  '420/,["subscribe:prices"]','41/admin,'])
+  test('a namespace stays blocked with or without an ack id: '+frame,()=>assert.equal(safeEnginePacket(frame),false));
+for(const frame of ['42x["subscribe:prices"]','420x["subscribe:prices"]','42<0>["subscribe:prices"]',
+  '420\ufeff["subscribe:prices"]','4237x["subscribe:prices"]'])
+  test('a malformed ack shape stays blocked: '+frame,()=>assert.equal(safeEnginePacket(frame),false));
+test('a polling body carrying several ack-bearing frames is judged frame by frame',()=>{
+  assert.equal(safePollingBody('420["subscribe:runtime_ack"]\x1e4237["subscribe:prices"]\x1e40'),true);
+  // one bad frame anywhere poisons the body, even wedged between two good ones
+  assert.equal(safePollingBody('420["subscribe:prices"]\x1e420["execute"]\x1e42["subscribe:prices"]'),false);
+  assert.equal(safePollingBody('42["subscribe:prices"]\x1e42x["subscribe:prices"]'),false);
+  assert.equal(safePollingBody('420["subscribe:prices"]\x1e'),false);
+});

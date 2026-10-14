@@ -222,6 +222,7 @@ async fn build_test_orchestrator() -> Option<std::sync::Arc<searcher_rs::orchest
         math_registry: Arc::new(math_engine::OperatorRegistry::new()),
         regime_router: math_engine::RegimeRouter::default(),
         math_redis: redis_conn.clone(),
+        token_decimals_provider: None,
         #[cfg(feature = "paper-shadow")]
         sed_bridge: None,
     };

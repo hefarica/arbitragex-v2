@@ -40,59 +40,241 @@ fn price_from_reserves(r0: ethers::types::U256, r1: ethers::types::U256) -> Opti
     }
 }
 
+/// Precio del par en UNIDADES HUMANAS: `(r1 / 10^dec_out) / (r0 / 10^dec_in)`.
+///
+/// MATH-04-FOLLOWUP (2026-09-30): el ratio crudo `r1/r0` mezcla unidades mínimas
+/// de dos tokens con decimales distintos — WETH(18)/USDC(6) daba ~0.002 en vez
+/// de ~2000. Dividir cada lado por su propia escala lo lleva a unidades del
+/// token, el mismo criterio que `wei_str_to_token_units` / `weiUnits` en el
+/// resto del repo.
+///
+/// R8: escala no finita, reserva cero o resultado no finito/no positivo → `None`.
+pub(crate) fn normalized_price(
+    r0: ethers::types::U256,
+    r1: ethers::types::U256,
+    dec_in: u8,
+    dec_out: u8,
+) -> Option<f64> {
+    let raw = price_from_reserves(r0, r1)?;
+    let scale_in = 10f64.powi(dec_in as i32);
+    let scale_out = 10f64.powi(dec_out as i32);
+    if !scale_in.is_finite() || !scale_out.is_finite() || scale_in <= 0.0 || scale_out <= 0.0 {
+        return None;
+    }
+    // raw = r1/r0  ⇒  humano = (r1/scale_out)/(r0/scale_in) = raw · scale_in/scale_out
+    let human = raw * (scale_in / scale_out);
+    if human.is_finite() && human > 0.0 {
+        Some(human)
+    } else {
+        None
+    }
+}
+
+/// Clave canonica de un par de tokens: los dos en minusculas, ordenados
+/// lexicograficamente y unidos por `'|'`, p.ej. `"0xaaa...|0xbbb..."`.
+///
+/// FEATURES-01b: `MarketState.pair_keys` lleva una clave por fila de
+/// `price_matrix`, y `RegimeRouter` agrupa por esa clave para calcular el gap de
+/// arbitraje SOLO entre venues del MISMO par. El orden lexicografico hace que
+/// `(A,B)` y `(B,A)` den la misma clave (el precio normalizado de un pool ya se
+/// calcula en la direccion `token_in -> token_out` de la pierna, asi que invertir
+/// la pierna no invierte este precio) y no hay dependencia del checksum EIP-55.
+///
+/// Los llamadores ya pasan direcciones en minusculas (`format!("0x{:040x}", ...)`),
+/// por eso no se normaliza de nuevo aqui.
+pub(crate) fn canonical_pair_key(a_lower: &str, b_lower: &str) -> String {
+    if a_lower <= b_lower {
+        format!("{a_lower}|{b_lower}")
+    } else {
+        format!("{b_lower}|{a_lower}")
+    }
+}
+
+/// Decimales por token, cacheados por intent (mismo contrato que
+/// `cartridge_boot::v4_token_decimals`). R8: meta ausente/ilegible → `None`,
+/// y la pierna que lo necesite se OMITE — nunca se asume 18.
+async fn leg_token_decimals(
+    redis: &mut redis::aio::ConnectionManager,
+    chain_id: u64,
+    addr_lower: &str,
+    cache: &mut std::collections::HashMap<String, Option<u8>>,
+) -> Option<u8> {
+    if let Some(hit) = cache.get(addr_lower) {
+        return *hit;
+    }
+    let decimals = crate::reserves::get_token_meta(redis, chain_id, addr_lower)
+        .await
+        .ok()
+        .flatten()
+        .map(|meta| meta.decimals);
+    cache.insert(addr_lower.to_owned(), decimals);
+    decimals
+}
+
 /// Construye un `MarketState` desde el ReservesCache.
 ///
-/// `pool_addresses`: pools del candidato (las venues de la ruta). Para cada una
-/// con reservas, deriva el precio r1/r0 → una fila de la price_matrix (1 asset).
+/// `pool_legs`: `(pool, token_in, token_out)` por pierna, en el orden de la ruta.
+/// Para cada pool con reservas deriva el precio en UNIDADES HUMANAS del par:
+/// `(r1 / 10^dec_out) / (r0 / 10^dec_in)`.
+///
+/// FEATURES-01b (2026-09-30): cada fila precio de `price_matrix` viaja con su
+/// `pair_keys[i]` = `canonical_pair_key(token_in, token_out)` de esa pierna, en el
+/// MISMO orden e igual longitud. Sin esa identidad el `RegimeRouter` comparaba el
+/// precio de un pool A/B contra el de un pool B/C (hops de una misma ruta, pares
+/// distintos) y publicaba un gap de arbitraje falso; con ella el gap se calcula
+/// solo entre venues del mismo par, o queda en `None` (R8).
+///
+/// MATH-04-FOLLOWUP (2026-09-30): cierra el "follow-up thread" que MATH-04 dejó
+/// abierto (2026-09-24). Antes la `price_matrix` llevaba el ratio CRUDO `r1/r0`:
+/// para WETH(18)/USDC(6) eso da ~0.002 en vez de ~2000, y los consumidores
+/// (op_27 path ordering, op_15/op_21 `reference_price` = media) calculaban
+/// spreads y medias sobre valores desviados por 10^3 — de modo que devolvían
+/// `scalar: null` y la evidencia salía con `operators_computed: 0`.
+///
+/// El insumo nunca faltó: `RouteIntentLeg` YA lleva `token_in`/`token_out`
+/// (`route_intent.rs:145,147`); el llamador los descartaba al quedarse solo con
+/// `pool_hint`. Aquí se conservan.
+///
 /// features: gas_price_gwei + cualquier feature de régimen provista por el
 /// caller (health_factor, parity_deviation, oracle/onchain si aplica).
+///
+/// R8 fail-honest: si los decimales de CUALQUIERA de los dos tokens no están
+/// disponibles, la pierna se OMITE. Nunca se asume 18, nunca se normaliza a
+/// medias. Si ninguna pierna sobrevive → `None` (`insufficient_state`).
+#[allow(clippy::too_many_arguments)] // market-state inputs (reservas + piernas + contexto de bloque + features); mismo criterio que evaluate_math_evidence
 pub async fn build_market_state(
     reserves_cache: &Arc<ReservesCache>,
-    pool_addresses: &[Address],
+    pool_legs: &[(Address, Address, Address)],
+    chain_id: u64,
+    redis: &mut redis::aio::ConnectionManager,
     gas_price_gwei: f64,
     block_number: u64,
     block_timestamp: u64,
     features: std::collections::HashMap<String, f64>,
 ) -> Option<MarketState> {
     let mut price_matrix: Vec<Vec<f64>> = Vec::new();
+    // FEATURES-01b: identidad de par, una clave por fila de `price_matrix` y en
+    // el MISMO orden. Se empuja SIEMPRE junto al precio (mismo bloque `if let`),
+    // de modo que la invariante `pair_keys.len() == price_matrix.len()` no depende
+    // de los `continue` previos (reservas o decimales ausentes).
+    let mut pair_keys: Vec<String> = Vec::new();
     let mut liquidity_reserves: Vec<(f64, f64)> = Vec::new();
+    let mut decimal_cache: std::collections::HashMap<String, Option<u8>> =
+        std::collections::HashMap::new();
 
-    for pool in pool_addresses {
-        if let Some((r0, r1)) = reserves_cache.get(pool).await {
-            if let Some(price) = price_from_reserves(r0, r1) {
-                // MATH-04 fix (2026-09-24): price_from_reserves computes the
-                // RAW ratio r1/r0 without decimal normalization — for
-                // WETH(18)/USDC(6) this yields ~0.002 instead of ~2000.
-                // The price_matrix is consumed by op_27 (path ordering:
-                // "precio del mismo asset a través de venues") and op_15/
-                // op_21 (reference_price = media). Without normalization,
-                // cross-pair routes produce meaningless spreads/averages.
-                // NOTE: we do NOT have per-token decimals at this layer (the
-                // reserves cache stores raw U256 pairs). The normalization
-                // requires the DecimalsMap from the route metadata — a
-                // follow-up thread. For now, the raw ratio is annotated in
-                // the MarketState so consumers know the convention.
-                price_matrix.push(vec![price]);
-                liquidity_reserves.push((r0.as_u128() as f64, r1.as_u128() as f64));
-            }
+    for (pool, token_in, token_out) in pool_legs {
+        let Some((r0, r1)) = reserves_cache.get(pool).await else {
+            continue;
+        };
+        let in_lc = format!("0x{:040x}", token_in);
+        let out_lc = format!("0x{:040x}", token_out);
+        // R8: sin decimales de AMBOS tokens no hay precio honesto — se omite.
+        let (Some(dec_in), Some(dec_out)) = (
+            leg_token_decimals(redis, chain_id, &in_lc, &mut decimal_cache).await,
+            leg_token_decimals(redis, chain_id, &out_lc, &mut decimal_cache).await,
+        ) else {
+            debug!(
+                event = "math_evidence.leg_skipped_no_decimals",
+                chain_id,
+                pool = %pool,
+                token_in = %in_lc,
+                token_out = %out_lc,
+                "pierna omitida: decimales ausentes (R8, no se asume 18)"
+            );
+            continue;
+        };
+        if let Some(price) = normalized_price(r0, r1, dec_in, dec_out) {
+            price_matrix.push(vec![price]);
+            pair_keys.push(canonical_pair_key(&in_lc, &out_lc));
+            liquidity_reserves.push((r0.as_u128() as f64, r1.as_u128() as f64));
         }
     }
-    // MATH-04 note: price_matrix carries RAW reserve ratios (r1/r0 in
-    // smallest units). Consumers that need human-unit prices MUST normalize
-    // by 10^(dec_in − dec_out) per pair. See op_27's doc comment.
+
+    // La invariante se verifica aqui mismo: cualquier rama futura que empuje un
+    // precio sin su clave (o al reves) revienta en debug/tests en vez de producir
+    // un desalineamiento silencioso que el router leeria como otro par.
+    debug_assert_eq!(
+        pair_keys.len(),
+        price_matrix.len(),
+        "invariante FEATURES-01b: una pair_key por fila de price_matrix"
+    );
 
     if price_matrix.is_empty() {
-        return None; // insufficient_state — no reserves for any pool
+        return None; // insufficient_state — no priced pool with known decimals
     }
 
     Some(MarketState {
         price_matrix,
+        pair_keys,
         liquidity_reserves,
         gas_price_gwei,
         block_timestamp,
         block_number,
         features,
     })
+}
+
+/// FEATURES-01a (2026-10-01): features de régimen desde fuentes VIVAS.
+///
+/// El call site pasaba `std::collections::HashMap::new()` — el mapa nacía vacío y
+/// moría vacío. Por eso `regime_router` deja las 5 métricas en `null`, clasifica
+/// siempre `["Neutral"]` (que recomienda solo 2 operadores) y la evidencia sale
+/// con `operators_computed: 0` y `scalar: null`.
+///
+/// Esta entrega alimenta `parity_deviation` desde el PriceBus
+/// (`arbx:token_prices:<chain>`): la MAYOR desviación de paridad de un stablecoin
+/// respecto a $1. Es la única de las cinco con fuente Redis viva y verificada
+/// (medido: USDC 1.0000972 · USDT 0.99949749 · DAI 0.99985272 · LUSD 1.0056).
+///
+/// Lo que NO se alimenta aquí, y por qué (R8: no se inventa):
+/// * `oracle_price` / `onchain_price` (sesgo oracle): las anclas Chainlink viven
+///   en el PriceBus en proceso, NO en Redis. `arbx:quote:anchor:1` se inspeccionó
+///   y es salud del grafo (`cross_dex`/`liquidity`/`stability`/`venues`), no
+///   precios de oráculo. Requiere productor propio.
+/// * `health_factor`: estado de lending, sin productor.
+///
+/// R8 fail-honest: sin ningún stable con precio, el mapa va VACÍO y
+/// `regime_router` deja la métrica en `null` — nunca un cero fabricado.
+pub async fn regime_features_from_redis(
+    redis: &mut redis::aio::ConnectionManager,
+    chain_id: u64,
+) -> std::collections::HashMap<String, f64> {
+    let mut out = std::collections::HashMap::new();
+    let key = format!("arbx:token_prices:{}", chain_id);
+    let raw: Option<std::collections::HashMap<String, String>> =
+        redis::AsyncCommands::hgetall(&mut *redis, &key).await.ok();
+    let Some(map) = raw else {
+        return out;
+    };
+    if let Some(dev) = worst_stable_deviation(&map) {
+        out.insert("parity_deviation".to_owned(), dev);
+    }
+    out
+}
+
+/// Stables reconocidos. La paridad se mide contra $1; el símbolo debe existir en
+/// el PriceBus para contar (si no hay dato, no hay métrica).
+const PARITY_STABLES: &[&str] = &[
+    "USDC", "USDT", "DAI", "FRAX", "TUSD", "USDP", "GUSD", "LUSD", "USDD", "PYUSD",
+];
+
+/// MAYOR desviación de paridad de un stable respecto a $1, o `None` si ninguno
+/// tiene precio parseable. Pura (sin Redis) y por tanto testeable.
+///
+/// R8: precios no finitos o ≤ 0 se ignoran en vez de contar como desviación;
+/// sin ningún stable válido devuelve `None` y el llamador NO inserta la métrica.
+fn worst_stable_deviation(map: &std::collections::HashMap<String, String>) -> Option<f64> {
+    let mut worst: Option<f64> = None;
+    for sym in PARITY_STABLES {
+        let Some(v) = map.get(*sym) else { continue };
+        let Ok(px) = v.parse::<f64>() else { continue };
+        if !px.is_finite() || px <= 0.0 {
+            continue;
+        }
+        let dev = (px - 1.0).abs();
+        worst = Some(worst.map_or(dev, |w: f64| w.max(dev)));
+    }
+    worst
 }
 
 /// Evalúa el régimen y los operadores recomendados sobre un candidato, y emite
@@ -175,6 +357,143 @@ pub fn strategy_evidence_key(chain_id: u64, strategy_key: &str) -> String {
     format!("arbx:math_evidence:{}:{}", chain_id, strategy_key)
 }
 
+/// COST-FEATURES-WIRE-01 (2026-10-04) — features de COSTE y OBJETIVO del camino
+/// de evidencia v4, ensambladas desde lecturas ya hechas.
+///
+/// Función PURA (sin I/O) para que la partición sea testeable clave por clave:
+/// cada magnitud entra como `Option` y un `None` deja la clave AUSENTE. Nunca
+/// hay default: FEATURES-DEFAULTS-01 borró los defaults de `op_21` y
+/// OP21-CONTRACT-01 fijó que su ausencia es `DATA_GAP` nombrado
+/// (`features.fee_bps|pool_fee` + `features.break_even_target`), no un `0.0`.
+fn cost_features_from_reads(
+    min_profit_usd: Option<f64>,
+    capital_usd: Option<f64>,
+    numeraire: Option<crate::native_operator_adapter::market_features::TokenScale>,
+    pool_fee: Option<crate::native_operator_adapter::market_features::PoolFeeRead>,
+) -> std::collections::HashMap<String, f64> {
+    let mut features = std::collections::HashMap::new();
+    crate::native_operator_adapter::market_features::add_cost_features(
+        &mut features,
+        &crate::native_operator_adapter::market_features::CostInputs {
+            pool_fee,
+            // La lectura on-chain del premium (`FLASHLOAN_PREMIUM_TOTAL()`) NO está
+            // cableada a este camino: se declara `None` — la clave se omite, jamás
+            // un 0.0 sin acreditación (`cost_inputs::flash_premium_requirement`).
+            flash_premium: None,
+            capital_usd,
+            numeraire,
+            min_profit_usd,
+        },
+    );
+    features
+}
+
+/// COST-FEATURES-WIRE-01 — lee las fuentes REALES del coste/objetivo y las
+/// convierte en features para el `MarketState` del camino de evidencia v4.
+///
+/// Defecto medido que esto cierra: `publish_declared_combo_evidence` construía el
+/// estado con `HashMap::new()`, así que `op_21` (Newton) no recibía NI el fee del
+/// pool NI el objetivo de break-even y devolvía DATA_GAP — `operators.21` es una
+/// de las reparaciones más frecuentes del gate económico v4 (60 de 269
+/// `pertinent` medidos).
+///
+/// Fuentes, todas VIVAS y ninguna literal:
+/// * `break_even_target` / `max_capital` ← `trading_config` (Redis): el objetivo
+///   (`min_profit_usd`) y el cupo (`capital_usd`) que DECIDIÓ el operador,
+///   convertidos a unidades mínimas del numerario con la escala REAL del token
+///   (precio USD del hash de precios + `decimals()` del meta del token).
+/// * `pool_fee` / `fee_bps` ← el par `(fee_bps, 1e6)` del pool V3 en
+///   `arbx:pool_index_v3:<chain>:<symA>:<symB>` (el índice fee-verificado), con
+///   la búsqueda por DIRECCIÓN de pool. Un pool que no esté en ese índice (p.ej.
+///   un V2, cuyo índice sólo guarda direcciones) deja la clave ausente: el fee
+///   no se infiere.
+/// * `flash_premium` — NO se emite (lectura on-chain pendiente, `BLOCKED_EXTERNAL`).
+///
+/// Cualquier fallo de lectura (Redis, meta ausente, precio ausente) degrada a
+/// `None` en su campo y por tanto a clave AUSENTE (R8), nunca a un valor.
+async fn cost_features_from_redis(
+    redis: &mut redis::aio::ConnectionManager,
+    chain_id: u64,
+    first_leg: Option<&(Address, Address, Address)>,
+) -> std::collections::HashMap<String, f64> {
+    use redis::AsyncCommands;
+
+    let cfg_key = shared_rs::trading_config::redis_key(chain_id);
+    let cfg: Option<shared_rs::trading_config::TradingConfigState> = redis
+        .get::<_, Option<String>>(&cfg_key)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|raw| serde_json::from_str(&raw).ok());
+    let (min_profit_usd, capital_usd) = match cfg.as_ref() {
+        Some(c) => (Some(c.min_profit_usd), Some(c.capital_usd)),
+        None => (None, None),
+    };
+
+    let mut numeraire = None;
+    let mut pool_fee = None;
+    if let Some((pool, token_in, token_out)) = first_leg {
+        let in_lc = format!("0x{:040x}", token_in);
+        let out_lc = format!("0x{:040x}", token_out);
+        let meta_in = crate::reserves::get_token_meta(redis, chain_id, &in_lc)
+            .await
+            .ok()
+            .flatten();
+        if let Some(meta_in) = meta_in.as_ref() {
+            // Precio USD del numerario: mismo hash y misma clave (símbolo en
+            // MAYÚSCULAS) que sirve `RedisCachedPriceOracle`.
+            let prices_key = shared_rs::price_oracle::redis_token_prices_key(chain_id);
+            let usd_price = redis
+                .hget::<_, _, Option<String>>(&prices_key, meta_in.symbol.to_ascii_uppercase())
+                .await
+                .ok()
+                .flatten()
+                .and_then(|raw| raw.parse::<f64>().ok())
+                .filter(|v| v.is_finite() && *v > 0.0);
+            if let Some(usd_price) = usd_price {
+                let scale = crate::native_operator_adapter::market_features::TokenScale::new(
+                    usd_price,
+                    meta_in.decimals,
+                );
+                if scale.is_usable() {
+                    numeraire = Some(scale);
+                }
+            }
+            // Fee del pool: índice V3 (addr + fee_bps) por el par de símbolos.
+            let meta_out = crate::reserves::get_token_meta(redis, chain_id, &out_lc)
+                .await
+                .ok()
+                .flatten();
+            if let Some(meta_out) = meta_out.as_ref() {
+                let pools = crate::reserves::get_pools_for_pair_v3(
+                    redis,
+                    chain_id,
+                    &meta_in.symbol,
+                    &meta_out.symbol,
+                )
+                .await
+                .unwrap_or_default();
+                let pool_lc = format!("0x{:040x}", pool);
+                if let Some(info) = pools
+                    .iter()
+                    .find(|p| p.pool_addr.eq_ignore_ascii_case(&pool_lc))
+                {
+                    // Fee tier V3 en PIPS crudos: denominador 1e6 (la unidad que
+                    // declara el propio índice y que `PoolFeeRead` conserva).
+                    pool_fee = Some(
+                        crate::native_operator_adapter::market_features::PoolFeeRead::new(
+                            info.fee_bps,
+                            1_000_000,
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
+    cost_features_from_reads(min_profit_usd, capital_usd, numeraire, pool_fee)
+}
+
 /// STRAT-IDENT-01: publish the per-strategy §IV evidence from the strategy's
 /// OWN declared combo (operator directive 2026-08-23: "evaluar directamente
 /// cada estrategia y esta dirá cuáles son las estructuras que le aplican y con
@@ -195,7 +514,7 @@ pub async fn publish_declared_combo_evidence(
     reserves_cache: &Arc<ReservesCache>,
     registry: &OperatorRegistry,
     redis: &mut redis::aio::ConnectionManager,
-    pool_addresses: &[Address],
+    pool_legs: &[(Address, Address, Address)],
     chain_id: u64,
     strategy_key: &str,
     primary_operator_ids: &[u32],
@@ -204,16 +523,21 @@ pub async fn publish_declared_combo_evidence(
     block_number: u64,
     block_timestamp: u64,
 ) -> usize {
-    // Features: the strategy evaluation context carries none today (same as
-    // evaluate_math_evidence's callers) — operators requiring features compute
-    // None honestly.
+    // Features: COST-FEATURES-WIRE-01 — antes el mapa nacía VACÍO y los
+    // operadores que leen `features` (op_21 primero) devolvían DATA_GAP aunque la
+    // fuente existiera. Ahora el objetivo/cupo del operador y el fee REAL del pool
+    // viajan al `MarketState`; lo que no tenga fuente se OMITE (R8), nunca un
+    // default que enmascare la ausencia.
+    let features = cost_features_from_redis(&mut *redis, chain_id, pool_legs.first()).await;
     let state = match build_market_state(
         reserves_cache,
-        pool_addresses,
+        pool_legs,
+        chain_id,
+        &mut *redis,
         gas_price_gwei,
         block_number,
         block_timestamp,
-        std::collections::HashMap::new(),
+        features,
     )
     .await
     {
@@ -223,7 +547,7 @@ pub async fn publish_declared_combo_evidence(
                 event = "math_evidence.combo_insufficient_state",
                 chain_id,
                 strategy_key,
-                pools = pool_addresses.len(),
+                pools = pool_legs.len(),
                 "declared-combo evidence skipped — no reserves to build MarketState"
             );
             return 0;
@@ -269,7 +593,7 @@ pub async fn evaluate_math_evidence(
     registry: &OperatorRegistry,
     router: &RegimeRouter,
     redis: &mut redis::aio::ConnectionManager,
-    pool_addresses: &[Address],
+    pool_legs: &[(Address, Address, Address)],
     chain_id: u64,
     gas_price_gwei: f64,
     block_number: u64,
@@ -279,7 +603,9 @@ pub async fn evaluate_math_evidence(
 ) -> usize {
     let state = match build_market_state(
         reserves_cache,
-        pool_addresses,
+        pool_legs,
+        chain_id,
+        &mut *redis,
         gas_price_gwei,
         block_number,
         block_timestamp,
@@ -293,7 +619,7 @@ pub async fn evaluate_math_evidence(
                 event = "math_evidence.insufficient_state",
                 chain_id,
                 strategy_kind,
-                pools = pool_addresses.len(),
+                pools = pool_legs.len(),
                 "math evidence skipped — no reserves to build MarketState"
             );
             return 0;
@@ -318,7 +644,17 @@ pub async fn evaluate_math_evidence(
                 "op": id,
                 "name": out.operator_name,
                 "scalar": out.scalar_value,
-                "computed": out.metadata.get("computed").copied().unwrap_or(0.0),
+                // COMPUTED-HONESTY-01 (2026-10-01): `computed` NO lleva un 0 por
+                // defecto. Antes era `unwrap_or(0.0)`: si el operador no publicaba
+                // la clave, el JSON decia `"computed": 0.0`, que se lee como
+                // "computo exactamente cero" cuando en realidad NO computo. La
+                // evidencia viva mostraba justo eso: dos operadores con
+                // `"computed": 0.0` y `"scalar": null`. Ahora la ausencia viaja
+                // como `null` (no computado) — la distincion R8/R10 entre
+                // "ausente" y "cero" se conserva en el wire. Misma doctrina que el
+                // Δ de las cards: `None = no computado`, `Some(0.0) = computado y
+                // exactamente cero`.
+                "computed": out.metadata.get("computed").copied(),
             }));
         }
     }
@@ -439,16 +775,246 @@ pub fn evidence_posterior_log_odds(
     (log_odds, ctx)
 }
 
+/// EVIDENCE-WIRING-01 (2026-10-01) — ¿toca republicar la evidencia declarada de
+/// este cartucho AHORA?
+///
+/// Por qué existe esta función (causa raíz medida):
+/// `publish_declared_combo_evidence` se llama en `cartridge_boot.rs:2127`, pero
+/// ese call site vive DENTRO del bloque que construye el `Opportunity` de
+/// cartucho (`cartridge_boot.rs:2054`). Es la RUTA DE EMISION DE CANDIDATO: con
+/// `positive=0` en cada tx, el bloque NUNCA corre, así que la evidencia
+/// por-cartucho nunca se publica y en Redis solo existe la clave regime-keyed
+/// (`arbx:math_evidence:1:dex_arb`). Es una dependencia circular: la evidencia
+/// por-cartucho requiere un positivo, el positivo requiere operadores
+/// computando, y esa evidencia es justo lo que serviría para diagnosticarlo.
+///
+/// El fix mueve la publicación al BUCLE DE EVALUACION — y ahí aparece el
+/// segundo problema: ese bucle corre por cada intent con 269 cartuchos, así que
+/// publicar sin freno serían 269 escrituras Redis por transacción (un diluvio,
+/// R9/LOGFLOOD-01). La evidencia tiene TTL 120s, de modo que basta republicar
+/// cada `interval_secs` por cartucho: 269/60s ≈ 4.5 escrituras/s, y la clave
+/// nunca expira mientras el searcher esté vivo.
+///
+/// Esta función es PURA y testeable a propósito: la decisión de throttle —la
+/// parte con semántica delicada— queda FUERA del hot-path y verificada por
+/// tests, de modo que el cableado en el bucle solo tenga que llamarla.
+///
+/// Devuelve `true` y ACTUALIZA el registro cuando toca publicar; `false` cuando
+/// todavía no. Un reloj que retrocede (`now < t`) NO republica: `saturating_sub`
+/// da 0, que es menor que cualquier intervalo positivo — así un salto de reloj
+/// nunca provoca un flood.
+pub fn should_publish_evidence(
+    last: &mut std::collections::HashMap<String, u64>,
+    cartridge_id: &str,
+    now_secs: u64,
+    interval_secs: u64,
+) -> bool {
+    match last.get(cartridge_id) {
+        Some(&t) if now_secs.saturating_sub(t) < interval_secs => false,
+        _ => {
+            last.insert(cartridge_id.to_owned(), now_secs);
+            true
+        }
+    }
+}
+
 #[cfg(test)]
 mod evidence_tests {
     use super::*;
     use std::collections::HashMap;
+
+    // ── EVIDENCE-WIRING-01: throttle del publicador por cartucho ────────────
+    #[test]
+    fn evidence_publish_throttle_fires_once_per_interval_per_cartridge() {
+        let mut last = HashMap::new();
+        // Primer avistamiento de un cartucho: publica.
+        assert!(should_publish_evidence(
+            &mut last,
+            "mev_01_001_x",
+            1_000,
+            60
+        ));
+        // Dentro de la ventana: NO.
+        assert!(!should_publish_evidence(
+            &mut last,
+            "mev_01_001_x",
+            1_001,
+            60
+        ));
+        assert!(!should_publish_evidence(
+            &mut last,
+            "mev_01_001_x",
+            1_059,
+            60
+        ));
+        // Justo en el borde (t + interval): publica.
+        assert!(should_publish_evidence(
+            &mut last,
+            "mev_01_001_x",
+            1_060,
+            60
+        ));
+        // Y el registro avanzo: el siguiente ciclo vuelve a esperar.
+        assert!(!should_publish_evidence(
+            &mut last,
+            "mev_01_001_x",
+            1_100,
+            60
+        ));
+    }
+
+    #[test]
+    fn evidence_publish_throttle_is_per_cartridge_not_global() {
+        let mut last = HashMap::new();
+        assert!(should_publish_evidence(
+            &mut last,
+            "mev_01_001_x",
+            1_000,
+            60
+        ));
+        // Otro cartucho NO queda bloqueado por el primero: si no, 269 cartuchos
+        // competirian por un unico slot y solo uno publicaria.
+        assert!(should_publish_evidence(
+            &mut last,
+            "mev_01_002_y",
+            1_000,
+            60
+        ));
+        assert!(should_publish_evidence(
+            &mut last,
+            "mev_01_003_z",
+            1_000,
+            60
+        ));
+        assert_eq!(last.len(), 3);
+    }
+
+    #[test]
+    fn evidence_publish_throttle_never_floods_on_clock_skew() {
+        let mut last = HashMap::new();
+        assert!(should_publish_evidence(
+            &mut last,
+            "mev_01_001_x",
+            5_000,
+            60
+        ));
+        // Reloj que RETROCEDE: saturating_sub da 0 < 60 -> no republica.
+        assert!(!should_publish_evidence(&mut last, "mev_01_001_x", 10, 60));
+        assert!(!should_publish_evidence(&mut last, "mev_01_001_x", 0, 60));
+        // Un intervalo de 0 degrada a "siempre publica" (no es el default; se
+        // documenta el borde en vez de dejarlo implicito).
+        assert!(should_publish_evidence(&mut last, "mev_01_001_x", 10, 0));
+    }
+
+    // ── FEATURES-01a: parity_deviation desde el PriceBus ────────────────────
+    #[test]
+    fn parity_deviation_is_the_worst_stable_and_ignores_the_rest() {
+        let mut m = HashMap::new();
+        // Valores REALES medidos en produccion (2026-09-30/10-01).
+        m.insert("USDC".to_owned(), "1.000097188494".to_owned());
+        m.insert("USDT".to_owned(), "0.99949749".to_owned());
+        m.insert("DAI".to_owned(), "0.99985272".to_owned());
+        m.insert("LUSD".to_owned(), "1.0056".to_owned());
+        // Un no-stable con desviacion enorme NO debe contar como paridad.
+        m.insert("PEPE".to_owned(), "0.0000042".to_owned());
+        let d = worst_stable_deviation(&m).expect("hay stables");
+        assert!(
+            (d - 0.0056).abs() < 1e-9,
+            "debe ser la PEOR desviacion de stable (LUSD 0.0056), dio {d}"
+        );
+    }
+
+    #[test]
+    fn parity_deviation_is_none_without_a_usable_stable_never_a_fabricated_zero() {
+        // Sin ningun stable: None (el llamador NO inserta la metrica).
+        let mut m = HashMap::new();
+        m.insert("PEPE".to_owned(), "0.0000042".to_owned());
+        assert!(worst_stable_deviation(&m).is_none());
+        // Map vacio: None.
+        assert!(worst_stable_deviation(&HashMap::new()).is_none());
+        // Stable con basura / no positivo: se ignora, no cuenta como desviacion.
+        let mut bad = HashMap::new();
+        bad.insert("USDC".to_owned(), "no-es-un-numero".to_owned());
+        bad.insert("USDT".to_owned(), "0".to_owned());
+        bad.insert("DAI".to_owned(), "-1.0".to_owned());
+        assert!(worst_stable_deviation(&bad).is_none());
+        // Un solo stable valido entre basura SI cuenta.
+        let mut one = HashMap::new();
+        one.insert("USDC".to_owned(), "0.998".to_owned());
+        one.insert("USDT".to_owned(), "NaN".to_owned());
+        let d = worst_stable_deviation(&one).expect("USDC es valido");
+        assert!((d - 0.002).abs() < 1e-9, "dio {d}");
+    }
+
+    // ── MATH-04-FOLLOWUP: vector dorado de normalización ────────────────────
+    // La puerta del PR. Sin esto, el cambio de escala es un cambio a ciegas.
+    #[test]
+    fn weth_usdc_normalizes_to_human_units_not_the_raw_ratio() {
+        // Pool WETH(18)/USDC(6) con reservas 1 WETH : 2000 USDC.
+        let r0 = ethers::types::U256::from(1_000_000_000_000_000_000u128); // 1 WETH
+        let r1 = ethers::types::U256::from(2_000_000_000u128); // 2000 USDC
+
+        // El ratio CRUDO es ~0.002: es exactamente el bug que este PR cierra.
+        let raw = price_from_reserves(r0, r1).expect("ratio crudo");
+        assert!(raw < 1.0, "ratio crudo esperado ~0.002, dio {raw}");
+
+        let human = normalized_price(r0, r1, 18, 6).expect("precio normalizado");
+        assert!(
+            (human - 2000.0).abs() < 0.01,
+            "WETH/USDC normalizado debe ser ~2000, no ~0.002 (dio {human})"
+        );
+    }
+
+    #[test]
+    fn degenerate_reserves_yield_none_never_a_fabricated_price() {
+        let r0 = ethers::types::U256::from(1_000_000_000_000_000_000u128);
+        let r1 = ethers::types::U256::from(2_000_000_000u128);
+
+        // Reserva de entrada cero → None (R8: nunca se inventa un precio).
+        assert!(normalized_price(ethers::types::U256::zero(), r1, 18, 6).is_none());
+        // Reserva de salida cero → None.
+        assert!(normalized_price(r0, ethers::types::U256::zero(), 18, 6).is_none());
+        // Extremos del rango de decimales siguen dando un valor finito y > 0.
+        let extreme = normalized_price(r0, r1, 0, 36).expect("escala extrema");
+        assert!(extreme.is_finite() && extreme > 0.0);
+    }
+
+    // ── FEATURES-01b: clave canonica de par ─────────────────────────────────
+    #[test]
+    fn canonical_pair_key_is_order_independent_and_lowercase() {
+        let weth = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
+        let usdc = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
+        let ab = canonical_pair_key(weth, usdc);
+        // Orden lexicografico: usdc (0xa0..) < weth (0xc0..) ⇒ usdc primero.
+        assert_eq!(ab, format!("{usdc}|{weth}"));
+        // Invertir la pierna NO cambia la identidad del par.
+        assert_eq!(canonical_pair_key(usdc, weth), ab);
+        // Minusculas: el checksum EIP-55 no parte en dos un mismo par.
+        let checksummed = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2".to_lowercase();
+        assert_eq!(canonical_pair_key(&checksummed, usdc), ab);
+        // Pares distintos dan claves distintas (nunca se agrupan por accidente).
+        let dai = "0x6b175474e89094c44da98b954eedeac495271d0f";
+        assert_ne!(canonical_pair_key(weth, dai), ab);
+    }
+
+    #[test]
+    fn canonical_pair_key_is_the_same_for_two_venues_of_one_pair() {
+        // Cross-venue legitimo: el MISMO par en 2 pools distintos debe producir la
+        // MISMA clave, para que el router pueda comparar sus precios.
+        let weth = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
+        let usdc = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
+        assert_eq!(
+            canonical_pair_key(weth, usdc),
+            canonical_pair_key(usdc, weth)
+        );
+    }
 
     #[test]
     fn build_evidence_vector_has_31_slots_and_none_to_zero() {
         // Estado degenerado (sin reservas ⇒ operadores devuelven None) ⇒ 31 ceros.
         let state = MarketState {
             price_matrix: vec![],
+            pair_keys: vec![],
             liquidity_reserves: vec![],
             gas_price_gwei: 0.0,
             block_timestamp: 0,
@@ -531,5 +1097,114 @@ mod combo_tests {
         // R8: un-computable operator keeps scalar null — never fabricated.
         assert!(s["secondary_operators"][0]["scalar"].is_null());
         assert_eq!(s["primary_operators"][0]["scalar"], 0.42);
+    }
+
+    // ── COST-FEATURES-WIRE-01 ───────────────────────────────────────────────
+    //
+    // El camino de evidencia v4 construía el `MarketState` con `HashMap::new()`:
+    // `op_21` no recibía fee NI objetivo y devolvía DATA_GAP (`operators.21` es una
+    // de las reparaciones más frecuentes del gate económico v4, 60 de 269). El
+    // cableado no puede introducir defaults: OP21-CONTRACT-01 fijó que el fee y el
+    // objetivo son `AbsentMeaning::DataGap` porque FEATURES-DEFAULTS-01 borró los
+    // defaults de `op_21`. Este test fija la PARTICIÓN usando el MISMO contrato del
+    // adaptador que aquel PR dejó más estricto.
+
+    /// Estado mínimo con reservas primarias usables: así lo que falte en
+    /// `missing_required_inputs` es del contrato de features, no de otra fuente.
+    fn state_with(features: std::collections::HashMap<String, f64>) -> MarketState {
+        MarketState {
+            price_matrix: vec![vec![2_693.54], vec![2_693.60]],
+            pair_keys: vec![super::canonical_pair_key("0xaaa", "0xbbb"); 2],
+            liquidity_reserves: vec![(1.0e21, 1.0e21), (1.0e21, 1.0005e21)],
+            gas_price_gwei: 20.0,
+            block_timestamp: 1_700_000_000,
+            block_number: 21_000_000,
+            features,
+        }
+    }
+
+    fn missing_for_21(features: std::collections::HashMap<String, f64>) -> Vec<&'static str> {
+        crate::native_operator_adapter::missing_required_inputs(21, &state_with(features))
+    }
+
+    #[test]
+    fn cost_features_wire_the_objective_and_the_fee_or_omit_them_honestly() {
+        use crate::native_operator_adapter::market_features::{PoolFeeRead, TokenScale};
+
+        // (a) SIN fuentes: el mapa sale VACÍO — ni un solo default — y el contrato
+        //     nombra EXACTAMENTE el fee y el objetivo (el orden es el del catálogo).
+        let none = cost_features_from_reads(None, None, None, None);
+        assert!(
+            none.is_empty(),
+            "sin lecturas no se emite ninguna clave: {none:?}"
+        );
+        assert_eq!(
+            missing_for_21(none),
+            vec!["features.fee_bps|pool_fee", "features.break_even_target"]
+        );
+
+        // (b) Objetivo y cupo del operador con escala real, SIN fee: falta SÓLO el
+        //     fee — la partición es exacta, no "todo o nada".
+        let objective_only = cost_features_from_reads(
+            Some(50.0),
+            Some(1_000.0),
+            Some(TokenScale::new(2_693.54, 18)),
+            None,
+        );
+        assert!(objective_only.contains_key("break_even_target"));
+        assert!(objective_only.contains_key("max_capital"));
+        assert!(!objective_only.contains_key("fee_bps"));
+        assert!(!objective_only.contains_key("pool_fee"));
+        assert_eq!(
+            missing_for_21(objective_only),
+            vec!["features.fee_bps|pool_fee"]
+        );
+
+        // (c) Con el fee REAL del tier V3 (3000 pips): NADA falta para op_21.
+        let full = cost_features_from_reads(
+            Some(50.0),
+            Some(1_000.0),
+            Some(TokenScale::new(2_693.54, 18)),
+            Some(PoolFeeRead::new(3_000, 1_000_000)),
+        );
+        assert!(
+            missing_for_21(full.clone()).is_empty(),
+            "fee + objetivo sourced ⇒ el contrato queda satisfecho: {full:?}"
+        );
+        // El valor es el CONFIGURADO convertido con la escala real, no un literal:
+        // 50 USD / 2693.54 USD-por-token × 1e18 unidades mínimas.
+        let target = full["break_even_target"];
+        let expected = 50.0 / 2_693.54 * 1.0e18;
+        assert!(
+            (target - expected).abs() < 1.0,
+            "objetivo esperado ≈{expected}, fue {target}"
+        );
+        // El fee viaja en las DOS unidades que piden los lectores.
+        assert!((full["fee_bps"] - 30.0).abs() < 1e-9);
+        assert!((full["pool_fee"] - 0.003).abs() < 1e-9);
+        // Y no hay NINGÚN default: el único default vivo de op_21 es el gas interno
+        // (150_000, `op_21_newton.rs:118-124`), que no lo emite este productor.
+        assert_eq!(
+            crate::native_operator_adapter::defaulted_inputs(21, &state_with(full)),
+            vec!["features.gas_units"],
+            "el cableado no puede añadir defaults declarados"
+        );
+
+        // (d) Sin escala del numerario no hay magnitud: capital y objetivo se
+        //     OMITEN (un `0.0` o un USD crudo sería un número falso en la unidad
+        //     del consumidor).
+        let no_scale = cost_features_from_reads(
+            Some(50.0),
+            Some(1_000.0),
+            None,
+            Some(PoolFeeRead::new(3_000, 1_000_000)),
+        );
+        assert!(!no_scale.contains_key("break_even_target"));
+        assert!(!no_scale.contains_key("max_capital"));
+        assert_eq!(
+            missing_for_21(no_scale),
+            vec!["features.break_even_target"],
+            "sin escala falta SÓLO el objetivo; el fee sigue presente"
+        );
     }
 }

@@ -54,6 +54,10 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/",                     label: "Home",                   icon: HouseIcon,              group: "pipeline", exact: true },
   { href: "/status",               label: "System status",          icon: ActivityIcon,           group: "pipeline" },
   { href: "/opportunities",        label: "Opportunities",          icon: SatelliteDishIcon,      group: "pipeline" },
+  // QUANT-PAGE-01: el libro Excel (05_EDGES → 09_DASHBOARD) servido por
+  // /api/quant/layers, junto al feed de oportunidades porque es su misma
+  // materia prima medida — no una vista decorativa.
+  { href: "/quant",                label: "Quant layers (Excel)",   icon: PercentIcon,            group: "pipeline" },
   { href: "/executions",           label: "Executions",             icon: ZapIcon,                group: "pipeline" },
   { href: "/paper/history",        label: "Paper history",          icon: FlaskConicalIcon,       group: "pipeline" },
   { href: "/recon",                label: "Recon & yield",          icon: GaugeIcon,              group: "pipeline" },

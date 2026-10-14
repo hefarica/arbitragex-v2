@@ -108,14 +108,13 @@ const ALLOWED_ASYMMETRIES: ReadonlyArray<{
       "adminProxy split below. dev-local parity pending.",
   },
   // ── dev-local-only ──
-  {
-    route: "POST /api/admin/tokens/resolve",
-    present: "dev-local",
-    reason:
-      "INTENTIONAL — admin auth model: dev-local adminProxy translates the " +
-      "httpOnly cookie session to the upstream token (dev-local :634); the " +
-      "Cloudflare worker does not carry that session.",
-  },
+  // NOTE (audit 2026-09-29): the entry for `POST /api/admin/tokens/resolve` was
+  // REMOVED here. It was recorded as dev-local-only because the worker did not
+  // carry it — yet the browser calls it through the edge (api-client.ts:788) and
+  // the frontend sends the explicit `x-arbx-admin-token` header, so it was a
+  // silent 404 in production. It now exists in BOTH proxies (parity, not an
+  // asymmetry). Same batch: `POST /api/v1/opportunities/:id/simulate` and
+  // `GET /api/tokens/top` were added to both.
   {
     route: "POST /api/v1/dexes",
     present: "dev-local",

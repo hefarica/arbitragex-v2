@@ -188,7 +188,6 @@ impl OrchestratorMode {
 }
 
 pub struct ScannerHandle {
-    #[allow(dead_code)]
     pub chain_id: u64,
 }
 
@@ -200,10 +199,19 @@ pub struct ScannerHandle {
 ///
 /// The `ImpactIndex` is now loaded at boot via `ImpactIndex::from_registry`:
 ///   1. PG `pools` table → `token_pair_to_pools` (the DEX arb pair resolution map).
-///   2. Redis `arbx:pool_index` keys for `MVP_CYCLES` → `pool_to_cycles` (triangular).
+///   2. PG `pool_cycles` → `pool_to_cycles` (dynamic cycle universe, STEP 2.5b:
+///      populated by the `cycle_enumerator` boot call below; `MVP_CYCLES` via the
+///      Redis `arbx:pool_index` remains only as the cold-boot seed while the
+///      table is empty).
 ///
 /// Cold boot with no DB: the index starts empty — R8 fail-honest. The engines will
 /// produce zero candidates on the first intents, which is correct (no fabrication).
+///
+/// ## Cycle universe refresh (STEP 2.5b)
+///
+/// A periodic re-enumeration task (idempotent `ON CONFLICT DO NOTHING`) keeps
+/// `pool_cycles` aligned with pools registered after boot; when new cycles land,
+/// the fresh universe is swapped into the shared index under a brief write lock.
 ///
 /// ## Incremental pool refresh (Phase 16 — spec §TASK-2)
 ///
@@ -228,6 +236,10 @@ async fn build_orchestrator(
     rpc_pool: Option<Arc<shared_rs::rpc_failover::HttpRpcPool>>,
     cartridge_runner: Option<Arc<CartridgeRunner>>,
     cartridge_context_router: Option<Arc<crate::context_router::ContextRouter>>,
+    // DECIMALS-CYCLE-01 (t197): provider PG de `tokens.decimals` para el
+    // `decimals.map` del ciclo — que antes defaulteaba a 18 con la tabla
+    // canonica (8/37 entradas erroneas medidas en t187).
+    decimals_provider: ScannerDecimalsProvider,
 ) -> Option<(Arc<Orchestrator>, Arc<tokio::sync::RwLock<ImpactIndex>>)> {
     if mode == OrchestratorMode::V1 || mode == OrchestratorMode::Off {
         return None;
@@ -551,10 +563,62 @@ async fn build_orchestrator(
 
     let config_provider = Arc::new(ConfigProvider { trading_config });
 
+    // ── STEP 2.5b (cycle-enumerator): populate the DYNAMIC route universe ──
+    // `ImpactIndex::from_registry` prefers the `pool_cycles` PG table as the
+    // source of `pool_to_cycles`, but NOTHING ever called the enumerator that
+    // writes it — the module existed as an orphan, so every boot fell to the
+    // `MVP_CYCLES` cold-boot seed (a handful of hand-listed triangles) and
+    // `resolve()` returned `impacted_cycles == 0` for events outside them:
+    // spanning_tree_engine saw an empty input set on every intent (a
+    // STRUCTURAL zero, not a market zero).
+    // This boot call enumerates 2–3 hop cycles over the ACTIVE pools of the
+    // `pools` PG table (the same join the index itself boots from) and
+    // upserts them into `pool_cycles` BEFORE the index reads it below.
+    // Idempotent (`ON CONFLICT DO NOTHING`): a re-run over an unchanged pool
+    // graph inserts 0 rows, so restarts are cheap.
+    // P0 boot-hang discipline (same class as the from_registry guard): hard
+    // 120s timeout; on expiry/error boot CONTINUES with whatever is already
+    // persisted (R8 fail-honest — never fabricated, never blocking boot).
+    if let Some(pg) = db.as_ref() {
+        match tokio::time::timeout(
+            Duration::from_secs(120),
+            crate::route_discovery::cycle_enumerator::enumerate_and_persist(pg, chain_id),
+        )
+        .await
+        {
+            Ok(Ok(inserted)) => {
+                info!(
+                    event = "scanner.cycle_enum_boot",
+                    chain_id,
+                    inserted,
+                    "cycle_enumerator populated pool_cycles at boot (feeds pool_to_cycles)"
+                );
+            }
+            Ok(Err(e)) => {
+                warn!(
+                    event = "scanner.cycle_enum_boot_failed",
+                    chain_id,
+                    error = %e,
+                    "cycle_enumerator failed at boot; pool_cycles stays as-is (R8 fail-honest)"
+                );
+            }
+            Err(_) => {
+                warn!(
+                    event = "scanner.cycle_enum_boot_timeout",
+                    chain_id,
+                    timeout_secs = 120,
+                    "cycle_enumerator exceeded 120s at boot; pool_cycles stays as-is (R8 fail-honest)"
+                );
+            }
+        }
+    }
+
     // ── Phase 16: populate ImpactIndex from PG + Redis at boot ─────────────
     // `from_registry` loads:
     //   - PG `pools` table  → token_pair_to_pools  (DEX pair resolution)
-    //   - Redis pool_index  → pool_to_cycles        (triangular cycle seeds)
+    //   - PG `pool_cycles`  → pool_to_cycles        (dynamic cycle universe,
+    //     populated by the boot call above; `MVP_CYCLES` remains only as the
+    //     cold-boot seed while the table is empty)
     // On failure (no DB, Redis unreachable) the index starts empty — R8
     // fail-honest: no fabrication, engines skip silently.
     // Boot-hang fix (P0): hard timeout. from_registry runs the pools x factories
@@ -602,6 +666,93 @@ async fn build_orchestrator(
     };
 
     let impact_index = Arc::new(tokio::sync::RwLock::new(impact_index_inner));
+
+    // ── STEP 2.5b (cycle-enumerator): keep the universe LIVE ───────────────
+    // The boot enumeration captures the pool graph at t=0, but pool_discovery
+    // registers new pools all day — new cycles only reach `pool_cycles` after
+    // a re-run. The enumerator is idempotent (`ON CONFLICT DO NOTHING`), so a
+    // periodic re-run over an unchanged graph inserts 0 rows and is cheap.
+    // When NEW cycles land, the fresh universe is read from PG OUTSIDE the
+    // lock and swapped in under a brief write lock so `resolve()` starts
+    // reporting the new cycles without a restart. An empty PG read NEVER
+    // swaps (that would drain a working universe back to the structural
+    // zero — R8 fail-honest). `ARBX_CYCLE_ENUM_INTERVAL_SECS` (default 900s;
+    // "0" disables the periodic task; the boot call above always runs).
+    {
+        let interval_secs = std::env::var("ARBX_CYCLE_ENUM_INTERVAL_SECS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(900);
+        if interval_secs > 0 {
+            if let Some(pg) = db.clone() {
+                let idx = impact_index.clone();
+                let cid = chain_id;
+                info!(
+                    event = "scanner.cycle_enum_refresh_scheduled",
+                    chain_id,
+                    interval_secs,
+                    "periodic cycle re-enumeration + universe reload enabled"
+                );
+                tokio::spawn(async move {
+                    // Discard the immediate first tick: the boot enumeration
+                    // above already persisted the t=0 universe.
+                    let mut ticker = tokio::time::interval(Duration::from_secs(interval_secs));
+                    ticker.tick().await;
+                    loop {
+                        ticker.tick().await;
+                        match crate::route_discovery::cycle_enumerator::enumerate_and_persist(
+                            &pg, cid,
+                        )
+                        .await
+                        {
+                            Ok(inserted) if inserted > 0 => {
+                                // New cycles in PG → swap the in-memory universe.
+                                match ImpactIndex::read_cycle_universe(&pg, cid).await {
+                                    Ok(u) if !u.specs.is_empty() => {
+                                        let n = u.specs.len();
+                                        idx.write().await.load_pool_cycles(u);
+                                        info!(
+                                            event = "scanner.cycle_universe_reloaded",
+                                            chain_id = cid,
+                                            inserted,
+                                            universe = n,
+                                            "new cycles persisted; ImpactIndex universe swapped"
+                                        );
+                                    }
+                                    Ok(_) => {
+                                        warn!(
+                                            event = "scanner.cycle_universe_reload_skipped_empty",
+                                            chain_id = cid,
+                                            inserted,
+                                            "pool_cycles read came back empty; PRIOR universe retained (R8)"
+                                        );
+                                    }
+                                    Err(e) => {
+                                        warn!(
+                                            event = "scanner.cycle_universe_reload_failed",
+                                            chain_id = cid,
+                                            error = %e,
+                                            "universe reload failed; PRIOR universe retained (R8)"
+                                        );
+                                    }
+                                }
+                            }
+                            Ok(_) => {} // idempotent no-op: graph unchanged since last pass
+                            Err(e) => {
+                                warn!(
+                                    event = "scanner.cycle_enum_refresh_failed",
+                                    chain_id = cid,
+                                    error = %e,
+                                    "periodic cycle enumeration failed (non-fatal)"
+                                );
+                            }
+                        }
+                    }
+                });
+            }
+        }
+    }
+
     let pool_discovery = Arc::new(crate::pool_discovery::PoolDiscoveryService::new(
         chain_id,
         db.clone(),
@@ -652,9 +803,36 @@ async fn build_orchestrator(
         math_registry: Arc::new(math_engine::OperatorRegistry::new()),
         regime_router: math_engine::RegimeRouter::default(),
         math_redis: redis.clone(),
-        spanning_tree_engine: None,
-        cross_chain_engine: None,
-        liquidation_snipe_engine: None,
+        // DECIMALS-CYCLE-01 (t197): el mismo provider PG que usa el encoder,
+        // para que el `decimals.map` del ciclo lea `tokens.decimals` en vez de
+        // defaultear a 18.
+        token_decimals_provider: decimals_provider.clone(),
+        // RG-01 AUDIT ORPHAN-1 layer 2 (STEP 2.5a): construct the spanning-tree
+        // engine — it only needs the SAME reserves_cache the dex/triangular
+        // engines already consume, so this is the cheapest engine to bring up
+        // and validates the construct→Some→measure→reason pattern.
+        // R8: if the reserves cache is empty the engine still constructs and
+        // `detect_cycles` honestly returns no cycles (never fabricated).
+        spanning_tree_engine: Some(Arc::new(SpanningTreeEngine::new(reserves_cache.clone()))),
+        // STEP 2.5e (RG-01 final sprint): wire the two remaining experimental
+        // engines with their real dependencies — the orchestrator fan-out
+        // (v2.engine.output / v2.engine.none guards) already exists for both.
+        // cross_chain (STEP 2.5d, PR #944): chain 1→1 venue-pair bridges with
+        // the two live price sources (Binance-WS bus + Redis snapshot); the
+        // engine skips per-leg with an explicit reason when an oracle is cold
+        // (R8), never fabricates a spread.
+        cross_chain_engine: Some(Arc::new(CrossChainBridgeEngine::with_default_bridges(
+            CrossChainBridgeEngine::default_oracles(
+                chain_id,
+                crate::price_bus_global::get(),
+                redis.clone(),
+            ),
+        ))),
+        // liquidation_snipe (STEP 2.5c, PRs #945/#947): real Aave V3 position
+        // fetching via read-only JSON-RPC (soberano, §38); with_default_pools()
+        // seeds the default lending configs and every empty path carries its
+        // own reason (no_rpc_url, no_borrowers_discovered, …).
+        liquidation_snipe_engine: Some(Arc::new(LiquidationSnipeEngine::with_default_pools())),
     };
 
     Some((Arc::new(Orchestrator::new(ctx)), impact_index))
@@ -971,6 +1149,7 @@ pub async fn run_chain(
                     rpc_http_pool.clone(),
                     cartridge_runner.clone(),
                     cartridge_context_router.clone(),
+                    decimals_provider.clone(),
                 ),
             )
             .await
@@ -1012,6 +1191,7 @@ pub async fn run_chain(
                     rpc_http_pool.clone(),
                     cartridge_runner.clone(),
                     cartridge_context_router.clone(),
+                    decimals_provider.clone(),
                 ),
             )
             .await
@@ -1913,8 +2093,14 @@ async fn decode_and_score_tx<'a>(
         let total_pools = pools_v2.len() + pools_v3.len();
 
         if total_pools < 2 {
+            // BUG-2 (STEP 5 cleanup): the event name derives from the SAME
+            // constant the dex engine persists as `rejection_reason` — the
+            // funnel can no longer split by a one-sided edit.
             debug!(
-                event = "scanner.single_pool_no_spread",
+                event = format!(
+                    "scanner.{}",
+                    crate::engines::dex_engine::SINGLE_POOL_NO_SPREAD
+                ),
                 pair = format!("{}-{}", m_in.symbol, m_out.symbol),
                 v2 = pools_v2.len(),
                 v3 = pools_v3.len()
@@ -2006,11 +2192,20 @@ async fn decode_and_score_tx<'a>(
                 let mut to_quote: Vec<amm_math::V3QuoteRequest> = Vec::new();
 
                 for info in &pools_v3 {
+                    // HARDENING-GROSS-FAB-01: the cache identity is the FULL
+                    // quote identity — direction (token_in/token_out) and fee
+                    // tier included. Reading it with only (pool, amount_in)
+                    // could serve the OPPOSITE direction's amount_out, which is
+                    // ~1e12x larger for the same nominal input on an 18<->6
+                    // decimal pair, straight into the `hi`/`lo` fast filter.
                     if let Ok(Some(cached)) = reserves::get_v3_quote(
                         redis,
                         client.chain_id,
                         &info.pool_addr,
                         &amount_in_dec,
+                        &token_in_lower,
+                        &token_out_lower,
+                        info.fee_bps,
                     )
                     .await
                     {
@@ -2088,9 +2283,18 @@ async fn decode_and_score_tx<'a>(
                                 .await
                             {
                                 Ok(results) => {
-                                    for r in &results {
+                                    // `results` is positionally aligned with the
+                                    // dispatched request set, so the request is
+                                    // the single source of truth for the quote's
+                                    // identity (direction + fee tier) — never a
+                                    // re-derivation from the response.
+                                    for (r, req) in results.iter().zip(to_quote.iter()) {
                                         if r.success && !r.amount_out.is_zero() {
-                                            // Cache + push.
+                                            // Cache + push. The cache entry is
+                                            // written under the FULL quote
+                                            // identity so it can only be read
+                                            // back by a caller asking the same
+                                            // question (HARDENING-GROSS-FAB-01).
                                             let pool_lower = format!("0x{:040x}", r.pool_addr);
                                             let amount_out_dec = r.amount_out.to_string();
                                             let _ = reserves::set_v3_quote(
@@ -2098,6 +2302,9 @@ async fn decode_and_score_tx<'a>(
                                                 client.chain_id,
                                                 &pool_lower,
                                                 &amount_in_dec,
+                                                &format!("0x{:040x}", req.token_in),
+                                                &format!("0x{:040x}", req.token_out),
+                                                req.fee_bps,
                                                 &amount_out_dec,
                                                 V3_QUOTE_CACHE_TTL_SECS,
                                             )
@@ -2249,6 +2456,12 @@ async fn decode_and_score_tx<'a>(
         chain_counters(client.chain_id)
             .gate_no_config
             .fetch_add(1, Ordering::Relaxed);
+        // ECON-ON-REJECT-PATHS-01 (2026-09-27): this path persists a raw
+        // observation with no figures — correct — but it left `economics: null`,
+        // so the row reached the wire as silence instead of a DECLARED absence.
+        // MEASURED on 43 live rows: `economics` on 0/43. The typed payload names
+        // the gate verbatim; every figure stays null (R8 intact).
+        opportunity.economics = Some(crate::economics::economics_error("gate_no_config"));
         opportunity.roi_pct = None;
         opportunity.risk_score = None;
         if let Some(pool) = db {
@@ -2733,12 +2946,43 @@ async fn decode_and_score_tx<'a>(
     // "we could not compute it at all". The evaluator zeroes gross_profit_usd
     // when UnknownTokenPrice fires; we must not persist that zero as a real value.
     let unknown_token_price = matches!(&config_rejection, Some(RejectReason::UnknownTokenPrice));
-    opportunity.expected_profit_usd = if unknown_token_price {
-        None // R8: not computed — token price unknown, gross_profit_usd=0.0 is synthetic
+    // HARDENING-GROSS-FAB-01 (2026-09-27): `math_outcome.gross_profit_usd` is
+    // `expected_amount_out_usd - amount_in_usd`, and `expected_amount_out` is
+    // the ABSOLUTE best single-pool quote for the FIRST leg — an output
+    // NOTIONAL, not the round-trip return of the cycle. When the candidate's
+    // implied rate contradicts the oracle reference rate (the spine's own
+    // `spread_sanity_mult` gate, live value 3.0), that "gross" is not a
+    // computed profit at all: it is a units/orientation artefact of the fast
+    // filter. Measured live: `expected_profit_usd = 710273.79750992` on a
+    // 1 DAI -> USDC route whose honest chained net was -5e-06 — i.e. a $710k
+    // "gross out" printed beside a zero net on the operator's card.
+    //
+    // R8 fail-honest: `None` = NOT COMPUTED / not trustworthy. `Some(0.0)`
+    // would assert "we computed it and it is exactly zero", a different claim.
+    // A gate that fires must PUBLISH the gate, never the number it rejected.
+    let rate_not_trustworthy = matches!(
+        &config_rejection,
+        Some(RejectReason::ImplausibleSpread { .. }) | Some(RejectReason::AnomalousMath)
+    );
+    let gross_not_computed = unknown_token_price || rate_not_trustworthy;
+    if rate_not_trustworthy {
+        warn!(
+            event = "scanner.gross_suppressed_by_sanity_gate",
+            hash = %hash,
+            rejection_reason = ?config_rejection,
+            suppressed_gross_profit_usd = math_outcome.gross_profit_usd,
+            amount_in = candidate.amount_in,
+            "gross profit suppressed: the implied rate contradicts the oracle \
+             rate (spread sanity) or exceeds the principal bound — publishing \
+             None (R8: not computed) instead of a fabricated figure"
+        );
+    }
+    opportunity.expected_profit_usd = if gross_not_computed {
+        None // R8: not computed — token price unknown, or rate rejected by the sanity gate
     } else {
         Some(math_outcome.gross_profit_usd)
     };
-    opportunity.roi_pct = if unknown_token_price {
+    opportunity.roi_pct = if gross_not_computed {
         None // R8: not computed — cascades from expected_profit_usd=None
     } else {
         Some(math_outcome.net_roi_pct)

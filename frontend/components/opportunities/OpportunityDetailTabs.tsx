@@ -743,9 +743,23 @@ export function OpportunityDetailTabs({
             {target.notes.length > 0 && (
               <Row label="Notes" value={target.notes.join(" · ")} />
             )}
+            {/* ALWAYS-COMPUTE (2026-09-27): the api-server now serializes the
+                non-finite required amount as the string "Infinity" (+ the
+                `required_is_infinite` companion) instead of letting
+                JSON.stringify turn it into an ambiguous null; the store
+                mapper normalizes it to Number.POSITIVE_INFINITY. Render it as
+                an explicit ∞ verdict — never a dash that looks like "not
+                computed" (the kernel DID compute: "no finite size reaches
+                the target"). */}
             <Row
               label="Sizing: required / cap / sugerido"
-              value={`${usd4(target.required_amount_in_usd)} / ${usd4(target.cap_amount_in_usd)} / ${usd4(target.suggested_amount_in_usd)}`}
+              value={`${
+                target.required_is_infinite === true ||
+                (target.required_amount_in_usd != null &&
+                  !Number.isFinite(target.required_amount_in_usd))
+                  ? "∞ (sin tamaño finito)"
+                  : usd4(target.required_amount_in_usd)
+              } / ${usd4(target.cap_amount_in_usd)} / ${usd4(target.suggested_amount_in_usd)}`}
             />
           </>
         ) : (

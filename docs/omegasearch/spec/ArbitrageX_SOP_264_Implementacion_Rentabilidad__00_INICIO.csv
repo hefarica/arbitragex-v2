@@ -1,0 +1,26 @@
+ARBITRAGEX | SOP DE IMPLEMENTACIÓN Y RENTABILIDAD,,,,,,,,,,,
+264 estrategias • Requisitos concretos • Fórmulas y pruebas • Objetivo >2% neto • Ganancias realizadas sólo con settlement y conciliación,,,,,,,,,,,
+ESTRATEGIAS DE LA FUENTE,,,TAREAS DEFINIDAS,,,TESTS ESPECIFICADOS,,,INVARIANTS ESPECIFICADOS,,
+264,,,3168,,,1848,,,1584,,
+EJEMPLO SIMULADO | no es ingreso real,,,,,,IMPLEMENTACIÓN | evidencia y tareas,,,,,
+Notional del caso base (USD),,,,10000,,Avance documentado,,,,,0
+Beneficio neto del caso (USD),,,,326,,Tareas con evidencia,,,,,0
+Después de reserva prudente (USD),,,,301,,Comprobaciones del libro correctas,,,,,10
+ROI neto sobre notional,,,,0.0326,,Comprobaciones del libro previstas,,,,,10
+Beneficio objetivo prudente (USD),,,,210,,Resultados registrados con datos,,,,,0
+"EV por intento, hipótesis (USD)",,,,141.58075,,Neto reconciliado (USD),,,,,SIN DATOS
+"Los 264 fixtures usan supuestos contables comunes. No son 264 oportunidades, quotes ni backtests; sus beneficios NO se suman como ingreso de cartera.",,,,,,Sin aprobación de grupo ni historial rentable obligatorio para arrancar. Cada carencia se traduce en una tarea; ningún dato simulado se transforma en ganancia realizada.,,,,,
+SECUENCIA SOP | del requerimiento al resultado medido,,,,,,,,,,,
+PASO 1,,02_IMPLEMENTACION_264,,,,"Elegir ID; ver detector, atomicidad, 12 tareas y objetivo monetario.",,,,,
+PASO 2,,03_TAREAS_264,,,,Construir artefactos y adjuntar evidencia + versión; documentar avance.,,,,,
+PASO 3,,04_INPUTS / 05_RENTABILIDAD,,,,"Sustituir hipótesis por quotes; calcular neto firmado, costes, objetivo y brecha.",,,,,
+PASO 4,,07_CONTRATO / 11_SOFTWARE,,,,"Implementar interfaces, financiación, mínimo de resultado y trazabilidad.",,,,,
+PASO 5,,12_TESTS / 13_INVARIANTS / 16_CICLO,,,,"Ejecutar pruebas, simular payload e integrar una primera operación acotada.",,,,,
+PASO 6,,17_RECONCILIACION / 19_RESOLVER,,,,Conciliar settlement; registrar ganancias y pérdidas; resolver la siguiente brecha.,,,,,
+"SIMULADO = hipótesis para probar aritmética. ESTIMADO = quote o simulación con procedencia. REALIZADO = settlement y ledger reconciliado. El objetivo es producir beneficio neto positivo; el SOP no puede garantizar precios, inclusión, costes ni ganancias futuras.",,,,,,,,,,,
+Caso de prueba,Neto (USD),Prudente (USD),Objetivo (USD),,,,,,,,
+POSITIVO_BASE,326,301,210,,,,,,,,
+MARGEN_INSUFICIENTE,186,161,210,,,,,,,,
+PERDIDA,-24,-49,210,,,,,,,,
+UMBRAL_EXACTO,235,210,210,,,,,,,,
+GAS_ALTO,-154,-179,210,,,,,,,,

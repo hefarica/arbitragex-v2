@@ -76,7 +76,17 @@ export async function verifyGRIS1(opts?: {
     };
   }
 
-  // Layer 2: killswitch wiring (Redis canonical key reachable).
+  // Layer 2: killswitch wiring (canonical Redis key reachable AND readable).
+  //
+  // KS-KEY-01 (2026-09-29, medido): esta capa leía `arbx:killswitch:enabled`,
+  // clave que NINGÚN camino de ejecución lee — el cliente canónico usa
+  // `arbx:killswitch` (backend/shared-rs/src/killswitch.rs:15) con un JSON
+  // `KillSwitchState {enabled,reason,triggered_by,updated_at}` (:27-32). Peor: el
+  // valor se asignaba a `kswitch_state` y NUNCA se consultaba, así que la capa
+  // sólo probaba "Redis respondió a un GET" y podía declarar verde sobre una
+  // clave sin escritor (falso verde, viola R10). Ahora se lee la clave canónica y
+  // el valor SE USA: si el switch está armado se dice, y si el JSON no parsea se
+  // reporta en amarillo (el cliente Rust fail-closed lo trataría como ARMED).
   const redis = new Redis(redisUrl, {
     lazyConnect: true,
     maxRetriesPerRequest: 1,
@@ -85,7 +95,7 @@ export async function verifyGRIS1(opts?: {
   let kswitch_state: string | null = null;
   try {
     await redis.connect();
-    kswitch_state = await redis.get("arbx:killswitch:enabled");
+    kswitch_state = await redis.get("arbx:killswitch");
   } catch (e) {
     return {
       ...base,
@@ -95,11 +105,49 @@ export async function verifyGRIS1(opts?: {
   } finally {
     redis.disconnect();
   }
-  // null = key absent (default = file fallback); 0 = disabled; 1 = armed.
-  // Either is fine — what matters is Redis is reachable for runtime mutation.
+
+  // El valor se interpreta de verdad (antes se descartaba). Y se valida la FORMA,
+  // no sólo que parsee: `JSON.parse("1")` es válido (un número) y el `1` crudo que
+  // el runbook muerto instruía colaría como "desarmado" (lo cazó el test).
+  let armed: boolean | null = null;
+  let armed_note = "";
+  if (kswitch_state != null) {
+    const parsed: unknown = (() => {
+      try {
+        return JSON.parse(kswitch_state);
+      } catch {
+        return undefined;
+      }
+    })();
+    const shaped =
+      typeof parsed === "object" &&
+      parsed !== null &&
+      typeof (parsed as { enabled?: unknown }).enabled === "boolean";
+    if (!shaped) {
+      return {
+        ...base,
+        status: "yellow",
+        reason:
+          "arbx:killswitch presente pero no tiene la forma de KillSwitchState {enabled:bool,…}: el cliente Rust fail-closed lo trataría como ARMED",
+        evidence: { kind: "config", ref: "redis:arbx:killswitch" },
+      };
+    }
+    const st = parsed as { enabled: boolean; triggered_by?: unknown };
+    armed = st.enabled;
+    armed_note = armed
+      ? ` — ARMED por ${typeof st.triggered_by === "string" ? st.triggered_by : "origen no declarado"}`
+      : " (desarmado)";
+  } else {
+    armed_note = " (clave ausente: aplica el default de app.toml)";
+  }
 
   // Layer 3: auto-trip evidence. Either flag is enabled or a real arming exists.
-  const auto_trip_flag = /auto_trip_on_high_revert_rate\s*=\s*true/.test(cfgBody);
+  //
+  // KS-TOML-01 (2026-09-29): el regex corría sobre el TEXTO CRUDO de app.toml, así
+  // que una línea COMENTADA (`# auto_trip_on_high_revert_rate = true`) daba verde.
+  // Ahora se eliminan los comentarios TOML antes de evaluar (respetando `#` dentro
+  // de comillas), de modo que sólo cuenta una clave realmente activa.
+  const auto_trip_flag = /auto_trip_on_high_revert_rate\s*=\s*true/.test(stripTomlComments(cfgBody));
   let armed_history = 0;
   if (opts?.pool) {
     try {
@@ -117,8 +165,8 @@ export async function verifyGRIS1(opts?: {
     return {
       ...base,
       status: "yellow",
-      reason: "limits configured + Redis reachable, but auto_trip_on_high_revert_rate=false and no historical arming recorded",
-      evidence: { kind: "config", ref: "configs/app.toml + arbx:killswitch:enabled" },
+      reason: `limits configured + Redis reachable${armed_note}, but auto_trip_on_high_revert_rate=false (or commented out) and no historical arming recorded`,
+      evidence: { kind: "config", ref: "configs/app.toml + redis:arbx:killswitch" },
     };
   }
 
@@ -129,7 +177,34 @@ export async function verifyGRIS1(opts?: {
   return {
     ...base,
     status: "green",
-    reason: `[risk] limits + drawdown trigger configured; kill-switch reachable via Redis; ${evidence_msg}`,
-    evidence: { kind: "config", ref: "configs/app.toml + arbx:killswitch:enabled" },
+    reason: `[risk] limits + drawdown trigger configured; kill-switch reachable via Redis${armed_note}; ${evidence_msg}`,
+    evidence: { kind: "config", ref: "configs/app.toml + redis:arbx:killswitch" },
   };
+}
+
+/**
+ * Elimina comentarios TOML de un texto: descarta todo lo que sigue a un `#` que
+ * no esté dentro de una cadena entre comillas (simples o dobles). Sin esto, una
+ * clave comentada se lee como activa (KS-TOML-01).
+ */
+export function stripTomlComments(src: string): string {
+  return src
+    .split("\n")
+    .map((line) => {
+      let quote: string | null = null;
+      for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (quote != null) {
+          if (ch === quote && line[i - 1] !== "\\") quote = null;
+          continue;
+        }
+        if (ch === '"' || ch === "'") {
+          quote = ch;
+          continue;
+        }
+        if (ch === "#") return line.slice(0, i);
+      }
+      return line;
+    })
+    .join("\n");
 }

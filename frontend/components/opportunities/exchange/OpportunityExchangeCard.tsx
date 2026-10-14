@@ -34,6 +34,7 @@ import { terminalOpportunityState } from "@/lib/opportunity-presentation";
 import { QuarantineStrip } from "@/components/QuarantineStrip";
 import { familyOf } from "@/lib/strategy-kinds";
 import type { StrategyRuntimeConfig } from "@/lib/schemas";
+import { buildLedger, isRealLiveEconomicCard } from "@/lib/opportunity-ledger";
 
 // ── QuantumX orbital logo — SVG data-URI copied VERBATIM from the model
 //    (docs/atlas_264.html line 185). Do not regenerate. ──────────────────────
@@ -166,6 +167,10 @@ export interface OpportunityExchangeCardProps {
 // amount or a cost breakdown) ⇒ evaluated face. Rows flip diag→eval the
 // moment real numbers land (memo comparator already covers those fields).
 export function isUnevaluatedShell(opp: OmniOpportunity): boolean {
+  // New rows carrying the #711 economics contract are strict: partial/error is
+  // diagnostic; only computed+closed is a trading card. Pre-#711 rows retain
+  // the legacy gate so historical snapshots/tests do not get misclassified.
+  if (opp.economics != null) return !isRealLiveEconomicCard(opp);
   return (
     opp.expected_profit_usd == null &&
     opp.net_expected_profit_usd == null &&
@@ -222,15 +227,13 @@ function OpportunityExchangeCardImpl({
   const isStale: boolean | null =
     opp.detected_at == null ? null : (ageSecs as number) > STALE_SECS;
 
-  // ── Net priority: canonical spine → TS simulated → "—" ─────────────────────
-  const canonicalNet = opp.net_expected_profit_usd ?? null;
-  const simulatedNet = opp.simulated_net_profit_usd ?? null;
-  const netSource: "canonical" | "simulated" | "none" =
-    canonicalNet != null ? "canonical" : simulatedNet != null ? "simulated" : "none";
-  const netUsd = canonicalNet ?? simulatedNet;
+  // REAL-LIVE-CARDS-SSOT-01: this face is reachable for #711 rows only
+  // when the Rust searcher supplied one closed canonical computation.
+  const ledger = buildLedger(opp);
+  const netSource = ledger.basis;
+  const netUsd = ledger.net_usd;
   const netFmt = formatProfitUSD(netUsd);
-
-  const roi = opp.roi_pct;
+  const roi = ledger.basis === "canonical" ? opp.economics?.roi_pct ?? opp.roi_pct : null;
 
   // ── Route legs (A→B cycle) ─────────────────────────────────────────────────
   const legs = deriveLegs(opp);
@@ -239,14 +242,15 @@ function OpportunityExchangeCardImpl({
   // view — marked, and never a ROUTE VERIFIED / operational-hops claim.
   const syntheticRoute = legs.some((l) => l.synthetic === true);
 
-  // ── Capital / costs (real values only — RULE 00 / R8) ──────────────────────
-  const tgt = opp.simulated_target;
-  const cb = opp.simulated_cost_breakdown;
-  const capitalInUsd =
-    opp.simulated_amount_in_usd ??
-    (tgt != null && Number.isFinite(tgt.suggested_amount_in_usd) ? tgt.suggested_amount_in_usd : null);
-  const flashFee = cb?.flashloan_fee_usd ?? null;
-  const grossUsd = opp.expected_profit_usd ?? null;
+  // ── Capital / costs — the Rust economics object, one sized notional ───────
+  const econ = opp.economics;
+  const tgt =
+    opp.simulated_target?.estimation_basis === "observed-gross"
+      ? opp.simulated_target
+      : null;
+  const capitalInUsd = ledger.principal_usd;
+  const flashFee = econ?.flash_fee_usd ?? null;
+  const grossUsd = ledger.gross_usd;
 
   // Interest % = fee / amount * 100 — only when both real numbers exist.
   const interestPct =
@@ -259,10 +263,17 @@ function OpportunityExchangeCardImpl({
   // explicit "Salida total (AMM)" label; the results row above it carries the
   // real Gross profit (grossUsd).
   const grossOutUsd =
-    capitalInUsd != null && grossUsd != null ? capitalInUsd + grossUsd : null;
+    econ?.amount_out_usd ??
+    (capitalInUsd != null && grossUsd != null ? capitalInUsd + grossUsd : null);
 
-  // Target verdict (same infeasible floors as before).
+  // Target verdict: searcher-computed target/result first; observed-gross
+  // inverse sizing remains a secondary labelled fallback for legacy rows.
   const targetText = (() => {
+    if (econ?.target_net_usd != null && econ.meets_target != null) {
+      const segs = [econ.meets_target ? "PASS" : "FAIL", `min $${econ.target_net_usd.toFixed(2)}`];
+      if (econ.target_delta_usd != null) segs.push(`Δ $${econ.target_delta_usd.toFixed(2)}`);
+      return segs.join(" · ");
+    }
     if (tgt == null) return "—";
     const infeasible =
       tgt.binding_floor === "roi-unreachable" || tgt.binding_floor === "net-per-usd-nonpositive";
@@ -424,15 +435,19 @@ function OpportunityExchangeCardImpl({
       </div>
       <div className="kv">
         <span>Gas (estimado)</span>
-        <span className="neg">{usdCost(cb?.gas_usd ?? null)}</span>
+        <span className="neg">{usdCost(econ?.gas_usd ?? null)}</span>
       </div>
       <div className="kv">
         <span>LP fees{legCount > 0 && !syntheticRoute ? ` (${legCount} legs)` : ""}</span>
-        <span className="neg">{usdCost(cb?.lp_fees_usd ?? null)}</span>
+        <span className={econ?.dex_fees_usd != null ? "neg" : "v"} title={econ?.not_computed_reasons?.dex_fees_usd}>
+          {econ?.dex_fees_usd != null ? usdCost(econ.dex_fees_usd) : "incluido en quote"}
+        </span>
       </div>
       <div className="kv">
         <span>Decoherencia (slip)</span>
-        <span className="neg">{usdCost(cb?.slippage_usd ?? null)}</span>
+        <span className={econ?.slippage_usd != null ? "neg" : "v"} title={econ?.not_computed_reasons?.slippage_usd}>
+          {econ?.slippage_usd != null ? usdCost(econ.slippage_usd) : "incluido en curva"}
+        </span>
       </div>
 
       <div style={{ height: 6, borderTop: "1px solid rgba(74,222,128,0.15)" }} />
@@ -465,7 +480,7 @@ function OpportunityExchangeCardImpl({
           className={netUsd == null ? "v" : netUsd > 0 ? "num" : netUsd < 0 ? "neg" : "v"}
           title={
             netSource === "canonical"
-              ? "Canonical spine net = gross − all costs"
+              ? "Rust searcher economics net = gross − total cost at the same sized notional"
               : netSource === "simulated"
                 ? "TS forward-sim net (canonical pending)"
                 : "Not yet computed (R8: '—')"
@@ -504,15 +519,15 @@ function OpportunityExchangeCardImpl({
         </span>
       </div>
       <div className="kv">
-        <span>Buy px / Sell px</span>
-        <span className="v" title="Per-leg execution prices are not persisted on this row (R8 fail-honest)">
-          —
+        <span>Quote block</span>
+        <span className="v" title="Bloque real de la quote/reservas usada por el searcher">
+          {econ?.quote_block ?? opp.block_number ?? "—"}
         </span>
       </div>
       <div className="kv">
         <span>Fuente</span>
         <span className="v">
-          {netSource === "canonical" ? "canonical spine" : netSource === "simulated" ? "simulated (SIM)" : "—"}
+          {netSource === "canonical" ? "searcher economics · real/live" : netSource === "simulated" ? "simulated (legacy)" : "—"}
         </span>
       </div>
 
@@ -590,6 +605,7 @@ export const OpportunityExchangeCard = React.memo(
       p.expected_profit_usd === n.expected_profit_usd &&
       p.net_expected_profit_usd === n.net_expected_profit_usd &&
       p.roi_pct === n.roi_pct &&
+      sameJson(p.economics, n.economics) &&
       p.simulated_net_profit_usd === n.simulated_net_profit_usd &&
       p.simulated_amount_in_usd === n.simulated_amount_in_usd &&
       sameJson(p.simulated_cost_breakdown, n.simulated_cost_breakdown) &&

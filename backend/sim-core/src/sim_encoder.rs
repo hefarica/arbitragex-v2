@@ -12,7 +12,10 @@
 //!   or Sushi (V2-API-compatible). The forward and backward legs both encode
 //!   via `swap_encoder::encode_v2_swap_exact_tokens_for_tokens`.
 //! - UNSUPPORTED (deferred to A.3.b / A.3.c):
-//!   - V3 (needs per-leg fee tier — not carried in `OpportunityCandidate`)
+//!   - V3 (needs per-leg fee tier — the fee NOW rides the shared-rs
+//!     `OpportunityCandidate`/`RouteMetadata` as `fee_tier_bps` (STEP 4),
+//!     but this encoder consumes the spine candidate, whose struct does not
+//!     carry it yet; V3 encoding is the follow-up consumer of that field)
 //!   - Curve / Balancer (no encoder in `prioritization_spine::swap_encoder` yet)
 //!   - Triangular 3-leg shape (incompatible with 2-leg `RoundTripContext`)
 //!   - 1-leg flashloan / liquidation shapes

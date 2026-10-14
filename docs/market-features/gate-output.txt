@@ -1,0 +1,78 @@
+GATE ANTI-FABRICACION MarketState.features
+Root: C:\Users\HFRC\Desktop\arbitragex-v2-main (17)\.worktrees\omegasearch-fees
+Archivos de produccion escaneados: 420
+
+CLAVE                     | ESTADO                | PRODUCTOR (archivo:linea)                                      | LECTORES
+--------------------------+-----------------------+----------------------------------------------------------------+---------
+arbitrage_gap             | NO_CONSUMER           | (ninguno)                                                      | 0
+bayes_losses              | ABSENT                | (ninguno)                                                      | 1
+bayes_prior_alpha         | ABSENT                | (ninguno)                                                      | 1
+bayes_prior_beta          | ABSENT                | (ninguno)                                                      | 1
+bayes_wins                | ABSENT                | (ninguno)                                                      | 1
+break_even_target         | ABSENT                | (ninguno)                                                      | 1
+decoherencia              | ABSENT                | (ninguno)                                                      | 1
+eth_price_usd             | ABSENT                | (ninguno)                                                      | 1
+fee_bps                   | ABSENT                | (ninguno)                                                      | 3
+flash_premium             | ABSENT                | (ninguno)                                                      | 1
+gas_units                 | ABSENT                | (ninguno)                                                      | 3
+health_factor             | PRODUCED              | backend/searcher-rs/src/orchestrator.rs:709                    | 1
+jit_decay_rate            | ABSENT                | (ninguno)                                                      | 1
+max_capital               | ABSENT                | (ninguno)                                                      | 1
+min_liquidity             | ABSENT                | (ninguno)                                                      | 1
+mo_per_leg_latency_ms     | ABSENT                | (ninguno)                                                      | 1
+mo_weight_latency         | ABSENT                | (ninguno)                                                      | 1
+mo_weight_risk            | ABSENT                | (ninguno)                                                      | 1
+mo_weight_yield           | ABSENT                | (ninguno)                                                      | 1
+nsga2.count               | ABSENT                | (ninguno)                                                      | 1
+nsga2.population_size     | ABSENT                | (ninguno)                                                      | 1
+onchain_price             | PRODUCED_PENDING_WIRE | backend/searcher-rs/src/native_operator_adapter/market_features/mod.rs:171 | 1
+oracle_price              | PRODUCED_PENDING_WIRE | backend/searcher-rs/src/native_operator_adapter/market_features/mod.rs:170 | 1
+parity_deviation          | PRODUCED              | backend/searcher-rs/src/math_evidence.rs:250                   | 1
+pool_fee                  | ABSENT                | (ninguno)                                                      | 4
+token0_per_eth            | ABSENT                | (ninguno)                                                      | 1
+volatility                | PRODUCED_PENDING_WIRE | backend/searcher-rs/src/native_operator_adapter/market_features/mod.rs:158 | 3
+
+PRODUCTORES DETECTADOS EN PRODUCCION:
+  health_factor          <- backend/searcher-rs/src/orchestrator.rs:709
+  onchain_price          <- backend/searcher-rs/src/native_operator_adapter/market_features/mod.rs:171
+  oracle_price           <- backend/searcher-rs/src/native_operator_adapter/market_features/mod.rs:170
+  parity_deviation       <- backend/searcher-rs/src/math_evidence.rs:250
+  volatility             <- backend/searcher-rs/src/native_operator_adapter/market_features/mod.rs:158
+
+BLOCKING (falla el gate): 2
+  [DECLARADA-BLOCKING] R1 backend/math-engine/src/strategies/canonical_strategy.rs:131 -- fabrica ausencia: features.get("volatility") con unwrap_or literal -> unwrap_or(0.0)
+      razon: consumidor de `volatility` (clave de ESTA mision): sin dato fabrica 0.0 dentro de estimate_decoherencia, que devuelve Some(...) incondicionalmente. El patron correcto esta 53 lineas antes, en el MISMO archivo (:78 usa `if let Some(&vol)` con guarda is_finite). Fix requerido fuera del alcance de F4 (math-engine) -> registro de integracion.
+  [DECLARADA-BLOCKING] R1 backend/math-engine/src/strategies/canonical_strategy.rs:157 -- fabrica ausencia: features.get("eth_price_usd") con unwrap_or literal -> unwrap_or(2000.0)
+      razon: FABRICACION MONETARIA: `estimate_gas_usd` valora el gas con un precio de ETH INVENTADO (2000.0 USD) cuando `eth_price_usd` esta ausente, y ese coste de gas alimenta la decision de rentabilidad. Viola RULE 00 y la doctrina §4 (f64 para importes). Fijado como BLOCKING: es un proxy inventado para un valor monetario, no un default de modelo.
+
+DEUDA PREEXISTENTE CLAVADA (no falla, ratchet): 14
+  [DEBT] R1 backend/math-engine/src/operators/op_11_bayes.rs:35 -- fabrica ausencia: features.get("bayes_wins") con unwrap_or literal -> unwrap_or(0.0)
+      deuda preexistente (math-engine): ausencia -> wins=0.0. Queda enmascarada aguas abajo por `wins+losses<1.0` -> reason_no_history, pero el mecanismo es implicito: cualquier prior inyectado la volveria un computo silencioso.
+  [DEBT] R1 backend/math-engine/src/operators/op_11_bayes.rs:36 -- fabrica ausencia: features.get("bayes_losses") con unwrap_or literal -> unwrap_or(0.0)
+      deuda preexistente (math-engine): idem para losses.
+  [DEBT] R1 backend/math-engine/src/operators/op_11_bayes.rs:39 -- fabrica ausencia: features.get("bayes_prior_alpha") con unwrap_or literal -> unwrap_or(1.0)
+      deuda preexistente (math-engine): el PRIOR alpha ausente se vuelve 1.0. Distinto de wins/losses: un prior Beta(1,1) uniforme es una DECISION DE MODELO, no una medicion fabricada — pero es un default silencioso que nadie declara, y si la clave falta porque la configuracion no cargo, 1.0 lo oculta. Debe declararse como prior por defecto explicito.
+  [DEBT] R1 backend/math-engine/src/operators/op_11_bayes.rs:44 -- fabrica ausencia: features.get("bayes_prior_beta") con unwrap_or literal -> unwrap_or(1.0)
+      deuda preexistente (math-engine): idem para el PRIOR beta.
+  [DEBT] R1 backend/math-engine/src/operators/op_15_golden_section.rs:46 -- fabrica ausencia: features.get("fee_bps") con unwrap_or literal -> unwrap_or(0.003)
+      deuda preexistente (math-engine): sin `fee_bps` fabrica 0.003 y sigue computando.
+  [DEBT] R1 backend/math-engine/src/operators/op_15_golden_section.rs:48 -- fabrica ausencia: features.get("pool_fee") con unwrap_or literal -> unwrap_or(0.003)
+      deuda preexistente (math-engine): sin `pool_fee` fabrica 0.003 (30 bps) y sigue computando.
+  [DEBT] R1 backend/math-engine/src/operators/op_19_simplex.rs:174 -- fabrica ausencia: features.get("max_capital") con unwrap_or literal -> unwrap_or(1.0)
+      deuda preexistente (math-engine): sin `max_capital` fabrica 1.0 (un dolar) y sigue computando.
+  [DEBT] R1 backend/math-engine/src/operators/op_21_newton.rs:52 -- fabrica ausencia: features.get("fee_bps") con unwrap_or literal -> unwrap_or(0.003)
+      deuda preexistente (math-engine): sin `fee_bps` fabrica 0.003.
+  [DEBT] R1 backend/math-engine/src/operators/op_21_newton.rs:54 -- fabrica ausencia: features.get("pool_fee") con unwrap_or literal -> unwrap_or(0.003)
+      deuda preexistente (math-engine): sin `pool_fee` fabrica 0.003.
+  [DEBT] R1 backend/math-engine/src/operators/op_21_newton.rs:118 -- fabrica ausencia: features.get("break_even_target") con unwrap_or literal -> unwrap_or(0.0)
+      deuda preexistente (math-engine): sin `break_even_target` fabrica 0.0 y sigue computando.
+  [DEBT] R1 backend/math-engine/src/operators/op_26_flash_loan.rs:60 -- fabrica ausencia: features.get("pool_fee") con unwrap_or literal -> unwrap_or(0.003)
+      deuda preexistente (math-engine): sin `pool_fee` fabrica 0.003.
+  [DEBT] R1 backend/math-engine/src/operators/op_26_flash_loan.rs:66 -- fabrica ausencia: features.get("flash_premium") con unwrap_or literal -> unwrap_or(0.0)
+      deuda preexistente (math-engine): sin `flash_premium` fabrica 0.0 (flash gratis).
+  [DEBT] R1 backend/math-engine/src/operators/op_32_multi_objective.rs:462 -- fabrica ausencia: features.get("fee_bps") con unwrap_or literal -> unwrap_or(0.003)
+      deuda preexistente (math-engine): sin `fee_bps` fabrica 0.003.
+  [DEBT] R1 backend/math-engine/src/operators/op_32_multi_objective.rs:464 -- fabrica ausencia: features.get("pool_fee") con unwrap_or literal -> unwrap_or(0.003)
+      deuda preexistente (math-engine): sin `pool_fee` fabrica 0.003.
+
+GATE=FAIL  blocking=2  deuda-clavada=14

@@ -41,7 +41,19 @@ jobs:
     runs-on: ubuntu-latest
     needs: wait-for-gates
     if: ${{ github.ref == 'refs/heads/main' }}
-    timeout-minutes: 120
+    # DEPLOY-BUDGET-01 (t199, 2026-10-08) — el techo se justifica con MEDICION.
+    # El step `Deploy to VPS via SSH` hace 12 `docker compose build --no-cache`
+    # EN SERIE (paso [6/9], lineas 318-323: "sequential — lower peak disk/RAM",
+    # "one service build at a time"): NO se paraleliza porque el bloqueo vivo es
+    # DISCO (APT-GPG-02 exige >=16GB libres y #752 aborto con 7GB).
+    # Medido por mi: 29m45s / 30m24s / 31m44s en steps de runs conclusion=success
+    # (37749114208, 37738680784, 37728772398) contra 2h00m25s del job en #751
+    # (run 37821248559), matado EN el techo de 120min con el 12.o servicio aun
+    # construyendo => 120 era alcanzable Y lo alcanzo. 240min = 2x el techo que
+    # fallo y ~7,6x la peor serie sana medida.
+    # Trade-off declarado: un job colgado retiene el grupo `production-vps`
+    # (cancel-in-progress: false) hasta 240min; el bloqueo de fondo es el disco.
+    timeout-minutes: 240
 
     steps:
       - name: Checkout repository
@@ -123,13 +135,84 @@ jobs:
             exit 1
           fi
           cd "$DEPLOY_PATH"
-          echo "[-1/9] Disk guard (APT-GPG-02): pruning build cache and checking free space"
-          docker builder prune -f >/dev/null 2>&1 || true
+          echo "[-1/9] Disk guard (APT-GPG-02 + DEPLOY-DISK-GUARD-01): freeing build cache and checking free space"
+          # DEPLOY-DISK-GUARD-01 (2026-09-27, measured). This guard shipped with
+          # `prune -f`, which removes only DANGLING build cache. The cache that
+          # filled the disk was NOT dangling, so the guard freed nothing and the
+          # disk hit 100% twice in one hour (04:39Z and 05:45Z) with Postgres
+          # crash-looping on
+          #   FATAL: could not write lock file "postmaster.pid": No space left on device
+          # and every data route returning 500 (operator: "NO SE VE NADA").
+          # `-a` removes the WHOLE builder cache — 16.88 GB measured on the second
+          # occurrence — all of it rebuildable by definition, and this runs BEFORE
+          # the --no-cache build that regenerates it, so each deploy frees its own
+          # cache first instead of inheriting the previous one.
+          BEFORE_GB=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')
+          docker builder prune -af >/dev/null 2>&1 || true
+          AFTER_GB=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')
+          echo "    builder cache pruned: free ${BEFORE_GB}GB -> ${AFTER_GB}GB"
+          # Dangling images (no tag, no container) are pure build residue too.
+          docker image prune -f >/dev/null 2>&1 || true
+          # RG-01 AUDIT DEPLOY-DISK-GUARD-04 (2026-10-12, medido): los volúmenes
+          # Docker NO se podaban — el deploy de verificación (rg01-target) dejó
+          # 7 GB en un volumen sin contenedor que `builder prune` ni `image
+          # prune` tocan. El disco llegó a 14 GB (< guard de 16) y el deploy
+          # falló con APT-GPG-02. `volume prune -af` elimina SOLO volúmenes sin
+          # contenedor activo — los datos de Postgres/Redis (contenedores vivos)
+          # NUNCA se tocan.
+          BEFORE_VOL=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')
+          docker volume prune -af >/dev/null 2>&1 || true
+          AFTER_VOL=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')
+          echo "    unused volumes pruned: free ${BEFORE_VOL}GB -> ${AFTER_VOL}GB"
+          # Dangling images (all tags, no running container) — post-volume-prune
+          docker image prune -af >/dev/null 2>&1 || true
           FREE_GB=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')
-          echo "    free=${FREE_GB}GB"
-          if [ "${FREE_GB}" -lt 15 ]; then
-            echo "::error::APT-GPG-02: only ${FREE_GB}GB free (<15GB) — refusing to build on a full disk (the 2026-09-24 incident: disk 100% -> apt GPG invalid signature -> corrupted redis AOF). Stack stays on the previous release; free space first."
+          echo "    free=${FREE_GB}GB (after image prune)"
+          # DEPLOY-DISK-GUARD-03 (orden del operador, 2026-09-29): el guard decía
+          # CUÁNTO espacio hay pero nunca DÓNDE se fue — y esa ceguera costó un
+          # incidente de disco 100%. `docker system df` desglosa imágenes /
+          # contenedores / volúmenes locales / caché de build. Es instrumentación
+          # pura (no cambia ninguna decisión) y queda en el log del run, que es lo
+          # único que sobrevive cuando el VPS se queda sin poder escribir.
+          echo "    docker system df (dónde está el espacio, antes de construir):"
+          docker system df 2>&1 | sed 's/^/      /' || true
+          # OPS-DEPLOY-DISKGUARD-03 (2026-09-30, MEDIDO): el umbral era 15 GB pero el
+          # build costaba ~29 GB, así que pasaba el guard y llenaba el disco (incidente
+          # de hoy: Postgres PANIC + 142 "No space left on device" + errores de AOF en
+          # Redis). Medición real en el VPS del build de los 6 servicios Rust:
+          #   ANTES (sin cache mounts): pico ~29 GB -> 18 GB libres NO bastaban
+          #   DESPUÉS de OPS-DOCKER-CACHE-01: 17,6 GB -> mínimo 7,6 GB = pico ~10 GB
+          #     (cota inferior; bruto <=16 GB), y el build terminó rc=0
+          # El umbral se calibra contra ESA medida, no contra una estimación. Se elige
+          # 16 GB: por encima de los ~10 GB netos medidos y con margen sobre los ~16 GB
+          # brutos, y por DEBAJO del régimen estacionario real del VPS tras los cache
+          # mounts (17 GB libres) — un umbral superior bloquearía deploys sanos.
+          # NO se sube a 30 GB: llegar a 30 GB libres exige cambiar la retención de
+          # opportunities + scored_opportunities (58 GB, ventana 60 días), decisión del
+          # operador y no de este PR.
+          if [ "${FREE_GB}" -lt 16 ]; then
+            echo "::error::APT-GPG-02: only ${FREE_GB}GB free (<16GB) — refusing to build on a full disk (the 2026-09-24 incident: disk 100% -> apt GPG invalid signature -> corrupted redis AOF; and the 2026-09-30 repeat: Postgres PANIC). Coste medido del build con cache mounts: ~10-16 GB. Stack stays on the previous release; free space first."
             exit 1
+          fi
+          # DEPLOY-DISK-GUARD-01: refusing to build does NOT resurrect a stack
+          # whose database is already crash-looping on a full disk — which is
+          # exactly the state the operator found. If the prune freed enough to
+          # write again, the database comes back BEFORE the build; if it does not
+          # recover, the deploy stops loudly instead of building on a dead DB.
+          if ! docker exec arbitragex-v2-postgres-1 pg_isready -U postgres >/dev/null 2>&1; then
+            echo "::warning::DEPLOY-DISK-GUARD-01: Postgres is not accepting connections after freeing ${BEFORE_GB}GB -> ${FREE_GB}GB — restarting it before the build"
+            docker start arbitragex-v2-postgres-1 >/dev/null 2>&1 || true
+            for _ in 1 2 3 4 5 6 7 8 9 10; do
+              if docker exec arbitragex-v2-postgres-1 pg_isready -U postgres >/dev/null 2>&1; then
+                echo "    postgres is accepting connections again"
+                break
+              fi
+              sleep 3
+            done
+            if ! docker exec arbitragex-v2-postgres-1 pg_isready -U postgres >/dev/null 2>&1; then
+              echo "::error::DEPLOY-DISK-GUARD-01: Postgres did not recover after freeing space. Refusing to build on a dead database (this is NOT a code regression)."
+              exit 1
+            fi
           fi
 
           # DEPLOY-WATCHDOG-RACE gate (GEN-CI-FAIL attempts 1+3, 2026-08-31):
@@ -317,20 +400,104 @@ jobs:
 
           echo "[6/9] Building core + hot-path services (sequential — lower peak disk/RAM)..."
           # RULE 03: no-cache, explicit environment, one service build at a time.
+          #
+          # OPS-DEPLOY-DISKGUARD-04 (2026-09-30, MEDIDO): el guard de [1/9] poda ANTES
+          # y el de [7/9] DESPUÉS, pero NADA protege DURANTE el build — y es durante
+          # cuando el disco se llena. En la medición del build completo (845s, 6
+          # servicios Rust) el libre cayó de 17.600 MB a 7.645 MB y fue una poda a
+          # mitad de build la que evitó llegar a 0; el build terminó rc=0 igualmente.
+          # Este suelo replica exactamente eso: si el libre cae por debajo de 6 GB
+          # mientras se construye, se poda la caché (peso muerto: las imágenes ya
+          # construidas no dependen de ella) en vez de esperar a que el disco llegue a
+          # 0 y Postgres entre en PANIC.
+          DISK_FLOOR_MB=$((6 * 1024))
+          (
+            while true; do
+              F=$(df -m / | awk 'NR==2 {print $4}')
+              if [ "${F:-0}" -lt "$DISK_FLOOR_MB" ]; then
+                echo "::warning::DEPLOY-DISK-FLOOR: free=${F}MB < ${DISK_FLOOR_MB}MB durante el build — podando builder cache"
+                docker builder prune -af >/dev/null 2>&1 || true
+                docker image prune -f >/dev/null 2>&1 || true
+              fi
+              sleep 15
+            done
+          ) &
+          DISK_FLOOR_PID=$!
           for service in api-server edge frontend searcher-rs sim-ctl relays-client \
                          recon selector-api anvil math-engine token-enricher socket-proxy; do
             docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" build --no-cache "$service"
           done
+          kill "$DISK_FLOOR_PID" 2>/dev/null || true
+          wait "$DISK_FLOOR_PID" 2>/dev/null || true
+          echo "    build completo; libre=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')GB"
 
           echo "[7/9] Starting stack (infra + hot-path + operator plane + observability + minio/vault)..."
           # Thanos is started separately at [7c] AFTER the arbx-metrics bucket
           # exists — the sidecar's first-boot upload fails if the bucket is absent.
           # socket-proxy (api-server dependency) is started here explicitly.
+          # DEPLOY-DISK-GUARD-02 (2026-09-29, incidente medido): el guard de [1/9]
+          # poda ANTES de construir y exige 15 GB libres, pero un build --no-cache
+          # de 24 contenedores consume ~20 GB DURANTE el build. El 2026-09-29 el
+          # disco llegó a 0 bytes con el stack a medio construir y PostgreSQL
+          # entró en bucle de reinicio ("could not write lock file postmaster.pid:
+          # No space left on device"), dejando la API en `Created` y el deploy
+          # fallando en el paso SSH. Ahora se poda TAMBIÉN después de construir
+          # (las imágenes ya existen: la caché es peso muerto) y se exige espacio
+          # antes de levantar los contenedores.
+          FREE_GB=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')
+          echo "[7a-bis/9] Post-build disk guard: free=${FREE_GB}GB — pruning build cache (images are already built)"
+          # DEPLOY-DISK-GUARD-03: el desglose ANTES/DESPUÉS de la poda es lo que
+          # permite verificar que la poda hizo lo que dice (y cuánto pesan las
+          # imágenes que el stack realmente necesita, para no podar de más).
+          echo "    docker system df — antes de podar:"
+          docker system df 2>&1 | sed 's/^/      /' || true
+          docker builder prune -af >/dev/null 2>&1 || true
+          docker image prune -f >/dev/null 2>&1 || true
+          FREE_GB=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')
+          echo "    free=${FREE_GB}GB (after post-build prune)"
+          echo "    docker system df — después de podar:"
+          docker system df 2>&1 | sed 's/^/      /' || true
+          if [ "${FREE_GB:-0}" -lt 5 ]; then
+            echo "::error::DEPLOY-DISK-GUARD-02: only ${FREE_GB}GB free after the build (<5GB) — refusing to start the stack on a nearly-full disk (PostgreSQL cannot write postmaster.pid at 0 bytes). Free space, then re-run."
+            exit 1
+          fi
+
           docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --force-recreate --remove-orphans \
             postgres redis anvil socket-proxy \
             searcher-rs sim-ctl relays-client recon selector-api math-engine \
             api-server edge frontend \
             token-enricher prometheus loki promtail grafana alertmanager minio vault
+
+          # ── DEPLOY-CONTAINER-GUARD (RG-01 INCIDENT 2026-10-13): force-recreate
+          # puede dejar contenedores en estado "Created" (nunca arrancaron) por
+          # una carrera de recursos. Docker's restart policy NO aplica a
+          # contenedores que nunca estuvieron "running" — quedan huérfanos
+          # silenciosos que causan 500 en todo el stack hasta que alguien
+          # los arranque a mano (exactamente lo que pasó con api-server:
+          # 3+ horas de outage porque nadie verificó el estado del contenedor).
+          # Este guard verifica que TODOS estén "running" y arranca los que no.
+          echo "[7a/9] Container Guard: verifying all containers are running..."
+          GUARD_FIXED=0
+          for cid in $(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps -q 2>/dev/null); do
+            cname=$(docker inspect "$cid" --format '{{.Name}}' 2>/dev/null | tr -d '/')
+            cstate=$(docker inspect "$cid" --format '{{.State.Status}}' 2>/dev/null)
+            if [ "$cstate" != "running" ] && [ -n "$cstate" ] && [ "$cstate" != "exited" ]; then
+              echo "    ::warning::Container $cname is '$cstate' — starting"
+              docker start "$cid" 2>/dev/null || echo "    ::error::Failed to start $cname"
+              GUARD_FIXED=$((GUARD_FIXED+1))
+            elif [ "$cstate" = "exited" ]; then
+              # Exited containers from force-recreate should also be started
+              echo "    ::warning::Container $cname exited — restarting"
+              docker start "$cid" 2>/dev/null || echo "    ::error::Failed to restart $cname"
+              GUARD_FIXED=$((GUARD_FIXED+1))
+            fi
+          done
+          if [ "$GUARD_FIXED" -gt 0 ]; then
+            echo "    Container Guard started $GUARD_FIXED container(s)"
+            sleep 5  # give them a moment before health checks
+          else
+            echo "    All containers running — no fixes needed"
+          fi
 
           echo "[7b/9] Waiting for Minio healthy, then creating arbx-metrics bucket..."
           for i in $(seq 1 45); do
@@ -410,6 +577,45 @@ jobs:
           fi
           # A document HTTP 200 is not proof of the API's served revision.
           # Keep the whole body within the curl timeout; pipefail propagates HTTP errors.
+          #
+          # DEPLOY-G4-WAIT-01 (2026-10-12): the verifier demands the served
+          # deploy marker AND all 7 upstream services ok (selector-api, sim-ctl,
+          # recon, relays-client, searcher-rs, math-engine, token-enricher).
+          # The [8/9] wait only covers api-server + edge + searcher-rs, so on a
+          # cold stack the remaining upstreams can still be `health: starting`
+          # when this runs. Deploy 38205696075 failed exactly that way: the ps
+          # dump taken in the same second showed relays-client and
+          # token-enricher `(health: starting)`, while /status served the right
+          # sha seconds later (HEAD == TARGET_SHA, marker correct).
+          #
+          # Split by responsibility: the readiness probe below is transient-only
+          # and MAY be retried (bounded); a SERVED-BUT-WRONG identity marker is
+          # terminal (exit 2 — waiting cannot fix a mismatch), and the identity
+          # verdict itself stays strict, single-shot and never relaxed.
+          G4_READY=0
+          for g4_attempt in $(seq 1 24); do
+            G4_PROBE=0
+            curl --fail --silent --connect-timeout 5 --max-time 15 \
+              http://127.0.0.1:8080/status 2>/dev/null | \
+              python3 scripts/ci/wait_status_ready.py --sha "$TARGET_SHA" \
+                --run-id "$DEPLOY_RUN_ID" --deployed-at "$ARBX_DEPLOYED_AT" \
+                >/dev/null 2>&1 || G4_PROBE=$?
+            if [ "$G4_PROBE" = "0" ]; then
+              echo "G4 readiness ${g4_attempt}/24: 7/7 upstreams healthy, identity marker matches, status current"
+              G4_READY=1
+              break
+            fi
+            if [ "$G4_PROBE" = "2" ]; then
+              echo "::error::Served deployment identity marker mismatches this run — terminal, not retried"
+              exit 1
+            fi
+            echo "G4 readiness ${g4_attempt}/24: stack still hydrating, retry in 5s"
+            sleep 5
+          done
+          if [ "$G4_READY" != "1" ]; then
+            echo "::error::G4 precondition unmet after 120s bounded wait (upstream health / status freshness)"
+            exit 1
+          fi
           curl --fail --silent --show-error --connect-timeout 5 --max-time 15 \
             http://127.0.0.1:8080/status | \
             python3 scripts/ci/verify_deploy_identity.py --sha "$TARGET_SHA" \

@@ -27,12 +27,25 @@ COPY . ./
 # --frozen was attempted but requires registry pre-population in the layer;
 # without an explicit `cargo fetch` step it errors on first build. Trade-off:
 # we keep --locked for lockfile integrity; first build can hit crates.io.
-RUN cargo build --release --locked -p token-enricher
+# OPS-DOCKER-CACHE-01: cache mounts para el target/ y el registry de cargo.
+# Sin esto, target/ (varios GB: alloy, revm, aws-lc-sys, ark-*) se guardaba como
+# CAPA de imagen: BuildKit lo retenia en su cache y los 6 servicios Rust compilaban
+# el MISMO grafo por separado (medido: Build Cache 21 GB / 186 entradas tras UN
+# deploy). Con cache mount el target/ vive en el almacen de cache, se COMPARTE
+# entre los 6 (mismo target) y no entra en la capa. `sharing=locked` explicito:
+# correcto antes que rapido. El binario se copia FUERA del mount porque un cache
+# mount no forma parte del filesystem de la imagen y el COPY --from=builder no lo veria.
+RUN --mount=type=cache,target=/build/target,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    cargo build --release --locked -p token-enricher \
+ && mkdir -p /build/out && cp /build/target/release/token-enricher /build/out/token-enricher
 
 # ---------------------------------------------------------------------------
 # Runtime image
 # ---------------------------------------------------------------------------
 FROM debian:bookworm-slim AS runtime
+ARG ARBX_BUILD_SHA=unknown
+LABEL org.opencontainers.image.revision=$ARBX_BUILD_SHA
 
 RUN m1="http://deb.debian.org"; m2="http://ftp.de.debian.org"; s="/etc/apt/sources.list.d/debian.sources"; u=0; for i in 1 2 3 4 5 6 7 8; do if apt-get update; then u=1; break; fi; if [ $((i % 2)) = 1 ]; then sed -i "s|$m1|$m2|g" "$s" 2>/dev/null || true; else sed -i "s|$m2|$m1|g" "$s" 2>/dev/null || true; fi; sleep 10; done; [ "$u" = 1 ] || { echo "APT-GPG-02: apt update fallo 8 intentos con rotacion de espejo"; exit 1; } && apt-get install -y --no-install-recommends ca-certificates && sed -i "s|http://deb.debian.org|https://deb.debian.org|g" "$s" && apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates tini wget \
@@ -41,7 +54,7 @@ RUN m1="http://deb.debian.org"; m2="http://ftp.de.debian.org"; s="/etc/apt/sourc
 
 WORKDIR /app
 
-COPY --from=builder /build/target/release/token-enricher /usr/local/bin/token-enricher
+COPY --from=builder /build/out/token-enricher /usr/local/bin/token-enricher
 
 # Security: run as unprivileged user (uid 65532, matches distroless nonroot convention).
 USER arbx

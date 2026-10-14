@@ -54,7 +54,11 @@ export default async function OperationsPage() {
   // they map to the honest absence (null), never defaults.
   const initialLatStages = tickRes.ok ? tickRes.data.lat_stages ?? null : null;
   const initialLatPass = tickRes.ok ? tickRes.data.lat_pass_p95 ?? null : null;
-  const initialLatCycles = tickRes.ok ? tickRes.data.lat_cycles ?? 0 : 0;
+  // LAT-CYCLES-NO-FAKE-ZERO-01 (audit 2026-09-29): this line already obeyed the
+  // comment above (`?? null`) for lat_stages/lat_pass_p95 but coerced lat_cycles
+  // to 0 on BOTH branches, contradicting it one line later. `null` propagates the
+  // honest absence and renders as "—" instead of a fabricated "0 cycles".
+  const initialLatCycles = tickRes.ok ? tickRes.data.lat_cycles ?? null : null;
   const initialLatError = !tickRes.ok ? tickRes.error : null;
 
   return (

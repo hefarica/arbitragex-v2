@@ -46,6 +46,17 @@ describe("applyExchangeFilters", () => {
     expect(applyExchangeFilters(opps, DEFAULT_FILTERS)).toHaveLength(3);
   });
 
+  // SHOW-REJECTED-01 (operator order 2026-09-27): the "Mostrar rechazadas"
+  // toggle is a RENDER-scope flag — it must never narrow the row set on its own,
+  // and it is OFF by default so /opportunities keeps painting exactly the
+  // real/live economic cards until the operator asks for the diagnostics.
+  it("showRejected defaults to false and narrows nothing", () => {
+    expect(DEFAULT_FILTERS.showRejected).toBe(false);
+    expect(
+      applyExchangeFilters(opps, { ...DEFAULT_FILTERS, showRejected: true }),
+    ).toHaveLength(3);
+  });
+
   it("min-yield floor filters out low-net opps", () => {
     expect(
       applyExchangeFilters(opps, { ...DEFAULT_FILTERS, minYieldUsd: 10 }),

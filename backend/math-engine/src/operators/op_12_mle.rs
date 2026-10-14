@@ -102,9 +102,18 @@ impl TopologicalOperator for MLEOperator {
 mod tests {
     use super::*;
 
+    /// Clave canonica del par simulado (tokens hex en minusculas, orden
+    /// lexicografico, unidos por '|' — formato de FEATURES-01b).
+    const PAR_FIXTURE: &str =
+        "0xaaaa0000000000000000000000000000000000aa|0xbbbb0000000000000000000000000000000000bb";
+
     fn st(prices: &[f64]) -> MarketState {
         MarketState {
             price_matrix: prices.iter().map(|p| vec![*p]).collect(),
+            // Todas las filas son el MISMO par simulado (una observacion por
+            // fila): la clave se repite y respeta la invariante
+            // pair_keys.len() == price_matrix.len().
+            pair_keys: vec![PAR_FIXTURE.to_string(); prices.len()],
             liquidity_reserves: Vec::new(),
             gas_price_gwei: 20.0,
             block_timestamp: 0,

@@ -98,3 +98,73 @@ describe("omni-store addOpportunity — streaming upsert", () => {
     expect(after.opportunities).toBe(before.opportunities);
   });
 });
+
+// ── ECON-DECLARE-01 (2026-09-27) ─────────────────────────────────────────────
+// The notional-basis declaration rides `route_metadata` (its own JSONB column,
+// REST-only: `publisher::publish` serializes the `Opportunity` row and never the
+// topology). A raw WS row therefore maps `route_metadata` to null, and the merge
+// used to spread that null over the snapshot — wiping the topology, `hop_count`,
+// the per-hop ledger AND the declaration. A card would show a declared notional
+// and then lose it mid-session, which is worse than never showing it.
+describe("ECON-DECLARE-01 — the declaration survives a WS redetection", () => {
+  const DECLARED_RM = {
+    token_addresses: ["0xroute-a", "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "0xroute-a"],
+    pool_addresses: ["0xpool1", "0xpool2"],
+    dex_adapters: ["uniswap_v2", "sushiswap"],
+    economics_amount_in_wei: "1000000000000000000",
+    economics_basis: { gross: "probe", net: "kernel", amount: "intent" },
+  };
+
+  it("a snapshot row's route_metadata + declaration are NOT wiped by a raw WS row", () => {
+    const { addOpportunity } = useOmniStore.getState();
+    // 1) the REST snapshot row: full topology + the producer's declaration.
+    addOpportunity(
+      makeOpp("opp-1", {
+        token_in: "0xroute-a",
+        dex_a: "uniswap_v2",
+        dex_b: "sushiswap",
+        route_metadata: DECLARED_RM as never,
+        expected_profit_usd: 12.5,
+        first_seen_at: "2026-08-18T00:00:00Z",
+        confirmations: 1,
+      } as Partial<OmniOpportunity>),
+    );
+    // 2) a raw WS redetection of the SAME route group — no route_metadata, the
+    //    way the wire actually delivers it.
+    addOpportunity(
+      makeOpp("opp-1", {
+        token_in: "0xroute-a",
+        dex_a: "uniswap_v2",
+        dex_b: "sushiswap",
+        route_metadata: null,
+        expected_profit_usd: 13.9,
+      } as Partial<OmniOpportunity>),
+    );
+
+    const row = useOmniStore.getState().opportunities.find((o) => o.id === "opp-1")!;
+    // the live-updated figure wins…
+    expect(row.expected_profit_usd).toBe(13.9);
+    // …and the declaration is still there (this is the regression).
+    expect(row.route_metadata).not.toBeNull();
+    expect(row.route_metadata?.economics_amount_in_wei).toBe("1000000000000000000");
+    expect(row.route_metadata?.economics_basis?.net).toBe("kernel");
+    // the topology fields ride along, so hop_count and the ledger stay intact.
+    expect(row.route_metadata?.dex_adapters).toEqual(["uniswap_v2", "sushiswap"]);
+  });
+
+  it("a snapshot WITH route_metadata still wins over a row that carries none", () => {
+    const { addOpportunity } = useOmniStore.getState();
+    addOpportunity(
+      makeOpp("opp-9", { token_in: "0xroute-z", route_metadata: null } as Partial<OmniOpportunity>),
+    );
+    addOpportunity(
+      makeOpp("opp-9", {
+        token_in: "0xroute-z",
+        route_metadata: DECLARED_RM as never,
+        confirmations: 2,
+      } as Partial<OmniOpportunity>),
+    );
+    const row = useOmniStore.getState().opportunities.find((o) => o.id === "opp-9")!;
+    expect(row.route_metadata?.economics_amount_in_wei).toBe("1000000000000000000");
+  });
+});

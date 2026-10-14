@@ -53,14 +53,76 @@ mod real_ops_tests;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Number of registered operators; strategy projection dimensions are separate.
+/// Number of operators REGISTERED IN THE RUNTIME, i.e. the size of the registry
+/// built by `register_all()` below (IDs 1..=32; op_32 = NSGA-II).
+///
+/// This is NOT the number the strategy catalog uses. See
+/// [`SOURCE_OPERATOR_COUNT`] — the two numbers are both true on different axes and
+/// the gap is a declared design decision, not drift.
 pub const OPERATOR_COUNT: u8 = 32;
+
+/// Number of operators of the SOURCE catalog: the 264-strategy Master Matrix
+/// (`strategy_mapping.json`, one record per `MEV-XX-YYY`) and the cartridge bridge
+/// (`searcher-rs::native_operator_adapter`) reference only IDs 1..=31.
+///
+/// ARSE-264-01 (`t3`) — DECISION, declared and machine-checked (see
+/// `real_ops_tests::source_catalog_boundary`): **op_32 stays compiled, registered
+/// and tested at runtime, and stays DELIBERATELY UNREACHABLE from a cartridge.**
+/// Reasons, in order of weight:
+///
+/// 1. **Shape mismatch.** op_32 = NSGA-II returns a Pareto FRONT (a non-dominated
+///    SET, exposed as `matrix_result` + `scalar_value` = front cardinality). The
+///    cartridge bridge builds one per-operator evidence receipt whose value is the
+///    operator's own scalar/vector/matrix (`native_operator_adapter.rs`); a
+///    multi-objective front has no single comparable figure to weight against the
+///    31 scalar/vector operators, so a "32nd role" would be a category error, not
+///    an addition.
+/// 2. **The data matrix does not have a 32nd column.** `strategy_mapping.json`
+///    (264 records) references exactly IDs 1..=31 — measured: union of
+///    `primary_operators` ∪ `secondary_operators` ∪ `applicable_operators` ∪
+///    `operator_weights` keys = {1..31}, zero occurrences of 32. Inventing the 32nd
+///    column to "make the numbers match" is forbidden: the matrix is the
+///    operator's data and the code adapts to it — never the reverse.
+/// 3. **Nothing becomes reachable by wiring it.** No cartridge declares op_32, so
+///    widening the bridge's admission range to 1..=32 would add a path with zero
+///    callers while weakening an explicit boundary.
+///
+/// The invariant that keeps the two numbers honest:
+/// `OPERATOR_COUNT == SOURCE_OPERATOR_COUNT + 1`, every ID in
+/// `1..=SOURCE_OPERATOR_COUNT` resolves in the registry, and the single extra ID is
+/// op_32. `real_ops_tests::source_catalog_boundary` fails if that arithmetic drifts.
+pub const SOURCE_OPERATOR_COUNT: u8 = 31;
 
 /// Estado de mercado normalizado — input universal para todos los operadores
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MarketState {
     /// Matriz de precios (n_venues × n_assets)
     pub price_matrix: Vec<Vec<f64>>,
+    /// Clave canonica del par (pool) descrito por CADA fila de `price_matrix`.
+    ///
+    /// Formato: los dos tokens del pool en minusculas, ordenados
+    /// lexicograficamente y unidos por `'|'`, p.ej. `"0xaaa...|0xbbb..."`. El
+    /// orden lexicografico hace que `(A,B)` y `(B,A)` den la MISMA clave, y las
+    /// minusculas evitan que el checksum EIP-55 parta en dos un mismo par.
+    ///
+    /// Por que existe (FEATURES-01b): `price_matrix` lleva una fila por pool y
+    /// los pools de una ruta son pares DISTINTOS (hop1 = A/B, hop2 = B/C, ...).
+    /// Sin identidad de par, `RegimeRouter::analyze` no puede distinguir "el
+    /// mismo par en 2 venues" (arbitraje cross-venue legitimo, donde max/min - 1
+    /// SI es correcto) de "2 hops de pares distintos" (donde max/min - 1 es un
+    /// numero plausible-pero-falso). Con la clave el gap se calcula SOLO entre
+    /// venues del mismo par; si no hay 2 venues de un mismo par, el gap queda
+    /// en `None` (R8 fail-honest: nunca un valor fabricado).
+    ///
+    /// Invariante: `pair_keys.len() == price_matrix.len()`, MISMO orden
+    /// (`pair_keys[i]` describe la fila `i`). Una fila sin identidad conocida
+    /// lleva cadena vacia `""` y queda fuera de cualquier agrupamiento por par.
+    ///
+    /// `serde(default)`: los clientes del API (`ComputeRequest`, api.rs) que
+    /// mandan el JSON previo a este campo siguen deserializando; el default
+    /// vacio significa "sin identidad" (fail-honest), nunca "mismo par".
+    #[serde(default)]
+    pub pair_keys: Vec<String>,
     /// Reservas de liquidez por venue (n_venues × 2 para par token0/token1)
     pub liquidity_reserves: Vec<(f64, f64)>,
     /// Gas price estimado en gwei

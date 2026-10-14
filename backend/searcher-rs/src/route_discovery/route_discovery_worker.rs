@@ -1563,7 +1563,14 @@ async fn run_loop(
                 if intent.observed_block_number.is_none() && current_block > 0 {
                     intent.observed_block_number = Some(current_block);
                 }
-                tokio::spawn(shadow_evaluate_intent(r.clone(), intent, chain_id));
+                // SHADOW-CANONICAL-01: sin orchestrator no hay config del
+                // operador, registro de operadores ni router de contextos, así
+                // que la ruta shadow no puede componer el bundle v4 real del
+                // intent: cae —declarándolo— al contexto DATA_GAP estático.
+                // Esta rama es además INALCANZABLE en la práctica: el worker
+                // retorna temprano sin ImpactIndex, que nace en el mismo sitio
+                // que el orchestrator (scanner.rs `run_chain`).
+                tokio::spawn(shadow_evaluate_intent(r.clone(), intent, chain_id, None));
             }
         }
 
@@ -1592,6 +1599,7 @@ async fn run_loop(
             let mut bridge_spawned = 0usize;
             let mut lane_sizeable = 0usize;
             let mut lane_unpriceable = 0usize;
+            let chain_id_label = chain_id.to_string();
             for c in hop_cycle_bridge::order_for_budget(&tick.routes, prefer_sizeable) {
                 let hops = c.hops as usize;
                 if !(hop_cycle_bridge::MIN_BRIDGE_HOPS..=hop_cycle_bridge::MAX_BRIDGE_HOPS)
@@ -1605,6 +1613,14 @@ async fn run_loop(
                     lane_sizeable += 1;
                 } else {
                     lane_unpriceable += 1;
+                // RG-01 AUDIT BUG-1: the lane split follows the capability's
+                // OWN `lane()` (kernel-gate aware) — the worker no longer keeps
+                // a second, drifting copy of the predicate.
+                let capability =
+                    hop_cycle_bridge::kernel_capability_of_protocols(c.protocols.iter());
+                match capability.lane() {
+                    hop_cycle_bridge::EmitLane::Sizeable => lane_sizeable += 1,
+                    hop_cycle_bridge::EmitLane::Unpriceable => lane_unpriceable += 1,
                 }
                 let Some(mut intent) = build_intent(c) else {
                     // Canonicalizer produced a ragged candidate — honest skip
@@ -1630,6 +1646,12 @@ async fn run_loop(
                         );
                     }
                 });
+                // RG-01 AUDIT BUG-1 wire marker: the `v3_cycle_sizeable` series
+                // existing and rising on /metrics is the falsifiable proof that
+                // the DEPLOYED build classifies V3-bearing cycles as priceable.
+                crate::metrics::HOP_CYCLE_CAPABILITY_TOTAL
+                    .with_label_values(&[chain_id_label.as_str(), capability.as_str()])
+                    .inc();
                 bridge_spawned += 1;
             }
             if bridge_spawned > 0 {

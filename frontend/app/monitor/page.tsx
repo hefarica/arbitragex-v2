@@ -31,9 +31,16 @@ interface MathGuardianState {
 
 interface TopologyState {
   activeChains: string[];
-  totalManifolds: number;
-  loopResolutions: number;
-  orthogonalEquilibriums: number;
+  // TOPOLOGY-NO-FAKE-ZEROS-01 (audit 2026-09-29): these three used to be typed
+  // `number` and hardcoded to 0 in BOTH return paths (success and fallback),
+  // while the very comment at the top of this file promises "Nunca inyectamos
+  // defaults". A fabricated 0 is a computed-looking value with no producer: it
+  // reads as "we measured zero manifolds" when the truth is "nobody computes
+  // this". `null` + NOT_AVAILABLE is the same fail-honest treatment the sibling
+  // `activeChains` already gets.
+  totalManifolds: number | null;
+  loopResolutions: number | null;
+  orthogonalEquilibriums: number | null;
 }
 
 // Server Component - fetch inicial de datos desde /api/status (JSON).
@@ -66,9 +73,9 @@ async function getInitialMetrics(): Promise<{
         },
         topology: {
           activeChains: [],
-          totalManifolds: 0,
-          loopResolutions: 0,
-          orthogonalEquilibriums: 0,
+          totalManifolds: null,
+          loopResolutions: null,
+          orthogonalEquilibriums: null,
         },
         entropy: null,
       };
@@ -86,9 +93,9 @@ async function getInitialMetrics(): Promise<{
     },
     topology: {
       activeChains: [],
-      totalManifolds: 0,
-      loopResolutions: 0,
-      orthogonalEquilibriums: 0,
+      totalManifolds: null,
+      loopResolutions: null,
+      orthogonalEquilibriums: null,
     },
     entropy: null,
   };
@@ -194,15 +201,33 @@ function TopologyCard({ topology }: { topology: TopologyState }) {
         <div className="grid grid-cols-3 gap-4">
           <div className="space-y-1">
             <p className="text-xs text-muted-foreground">Variedades</p>
-            <p className="text-lg font-mono font-semibold">{topology.totalManifolds}</p>
+            <p className="text-lg font-mono font-semibold">
+              {topology.totalManifolds === null ? (
+                <span className="text-sm font-mono text-muted-foreground">NOT_AVAILABLE</span>
+              ) : (
+                topology.totalManifolds
+              )}
+            </p>
           </div>
           <div className="space-y-1">
             <p className="text-xs text-muted-foreground">Res. Holonómicas</p>
-            <p className="text-lg font-mono font-semibold">{topology.loopResolutions}</p>
+            <p className="text-lg font-mono font-semibold">
+              {topology.loopResolutions === null ? (
+                <span className="text-sm font-mono text-muted-foreground">NOT_AVAILABLE</span>
+              ) : (
+                topology.loopResolutions
+              )}
+            </p>
           </div>
           <div className="space-y-1">
             <p className="text-xs text-muted-foreground">Equilibrios Ort.</p>
-            <p className="text-lg font-mono font-semibold">{topology.orthogonalEquilibriums}</p>
+            <p className="text-lg font-mono font-semibold">
+              {topology.orthogonalEquilibriums === null ? (
+                <span className="text-sm font-mono text-muted-foreground">NOT_AVAILABLE</span>
+              ) : (
+                topology.orthogonalEquilibriums
+              )}
+            </p>
           </div>
         </div>
       </CardContent>

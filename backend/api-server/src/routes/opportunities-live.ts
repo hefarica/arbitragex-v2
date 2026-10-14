@@ -232,6 +232,13 @@ interface OpportunityLiveRow extends QueryResultRow {
   // full A→B cycle (2..N legs) per opportunity (R8: empty {} = no topology,
   // caller falls back to dex_a/dex_b).
   route_metadata: Record<string, unknown> | null;
+  // ALWAYS-COMPUTE (operator mandate 2026-09-27, migration 126): the ONE
+  // complete economics computation object (computation_status computed |
+  // partial | error + amounts + per-component costs + net/roi + target
+  // arithmetic + per-leg ledger). NULL on pre-migration rows and rows emitted
+  // with ARBX_ALWAYS_COMPUTE_ECONOMICS=off (R8: absence is a state, never a
+  // fabricated zero). Hardened on the way out by hardenEconomics().
+  economics: Record<string, unknown> | null;
   // CARDS-DEDUP-HOPS (2026-09-20): route-group aggregates from the `grouped`
   // CTE — exact GROUP BY outputs (R8, never synthesised). first/last_seen_at
   // are TIMESTAMPTZ (node-postgres → Date); confirmations = COUNT(*) >= 1 by
@@ -257,6 +264,17 @@ interface OpportunityLiveRow extends QueryResultRow {
   token_out_decimals: number | null;
   token_out_logo_url: string | null;
   token_out_resolved_via: string | null;
+  // A.8 CONFIDENCE WIRE (2026-10-03) — LEFT JOIN LATERAL scored_opportunities.
+  // One row max (ORDER BY created_at DESC, id DESC LIMIT 1), so these are the
+  // LATEST ConfidenceScore for THIS opportunity. All NULL when no scored row
+  // exists for the id — that is NO COMPUTADO, never a fabricated zero (R8/R10).
+  // `scored_posterior_prob` is a probability in [0,1]; the wire emits integer
+  // basis points PLUS the un-rounded float so sub-bps values stay legible.
+  scored_posterior_prob: number | null;
+  scored_kelly_fraction: number | null;
+  scored_bayesian_accepted: boolean | null;
+  scored_emission_outcome: string | null;
+  scored_rejection_reason: string | null;
 }
 
 // ── Query ────────────────────────────────────────────────────────────────────
@@ -282,7 +300,43 @@ interface OpportunityLiveRow extends QueryResultRow {
 // R8 fail-honest: aggregates are exact GROUP BY outputs — nothing is
 // synthesised; a group of one still reports first_seen=last_seen=detected_at
 // and confirmations=1 (COUNT(*) >= 1 by construction).
-const LIVE_QUERY = `
+// ── A.8 confidence wire: sink-conditional query fragments ────────────────────
+//
+// The live route reads the Gate-C confidence sink (`scored_opportunities`). On a
+// database where that relation is not migrated, naming it makes the WHOLE live
+// window fail (`relation "scored_opportunities" does not exist` → the route's
+// 503 query_failed), i.e. one optional enrichment takes down every card. The
+// api-server already treats a known-absent relation as MISSING EVIDENCE, not as
+// a query failure — scoring-status.ts probes with `to_regclass(...) IS NOT NULL`
+// under the comment "Known absent relations are real missing evidence, not query
+// failures". This route now follows the same rule: with the sink absent the join
+// is omitted, the scoring columns degrade to NULL, and a8ScoringFromRow()
+// declares the field NOT COMPUTED with reason `scored_opportunities_sink_absent`
+// (R10). Nothing is fabricated and no other field is lost.
+const SCORING_COLUMNS_SQL = `  sc.posterior_prob       AS scored_posterior_prob,
+  sc.kelly_fraction       AS scored_kelly_fraction,
+  sc.bayesian_accepted    AS scored_bayesian_accepted,
+  sc.emission_outcome     AS scored_emission_outcome,
+  sc.rejection_reason     AS scored_rejection_reason,`;
+
+const SCORING_COLUMNS_ABSENT_SQL = `  NULL::double precision AS scored_posterior_prob,
+  NULL::double precision AS scored_kelly_fraction,
+  NULL::boolean          AS scored_bayesian_accepted,
+  NULL::text             AS scored_emission_outcome,
+  NULL::text             AS scored_rejection_reason,`;
+
+const SCORING_JOIN_SQL = `-- A.8 CONFIDENCE WIRE (2026-10-03): latest Gate-C score for this opportunity.
+LEFT JOIN LATERAL (
+  SELECT s.posterior_prob, s.kelly_fraction, s.bayesian_accepted,
+         s.emission_outcome, s.rejection_reason
+  FROM scored_opportunities s
+  WHERE s.opportunity_id = o.id::text
+  ORDER BY s.created_at DESC, s.id DESC
+  LIMIT 1
+) sc ON TRUE`;
+
+function buildLiveQuery(sinkPresent: boolean): string {
+  return `
 WITH grouped AS (
   SELECT
     concat_ws('|',
@@ -297,10 +351,21 @@ WITH grouped AS (
     MIN(o.detected_at) AS first_seen_at,
     MAX(o.detected_at) AS last_seen_at,
     COUNT(*)::int      AS confirmations,
-    -- Latest detection per group: its economics become the card's values.
+    -- Representative row per group: its economics become the card's values.
+    -- ROUTE-REP-01 (2026-09-28): with the $6 flag TRUE the representative is the
+    -- COMPUTED row with the highest net inside the window. Measured defect: a
+    -- later re-detection of the same route (net −12.93, computed) buried a real
+    -- computed gain (+0.1198 at 11:51) and the wire carried ZERO net>0 rows
+    -- while PG held six. With the flag FALSE every sort key is NULL (NULLS LAST)
+    -- and the order falls back to the previous rule — latest detection —
+    -- byte-for-byte.
     -- id DESC tiebreaker: bursts sharing one detected_at must pick the same
-    -- latest row every poll, or the card's economics flicker between polls.
-    (ARRAY_AGG(o.id ORDER BY o.detected_at DESC, o.id DESC))[1] AS latest_id
+    -- row every poll, or the card's economics flicker between polls.
+    (ARRAY_AGG(o.id ORDER BY
+       CASE WHEN $6::bool
+            THEN (o.economics->>'net_profit_usd')::numeric
+            ELSE NULL END DESC NULLS LAST,
+       o.detected_at DESC, o.id DESC))[1] AS latest_id
   FROM opportunities o
   -- Same window + viability filter as the pre-grouping query, applied INSIDE
   -- the CTE so both the aggregates and the outer row set share one boundary.
@@ -350,6 +415,26 @@ SELECT
   o.bridge,
   o.bridge_fee_usd::float               AS bridge_fee_usd,
   o.route_metadata                       AS route_metadata,
+  -- ALWAYS-COMPUTE (2026-09-27, migration 126): the complete economics
+  -- computation object on EVERY row — accepted and rejected alike.
+  o.economics                            AS economics,
+  -- A.8 CONFIDENCE WIRE (2026-10-03): the Gate-C ConfidenceScore for THIS
+  -- opportunity, read from the archiver's sink. Join key: opportunities.id is
+  -- UUID, scored_opportunities.opportunity_id is TEXT (migration 097), so the
+  -- uuid is cast. idx_scored_opportunities_opportunity_id (097) makes it a
+  -- btree lookup per returned row, never a scan of the ~10M-row sink.
+  --
+  -- LATERAL + ORDER BY ... LIMIT 1 is MANDATORY, not stylistic: the Rust
+  -- emitter scores an opportunity on BOTH the accept and the reject path
+  -- (opportunity_emitter.rs:423 / :531), so a plain LEFT JOIN fans the card
+  -- into duplicate rows. The rule is the same one beta_priors.rs:68 already
+  -- uses (DISTINCT ON (opportunity_id) ... ORDER BY created_at DESC, id DESC):
+  -- newest score wins, id DESC breaks same-timestamp ties deterministically.
+  --
+  -- R8: no scored row => NULL (NO COMPUTADO). The mapper attaches an explicit
+  -- machine reason; nothing here invents a zero. When the sink relation is
+  -- absent the columns are NULL literals and the reason says so explicitly.
+  ${sinkPresent ? SCORING_COLUMNS_SQL : SCORING_COLUMNS_ABSENT_SQL}
   -- WO-H4 (2026-09-17): real total of the live window, UNBOUNDED by LIMIT.
   -- Window functions evaluate before LIMIT, so COUNT(*) OVER () counts every
   -- row matching the WHERE (time window + viable_only filter) even when only
@@ -375,6 +460,7 @@ LEFT JOIN tokens ti
 LEFT JOIN tokens to_
   ON  to_.chain_id = COALESCE(o.chain_id_out, o.chain_id)
   AND to_.address  = LOWER(o.token_out)
+${sinkPresent ? SCORING_JOIN_SQL : ""}
 ORDER BY
   -- PC-08 (2026-09-19, doctrina operador): ordenar por Topological Yield USD
   -- de MAYOR a MENOR cuando order=profit_usd. Default intacto detected_at DESC
@@ -386,6 +472,39 @@ ORDER BY
   o.detected_at DESC
 LIMIT $1
 `.trim();
+}
+
+/** Sink present (the normal production path). */
+const LIVE_QUERY = buildLiveQuery(true);
+/** Sink not migrated on this database — the A.8 field degrades, the feed lives. */
+const LIVE_QUERY_SINK_ABSENT = buildLiveQuery(false);
+
+/**
+ * Does this database have the Gate-C confidence sink?
+ *
+ * Same idiom as scoring-status.ts's catalog probe: a KNOWN-ABSENT relation is
+ * missing evidence, not a query failure. Cached per mount because the answer is
+ * schema-shaped, not data-shaped. A probe error degrades to `false` (the
+ * conservative direction: without evidence the sink is treated as absent, never
+ * assumed present — R8).
+ */
+async function scoredSinkPresent(
+  pool: Pool,
+  log: { warn: (obj: object, msg?: string) => void },
+): Promise<boolean> {
+  try {
+    const r = await pool.query<{ exists: boolean }>(
+      "SELECT to_regclass('public.scored_opportunities') IS NOT NULL AS exists",
+    );
+    return r.rows[0]?.exists === true;
+  } catch (e) {
+    log.warn(
+      { event: "opportunities.live.scoring_sink_probe_failed", err: (e as Error).message },
+      "scored_opportunities probe failed — A.8 confidence degrades to not-computed",
+    );
+    return false;
+  }
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -580,12 +699,264 @@ interface SimContext {
   simulated_at: string;
 }
 
+// ── ALWAYS-COMPUTE (operator mandate 2026-09-27) ─────────────────────────────
+
+/**
+ * USD fields of the economics object that accept numeric-string tolerance at
+ * this JSON boundary (`typeof v === "string" && v.trim() !== "" → Number(v)`).
+ * Defense-in-depth: the searcher emits native numbers on this path (verified
+ * by the operator's audit), but the column is JSONB — a drifted producer must
+ * degrade to null (R8), never ship a string downstream as if it were a value.
+ */
+const ECONOMICS_USD_FIELDS = [
+  "amount_in_usd",
+  "amount_out_usd",
+  "gross_profit_usd",
+  "gas_usd",
+  "dex_fees_usd",
+  "flash_fee_usd",
+  "bribe_usd",
+  "slippage_usd",
+  "other_costs_usd",
+  "total_cost_usd",
+  "net_profit_usd",
+  "roi_pct",
+  "target_net_usd",
+  "target_delta_usd",
+] as const;
+
+/** Wei fields: decimal strings, optional sign, digits only (`/^-?\d+$/`). */
+const ECONOMICS_WEI_FIELDS = ["amount_in_wei", "amount_out_wei"] as const;
+
+/** Fields whose type is number|boolean|string|null and passes through. */
+const ECONOMICS_PASSTHROUGH_FIELDS = [
+  "computation_status",
+  "error_reason",
+  "meets_target",
+  "quote_block",
+  "simulation_block",
+  "legs",
+  "not_computed_reasons",
+] as const;
+
+/**
+ * Harden the `economics` JSONB at this boundary: USD fields accept native
+ * numbers OR non-empty numeric strings; wei fields accept digit strings only;
+ * anything unparseable degrades to null (R8 — never a coerced 0). Unknown
+ * extra fields ride along verbatim (additive wire). Returns null for a
+ * null/absent/non-object column (pre-migration rows).
+ */
+function hardenEconomics(raw: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (raw == null || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if ((ECONOMICS_USD_FIELDS as readonly string[]).includes(k)) {
+      if (typeof v === "number" && Number.isFinite(v)) {
+        out[k] = v;
+      } else if (typeof v === "string" && v.trim() !== "" && Number.isFinite(Number(v))) {
+        out[k] = Number(v);
+      } else {
+        out[k] = null;
+      }
+    } else if ((ECONOMICS_WEI_FIELDS as readonly string[]).includes(k)) {
+      out[k] = typeof v === "string" && /^-?\d+$/.test(v) ? v : null;
+    } else if ((ECONOMICS_PASSTHROUGH_FIELDS as readonly string[]).includes(k)) {
+      out[k] = v ?? null;
+    } else {
+      out[k] = v ?? null;
+    }
+  }
+  return out;
+}
+
+/** One field of the census. Counted per served row. */
+export interface MissingEconomicsCensus {
+  window: "request";
+  rows: number;
+  fields: {
+    amount_in_usd: number;
+    gross_usd: number;
+    costs_usd: number;
+    net_usd: number;
+    roi_pct: number;
+    target_usd: number;
+    achieved_usd: number;
+    required_amount_usd: number;
+    ledger: number;
+  };
+}
+
+/**
+ * ALWAYS-COMPUTE deliverable #3: the per-field `missing_economics` census over
+ * the rows THIS response serves (the consumption-side half; the searcher logs
+ * the producer-side window summary + mirrors it to
+ * `arbx:diagnostics:missing_economics`). A field counts as missing when NO
+ * producer on the wire supplied it (canonical columns, SIM block, economics
+ * object). Counts near zero on quoted rows is the production expectation;
+ * non-zero counts on legacy-shaped rows measure TODAY's gap — this is exactly
+ * "WHERE data dies".
+ */
+export function missingEconomicsCensus(
+  rows: OpportunityLiveRow[],
+  simByRowId: Map<string, SimContext>,
+): MissingEconomicsCensus {
+  const c = {
+    amount_in_usd: 0,
+    gross_usd: 0,
+    costs_usd: 0,
+    net_usd: 0,
+    roi_pct: 0,
+    target_usd: 0,
+    achieved_usd: 0,
+    required_amount_usd: 0,
+    ledger: 0,
+  };
+  for (const r of rows) {
+    const sim = simByRowId.get(r.id);
+    const e = hardenEconomics(r.economics);
+    const econNum = (f: string): number | null =>
+      typeof (e as Record<string, unknown> | null)?.[f] === "number"
+        ? ((e as Record<string, unknown>)[f] as number)
+        : null;
+    const ledgerOnEconomics =
+      Array.isArray((e as Record<string, unknown> | null)?.["legs"]) &&
+      ((e as Record<string, unknown>)["legs"] as unknown[]).length > 0;
+    const rm = r.route_metadata as { leg_amounts_in?: unknown } | null;
+    const ledgerOnRoute = Array.isArray(rm?.leg_amounts_in) && (rm?.leg_amounts_in as unknown[]).length > 0;
+
+    if (sim?.forward?.amount_in_usd == null && econNum("amount_in_usd") == null) c.amount_in_usd++;
+    if (
+      r.expected_profit_usd == null &&
+      sim?.forward?.gross_usd == null &&
+      econNum("gross_profit_usd") == null
+    ) c.gross_usd++;
+    if (sim?.forward?.costs_total_usd == null && econNum("total_cost_usd") == null) c.costs_usd++;
+    if (
+      r.net_expected_profit_usd == null &&
+      sim?.forward?.net_usd == null &&
+      econNum("net_profit_usd") == null
+    ) c.net_usd++;
+    if (r.roi_pct == null && sim?.forward?.roi_pct == null && econNum("roi_pct") == null) c.roi_pct++;
+    if (sim?.inverse?.target_net_usd == null && econNum("target_net_usd") == null) c.target_usd++;
+    if (sim?.inverse?.suggested_net_usd == null && econNum("net_profit_usd") == null) c.achieved_usd++;
+    // required_amount_usd: PRESENT when an inverse block exists — including
+    // its "Infinity" sentinel (required_is_infinite true means COMPUTED, the
+    // verdict was "no finite size reaches the target"). Missing = no target
+    // block at all.
+    if (sim?.inverse == null) c.required_amount_usd++;
+    if (!ledgerOnRoute && !ledgerOnEconomics) c.ledger++;
+  }
+  return { window: "request", rows: rows.length, fields: c };
+}
+
+// ── A.8 confidence wire (2026-10-03) ─────────────────────────────────────────
+
+/**
+ * Producer chain for `confidence_score_bps` — VERIFIED, not assumed:
+ *
+ *   searcher-rs scoring_pipeline.rs:237 ConfidenceScore{posterior_prob,…}
+ *     → opportunity_emitter.rs:878 serde_json → XADD `arbx:scoring:scored`
+ *     → ScoredOpportunitiesArchiver.processOne (scored-opportunities-archiver.ts)
+ *       INSERT INTO scored_opportunities
+ *     → scored_opportunities.posterior_prob  (LIVE JOIN above)
+ *     → THIS mapper
+ *     → GET /api/opportunities/live → frontend/lib/home-opportunity.ts
+ *     → XRayCard "conf"
+ *
+ * Units: `posterior_prob` is a win-probability in [0,1] (ConfidenceScore
+ * doc-comment: "Posterior win-probability E[p]"), emitted as integer basis
+ * points per the wire contract (`schemas.ts` "Units are basis points (bps)").
+ *
+ * R8 (None ≠ Some(0.0)) — the two facts this mapper must never conflate:
+ *   - NO scored row for this opportunity  ⇒ confidence_score_bps = null,
+ *     confidence_state = "not_computed", confidence_reason = the machine code
+ *     `no_scored_row_for_opportunity`. Nothing is fabricated.
+ *   - scored row whose posterior ROUNDS to 0 bps (e.g. 2.6e-5 ⇒ 0.26 bps)
+ *     ⇒ confidence_score_bps = 0 with confidence_state = "computed": that is a
+ *     real computed value, and the un-rounded `posterior_prob` travels on the
+ *     wire so a consumer can tell "exactly 0" from "rounded to 0" instead of
+ *     dressing a sub-basis-point posterior as a hard zero.
+ *
+ * `scoring_version` / `scoring_input_hash` are deliberately NOT emitted: no
+ * producer carries them on this sink (migration 097/109 have no such column).
+ * They stay declared-and-null-by-absence rather than present-and-invented;
+ * the UI field ledger declares them NO COMPUTADO with their reason.
+ */
+export function a8ScoringFromRow(
+  row: OpportunityLiveRow,
+  sinkPresent = true,
+): {
+  confidence_score_bps: number | null;
+  posterior_probability_bps: number | null;
+  posterior_prob: number | null;
+  kelly_fraction_bps: number | null;
+  scoring_decision: string | null;
+  scoring_reason: string | null;
+  confidence_state: "computed" | "not_computed";
+  confidence_source: string | null;
+  confidence_reason: string | null;
+} {
+  const posterior = row.scored_posterior_prob;
+  if (posterior == null || !Number.isFinite(posterior)) {
+    return {
+      confidence_score_bps: null,
+      posterior_probability_bps: null,
+      posterior_prob: null,
+      kelly_fraction_bps: null,
+      scoring_decision: null,
+      scoring_reason: null,
+      confidence_state: "not_computed",
+      confidence_source: null,
+      // Two DIFFERENT absences, never conflated: the sink is not migrated on
+      // this database (= the producer does not exist here) vs. the sink exists
+      // and simply has no row for this opportunity (= the producer has not run
+      // for it yet). Both are NOT COMPUTED; the reason names which one.
+      confidence_reason: sinkPresent
+        ? "no_scored_row_for_opportunity"
+        : "scored_opportunities_sink_absent",
+    };
+  }
+  // Clamp to the declared domain [0,1] before scaling: a posterior outside it
+  // is a producer bug, and scaling a bogus value into the card would launder it.
+  const clamped = Math.min(1, Math.max(0, posterior));
+  const bps = Math.round(clamped * 10_000);
+  const kf = row.scored_kelly_fraction;
+  const kellyBps =
+    kf == null || !Number.isFinite(kf)
+      ? null
+      : Math.round(Math.min(1, Math.max(0, kf)) * 10_000);
+  return {
+    confidence_score_bps: bps,
+    posterior_probability_bps: bps,
+    posterior_prob: clamped,
+    kelly_fraction_bps: kellyBps,
+    // The Bayesian gate verdict proper (`accept_by_posterior`, scoring_pipeline
+    // .rs:227). null when the sink row predates the column being readable.
+    scoring_decision:
+      row.scored_bayesian_accepted == null
+        ? null
+        : row.scored_bayesian_accepted
+          ? "accepted"
+          : "rejected",
+    // Verbatim reason recorded next to the score by the emitter (the pipeline
+    // gate that rejected the opportunity). null on the accept path — there is
+    // no reason to report, which is not the same as "no reason known".
+    scoring_reason: row.scored_rejection_reason ?? null,
+    confidence_state: "computed",
+    confidence_source: "scored_opportunities.posterior_prob",
+    confidence_reason: null,
+  };
+}
+
 function rowToOpportunity(
   row: OpportunityLiveRow,
   sim: SimContext | undefined,
   chainBaseTokenSymbol: string | null,
   validations: Map<string, TokenValidationRow>,
   legSymbols: Map<string, string>,
+  // Defaults to TRUE so every existing caller/test keeps the production
+  // semantics; the route passes the catalog-probed value explicitly.
+  scoredSinkPresent = true,
 ) {
   // Look up the per-token validation snapshots. Key format mirrors
   // tokenValidation/index.ts: `${chain_id}:${address.toLowerCase()}`.
@@ -608,6 +979,16 @@ function rowToOpportunity(
   const simulated_roi_pct = sim?.forward?.roi_pct ?? null;
   const simulated_cost_breakdown: SimulatedCostBreakdown | null =
     sim?.forward?.cost_breakdown ?? null;
+  // CARDS-NOTIONAL-01 (2026-09-26): the ladder's OWN gross and the Σ of its OWN
+  // cost components. Both come from the same `forwardSimulate` call as
+  // `simulated_net_profit_usd`, so the three are one computation at one notional
+  // and satisfy `net == gross − total_cost` by construction. Without these two
+  // on the wire every consumer had to pair the SIM's cost ladder with
+  // `expected_profit_usd` / `net_expected_profit_usd` — figures the SEARCHER
+  // produced at the searcher's own size — which is exactly the crossed-notional
+  // card this defect names. Null (never 0) when the forward ran on nothing.
+  const simulated_gross_usd = sim?.forward?.gross_usd ?? null;
+  const simulated_costs_total_usd = sim?.forward?.costs_total_usd ?? null;
   const simulated_target: InverseSizingResult | null =
     sim?.inverse != null ? sim.inverse : null;
   // simulated_at is the timestamp of any sim activity (forward OR Path-B
@@ -704,6 +1085,17 @@ function rowToOpportunity(
       Object.keys(row.route_metadata).length > 0
         ? row.route_metadata
         : null,
+    // ALWAYS-COMPUTE (2026-09-27): the complete economics object — hardened at
+    // this boundary (USD numeric-string tolerance, wei digit-strings, R8 null
+    // on unparseable). Present on BOTH accepted and rejected rows.
+    economics:                  hardenEconomics(row.economics),
+    // A.8 CONFIDENCE WIRE (2026-10-03): the scored ConfidenceScore for this
+    // opportunity, or a declared NOT COMPUTED with its machine reason. This is
+    // the field the home card renders as "conf" — before this wiring it read
+    // `confidence_score_bps` off a payload that never carried it, so the card
+    // was permanently "unscored" while the scorer was in fact producing ~10M
+    // scored rows. Producer chain + R8 semantics: see a8ScoringFromRow().
+    ...a8ScoringFromRow(row, scoredSinkPresent),
     // Target-driven simulation (R8 fail-honest: all nullable, source-labeled).
     // Computed only when net_expected_profit_usd is null (the canonical Rust
     // spine output wins when present).
@@ -711,6 +1103,8 @@ function rowToOpportunity(
     simulated_amount_in_usd,
     simulated_roi_pct,
     simulated_cost_breakdown,
+    simulated_gross_usd,
+    simulated_costs_total_usd,
     simulated_target,
     simulated_at,
     simulated_notes:           simulated_notes.length ? simulated_notes : null,
@@ -738,6 +1132,10 @@ export function mountOpportunitiesLive(
   redis: Redis | null,
   log: { warn: (obj: object, msg?: string) => void },
 ): void {
+  // Per-mount cache of the A.8 sink-presence probe (tri-state: unknown | true |
+  // false — R8: `null` is "not measured yet", never read as "absent").
+  let scoringSinkPresent: boolean | null = null;
+
   app.get("/api/v1/opportunities/live", async (req: Request, res: Response) => {
     if (!pool) {
       res.status(503).json({ error: "db_unavailable", detail: "DATABASE_URL not configured" });
@@ -745,6 +1143,18 @@ export function mountOpportunitiesLive(
     }
 
     const limit = Math.max(1, Math.min(200, Number(req.query["limit"] ?? 50)));
+
+    // ROUTE-REP-01 (operator order 2026-09-28): which row of a route group
+    // becomes the card. `latest` (default) = previous behaviour, so no other
+    // consumer changes; `best_net` = the computed row with the highest net in
+    // the window, which is what surfaces a real gain instead of letting a later
+    // re-detection bury it. Unknown values fall back to `latest` (never a
+    // silent third mode).
+    const routeRepresentative =
+      String(req.query["route_representative"] ?? "latest").toLowerCase() === "best_net"
+        ? "best_net"
+        : "latest";
+    const bestNet = routeRepresentative === "best_net";
 
     // viable_only filters out rows persisted as gate rejections (rejection_reason
     // populated by spine when an opportunity is rejected before profit eval).
@@ -781,12 +1191,20 @@ export function mountOpportunitiesLive(
         : "detected_at";
 
     try {
-      const q = await pool.query<OpportunityLiveRow>(LIVE_QUERY, [
+      // A.8: is the confidence sink migrated here? Probed once per mount (the
+      // answer is schema-shaped), then reused. An absent sink must NOT take the
+      // whole feed down with it — see buildLiveQuery().
+      if (scoringSinkPresent === null) {
+        scoringSinkPresent = await scoredSinkPresent(pool, log);
+      }
+      const liveQuery = scoringSinkPresent ? LIVE_QUERY : LIVE_QUERY_SINK_ABSENT;
+      const q = await pool.query<OpportunityLiveRow>(liveQuery, [
         limit,
         viableOnly,
         maxAgeSeconds,
         [...VIABLE_STATUSES],
         order,
+        bestNet,
       ]);
 
       // 2026-05-10 operator request: every token row must surface a symbol
@@ -964,21 +1382,17 @@ export function mountOpportunitiesLive(
         };
         const forward = forwardSimulate(simRow, snapshot);
         const target = resolveTarget(snapshot, r.strategy_kind);
-        // Inverse sizing has TWO paths:
-        //   Path A (observed-gross): forward exists → linear extrap.
-        //   Path B (roi-assumed):    forward null but target.roi_pct set →
-        //                            use operator's min_roi_pct as assumed
-        //                            gross_per_usd to size against USD floor.
-        //                            Unblocks the dashboard when 100% of rows
-        //                            arrive with expected_profit_usd=null
-        //                            (workers reject before profit math).
-        // When neither path is available (no forward AND no roi target),
-        // inverse stays null and the dashboard renders "—".
-        const inverse = target
+        // REAL-LIVE-CARDS-SSOT-01: the live wire may inverse-size ONLY
+        // from an observed/computed forward result. A configured min_roi_pct is
+        // a TARGET, not market evidence; using it as assumed gross_per_usd made
+        // a row look numerically populated even when no quote/gross existed.
+        // Explicit what-if tooling may still call inverseSize() with no forward,
+        // but /opportunities/live never publishes that assumption as live data.
+        const inverse = target && forward
           ? inverseSize(simRow, snapshot, target, forward)
           : null;
-        // Record a SimContext when EITHER forward or inverse produced output,
-        // so Path-B rows still get a target hint even without a forward block.
+        // Record simulation context only when a real forward computation exists
+        // (inverse, when present, is derived from that same observed basis).
         if (forward || inverse) {
           simByRowId.set(r.id, { forward, inverse, simulated_at: simulatedAt });
         }
@@ -1041,6 +1455,42 @@ export function mountOpportunitiesLive(
         }),
       );
 
+      const items = q.rows.map((r) => {
+        const item = rowToOpportunity(
+          r,
+          simByRowId.get(r.id),
+          snapshots.get(r.chain_id)?.base_token_symbol ?? null,
+          validations,
+          legSymbols,
+          scoringSinkPresent === true,
+        );
+        // CARDS-PRICES-01: attach live PriceBus prices for every token symbol on
+        // the card (endpoints + legs). Absent key = no live price (R8).
+        const pm = priceMaps.get(r.chain_id);
+        if (!pm) return { ...item, token_prices_usd: null };
+        const syms = new Set<string>();
+        const push = (
+          info: { symbol?: string | null; registry_symbol?: string | null } | null | undefined,
+        ): void => {
+          const s = info?.symbol ?? info?.registry_symbol;
+          if (s) syms.add(s.trim().toUpperCase());
+        };
+        push(item.token_in_info);
+        push(item.token_out_info);
+        if (item.leg_symbols) {
+          for (const s of Object.values(item.leg_symbols)) syms.add(s.toUpperCase());
+        }
+        const prices: Record<string, number> = {};
+        for (const s of syms) {
+          const p = pm.get(s);
+          if (p != null) prices[s] = p;
+        }
+        return {
+          ...item,
+          token_prices_usd: Object.keys(prices).length > 0 ? prices : null,
+        };
+      });
+
       res.status(200).json({
         count:           q.rows.length,
         // WO-H4 (2026-09-07): ALL detections in the live window (COUNT over
@@ -1051,41 +1501,26 @@ export function mountOpportunitiesLive(
         window:          "latest",
         viable_only:     viableOnly,
         max_age_seconds: maxAgeSeconds,
-        items:           q.rows.map((r) => {
-                           const item = rowToOpportunity(
-                             r,
-                             simByRowId.get(r.id),
-                             snapshots.get(r.chain_id)?.base_token_symbol ?? null,
-                             validations,
-                             legSymbols,
-                           );
-                           // CARDS-PRICES-01: attach live PriceBus prices for
-                           // every token symbol on the card (endpoints + legs).
-                           // Absent key = no live price (R8 fail-honest).
-                           const pm = priceMaps.get(r.chain_id);
-                           if (!pm) return { ...item, token_prices_usd: null };
-                           const syms = new Set<string>();
-                           const push = (
-                             info: { symbol?: string | null; registry_symbol?: string | null } | null | undefined,
-                           ): void => {
-                             const s = info?.symbol ?? info?.registry_symbol;
-                             if (s) syms.add(s.trim().toUpperCase());
-                           };
-                           push(item.token_in_info);
-                           push(item.token_out_info);
-                           if (item.leg_symbols) {
-                             for (const s of Object.values(item.leg_symbols)) syms.add(s.toUpperCase());
-                           }
-                           const prices: Record<string, number> = {};
-                           for (const s of syms) {
-                             const p = pm.get(s);
-                             if (p != null) prices[s] = p;
-                           }
-                           return {
-                             ...item,
-                             token_prices_usd: Object.keys(prices).length > 0 ? prices : null,
-                           };
-                         }),
+        // ROUTE-REP-01: which row of each route group this response served
+        // (`latest` = previous behaviour, `best_net` = computed best net).
+        route_representative: routeRepresentative,
+        // ALWAYS-COMPUTE (2026-09-27): per-field missing_economics census over
+        // the rows this response serves — the queryable "WHERE data dies"
+        // artifact (additive; ignored by consumers that don't read it).
+        //
+        // ECON-DECLARE-01 (2026-09-27): and how much of the feed DECLARES the
+        // notional basis of its economics. The operator's complaint was that
+        // figures "no están declarados"; this census is how the closure is
+        // measured from outside instead of asserted. R8/R10: counts only —
+        // presence and absence are both stated, neither is dressed as success.
+        // The two censuses are complementary and BOTH travel: `missing_economics`
+        // measures the wire's economic fields, `economics_declaration` measures
+        // whether each present figure states its producer and its size.
+        diagnostics: {
+          missing_economics: missingEconomicsCensus(q.rows, simByRowId),
+          economics_declaration: censusEconomicsDeclaration(items),
+        },
+        items,
         ts:              new Date().toISOString(),
       });
     } catch (e) {
@@ -1099,4 +1534,111 @@ export function mountOpportunitiesLive(
 }
 
 // Pure mapper exposed for regression inputs, never mounted as an endpoint.
-export const __forTesting = { rowToOpportunity };
+export const __forTesting = {
+  rowToOpportunity,
+  a8ScoringFromRow,
+  hardenEconomics,
+  missingEconomicsCensus,
+  censusEconomicsDeclaration,
+};
+/**
+ * ECON-DECLARE-01 (2026-09-27) — the declaration census of one live batch.
+ *
+ * The operator's complaint: *"hay muchos valores que no se ven, no están
+ * declarados."* The measured baseline (33 rows, 2026-09-27T02:06Z):
+ *
+ *     route_metadata present          33/33
+ *     economics_amount_in_wei declared 0/33   ← the whole gap
+ *     economics_basis declared         0/33
+ *
+ * This function states, per batch, how much of the feed DECLARES the notional
+ * basis of its economics and which economic figures are PRESENT but still
+ * undeclared. It counts; it never repairs. A field the row does not carry is not
+ * a defect (R8: absence is a state) — only a figure that is present with no
+ * producer statement counts against the declaration rate.
+ *
+ * Pure: no I/O, no clock — so it is unit-testable against production-shaped
+ * fixtures and safe to call per request.
+ */
+export function censusEconomicsDeclaration(
+  items: ReadonlyArray<Record<string, unknown>>,
+): {
+  rows: number;
+  rows_with_route_metadata: number;
+  rows_with_declared_notional: number;
+  rows_with_declared_basis: number;
+  declaration_rate_pct: number;
+  declared_basis_words: Record<string, number>;
+  present_but_undeclared: Record<string, number>;
+  economic_figures_present: Record<string, number>;
+} {
+  const words: Record<string, number> = {};
+  const undeclared: Record<string, number> = {};
+  const present: Record<string, number> = {};
+  let withRoute = 0;
+  let withNotional = 0;
+  let withBasis = 0;
+
+  const isNum = (v: unknown): boolean => typeof v === "number" && Number.isFinite(v);
+
+  for (const item of items) {
+    const rm = item["route_metadata"];
+    const rmObj =
+      rm != null && typeof rm === "object" && !Array.isArray(rm)
+        ? (rm as Record<string, unknown>)
+        : null;
+    if (rmObj != null) withRoute += 1;
+
+    const notional = rmObj?.["economics_amount_in_wei"];
+    const hasNotional = typeof notional === "string" && /^[0-9]{1,78}$/.test(notional);
+    if (hasNotional) withNotional += 1;
+
+    const basisRaw = rmObj?.["economics_basis"];
+    const basis =
+      basisRaw != null && typeof basisRaw === "object" && !Array.isArray(basisRaw)
+        ? (basisRaw as Record<string, unknown>)
+        : null;
+    let anyBasis = false;
+    for (const figure of ["gross", "net", "amount"] as const) {
+      const w = basis?.[figure];
+      if (typeof w !== "string" || w.trim() === "") continue;
+      anyBasis = true;
+      const key = w.trim().toLowerCase();
+      words[key] = (words[key] ?? 0) + 1;
+    }
+    if (anyBasis) withBasis += 1;
+
+    // A figure the row CARRIES with no producer statement about its origin.
+    const figures: Array<[string, unknown, boolean]> = [
+      ["expected_profit_usd", item["expected_profit_usd"], basis?.["gross"] != null],
+      ["net_expected_profit_usd", item["net_expected_profit_usd"], basis?.["net"] != null],
+      ["amount_in_wei", item["amount_in_wei"], basis?.["amount"] != null],
+      // roi_pct / risk_score have no vocabulary word on the wire at all.
+      ["roi_pct", item["roi_pct"], false],
+      ["risk_score", item["risk_score"], false],
+    ];
+    for (const [name, raw, declared] of figures) {
+      const carries =
+        name === "amount_in_wei"
+          ? typeof raw === "string" && raw !== "" && raw !== "0"
+          : isNum(raw);
+      if (!carries) continue;
+      present[name] = (present[name] ?? 0) + 1;
+      if (!declared) undeclared[name] = (undeclared[name] ?? 0) + 1;
+    }
+  }
+
+  const rows = items.length;
+  return {
+    rows,
+    rows_with_route_metadata: withRoute,
+    rows_with_declared_notional: withNotional,
+    rows_with_declared_basis: withBasis,
+    // Integer-free ratio kept as a number; 0 rows ⇒ 0 (computed-and-exactly-zero,
+    // never null — R8).
+    declaration_rate_pct: rows === 0 ? 0 : Math.round((withNotional / rows) * 1000) / 10,
+    declared_basis_words: words,
+    present_but_undeclared: undeclared,
+    economic_figures_present: present,
+  };
+}

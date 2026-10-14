@@ -54,7 +54,6 @@ use std::sync::Arc;
 /// All fields are runtime-configurable. Defaults ship with conservative values
 /// that require a $100k+ swap to trigger consideration (mainnet gas makes
 /// smaller swaps unprofitable for JIT).
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct JitConfig {
     /// Minimum pending swap size in USD to trigger JIT consideration.
@@ -87,7 +86,6 @@ impl Default for JitConfig {
 }
 
 /// Output of the JIT P&L computation.
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct JitPnl {
     /// Gross profit in token-in units (= fees captured before gas).
@@ -102,7 +100,6 @@ pub struct JitPnl {
 }
 
 /// JIT V3 liquidity worker (scaffold — mempool subscription deferred).
-#[allow(dead_code)]
 pub struct JitV3Worker {
     chain_id: u64,
     rpc_pool: Option<Arc<HttpRpcPool>>,
@@ -113,7 +110,6 @@ pub struct JitV3Worker {
     config: JitConfig,
 }
 
-#[allow(dead_code)]
 impl JitV3Worker {
     /// Construct the worker with production dependencies.
     ///

@@ -241,6 +241,7 @@ async fn build_ctx(
         math_registry: Arc::new(math_engine::OperatorRegistry::new()),
         regime_router: math_engine::RegimeRouter::default(),
         math_redis: conn.clone(),
+        token_decimals_provider: None,
         #[cfg(feature = "paper-shadow")]
         sed_bridge: None,
     };

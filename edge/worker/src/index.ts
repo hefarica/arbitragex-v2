@@ -697,6 +697,42 @@ app.get("/api/operator/credentials/status", (c) => proxy(c, "/api/operator/crede
 app.get("/api/operator/selftest", (c) => proxy(c, "/api/operator/selftest", "arbx:cache:operator-selftest", 10));
 
 app.get("/api/opportunities/live", (c) => proxy(c, "/api/v1/opportunities/live", "arbx:cache:opps", 2));
+// WS-METRICS-EVENTS-01 sibling — EDGE-SIMULATE-ROUTE-01 (audit 2026-09-29):
+// el botón "EXECUTE (shadow)" de /opportunities hace
+// `fetch(`${EDGE_URL}/api/v1/opportunities/${id}/simulate`, { method: "POST" })`
+// con EDGE_URL="" (same-origin, OpportunitiesClient.tsx:242). El api-server SÍ
+// monta la ruta (routes/opportunity-simulate.ts:37), pero el edge no la tenía y
+// el edge NO tiene catch-all para /api/* ⇒ el navegador recibía 404 SIEMPRE
+// (el propio OpportunitiesClient lo rotula "Shadow sim unavailable (HTTP 404)").
+// Se usa walletProxy (no proxyPassThrough) porque es el único helper que
+// reenvía method + body: proxyPassThrough está cableado solo-GET y habría
+// descartado el body en silencio, que es peor que el 404.
+// Pass-through SIN KV cache: es una mutación (encola una sim en sim-ctl/Anvil),
+// cachearla devolvería la simulación de otra oportunidad.
+app.post("/api/v1/opportunities/:id/simulate", (c) =>
+  walletProxy(c, `/api/v1/opportunities/${encodeURIComponent(c.req.param("id"))}/simulate`, "POST"),
+);
+// EDGE-TOKENS-ROUTES-01 (audit 2026-09-29) — las otras dos rutas que el
+// frontend consume y el edge no servía (mismo 404 silencioso, sin catch-all):
+//   frontend/lib/api-client.ts:788  POST /api/admin/tokens/resolve
+//     productor: api-server index.ts:903 (POST + requireAdminToken).
+//     Va por adminProxy, NO por walletProxy: es la única que reenvía
+//     `x-arbx-admin-token` (walletProxy solo reenvía cookie), así que el gate
+//     de admin del api-server seguiría respondiendo 401 sin ella.
+//   frontend/lib/api-client.ts:808  GET /api/tokens/top?chain_id=&limit=&window=
+//     productor: routes/token-top.ts:190 (GET público).
+//     proxyPassThrough propaga el querystring y no cachea: la respuesta depende
+//     de chain_id/limit/window/rules, cachearla sin la query serviría la ventana
+//     de otra petición.
+app.post("/api/admin/tokens/resolve", (c) => adminProxy(c, "/api/admin/tokens/resolve"));
+app.get("/api/tokens/top", (c) => proxyPassThrough(c, "/api/tokens/top"));
+// QUANT-LAYERS-01 — las 7 capas del libro cuantitativo (05_EDGES → 09_DASHBOARD)
+// que sirve el api-server sobre las detecciones MEDIDAS de la ventana.
+// Pass-through SIN KV cache: la capa es una ventana móvil (el cliente la pide
+// cada 15 s con su propio window_minutes); cachearla convertiría una medición
+// viva en un snapshot viejo con la misma pinta. El edge no tiene catch-all para
+// /api/*, así que esta fila es la diferencia entre 200 y 404 en el navegador.
+app.get("/api/quant/layers", (c) => proxyPassThrough(c, "/api/quant/layers"));
 // G-PRICE-1 — USD token-price snapshot (WS `prices:snapshot` equivalent).
 // Pass-through, NO KV cache: freshness is the entire point of this route.
 app.get("/api/prices/live", (c) => proxyPassThrough(c, "/api/v1/prices/live"));

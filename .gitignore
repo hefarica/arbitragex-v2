@@ -71,6 +71,10 @@ desktop.ini
 
 # Local data
 data/
+# GITIGNORE-DOCS-DATA-01: `docs/data/` holds VERSIONED Data-profile deliverables
+# (markdown), not local data. Anchored to the repo-root path only — every other
+# `data/` directory at any depth stays ignored by the rule above.
+!/docs/data/
 logs/
 tmp/
 *.sqlite
@@ -114,6 +118,9 @@ scripts/extract-skills.js
 .claude/skills/arbitragex-omega-supreme-agent/references/567-skills-catalog.md
 .env.enc
 ArbitrageX_Secrets_Config.xlsx
+# Office lock files (~$name.xlsx) materialise while a workbook is open and are
+# pure noise in `git status` (AUDIT-2026-09-29 hygiene).
+~$*
 # RU-2 — canonical math catalog XLSX is operator-local source of truth; only the
 # distilled cartridges/manifests/math_map.json is committed (scripts/gen_math_manifest.py).
 ArbitrageX_264_Cartridge_Math_Architecture*.xlsx

@@ -18,6 +18,67 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// ECON-DECLARE-01 (2026-09-27) — the BASIS VOCABULARY: the exact words that ride
+/// the wire inside `route_metadata.economics_basis`.
+///
+/// Operator's complaint (verbatim intent): *"hay muchos valores que no se ven, no
+/// están declarados."* Root cause on the live feed (33 rows, measured
+/// 2026-09-27T02:06Z): THREE different producers write economic figures onto one
+/// `Opportunity` row, each at its OWN notional, and the wire carried no statement
+/// of which was which —
+///
+///   · `expected_profit_usd`      the DEX engine's fast-filter GROSS, computed at
+///                                its probe = one native unit of `token_in`.
+///   · `net_expected_profit_usd`  the sizing kernel's NET, at the kernel's own
+///                                optimal/clamped size.
+///   · `amount_in_wei`            either the decoder's observed intent amount, or
+///                                an emit-boundary probe stamp.
+///
+/// Because nothing declared a basis, a renderer could not tell whether two
+/// figures belonged to one arithmetic, so it hid them behind a dash — the
+/// operator's "no se ven". These words are how each figure now says where it
+/// came from, so the value can be shown WITH its notional instead of hidden.
+///
+/// R8 / RULE 00: the basis is NEVER inferred by a consumer. A producer that did
+/// not declare one leaves the field absent, and the renderer prints
+/// `@undeclared` — absence is a state, not a guess.
+pub mod economics_basis {
+    /// Engine probe: one native unit of `token_in` = `10^decimals(token_in)`.
+    pub const PROBE: &str = "probe";
+    /// The sizing kernel, at its optimal (clamped) size.
+    pub const KERNEL: &str = "kernel";
+    /// The decoder's observed intent amount for this row.
+    pub const INTENT: &str = "intent";
+    /// Emit-boundary fallback stamp: the decoder lost the amount (R8-labelled —
+    /// NEVER presented as the real intent amount).
+    pub const STAMPED_PROBE: &str = "stamped_probe";
+}
+
+/// ECON-DECLARE-01 — which producer computed each economic figure of ONE row.
+///
+/// Written by the producer itself (`searcher-rs`), never inferred downstream.
+/// Every field is `Option`: an undeclared figure stays absent so a renderer can
+/// print `@undeclared` instead of guessing (R8 / RULE 00). Absent is a state.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EconomicsBasis {
+    /// Basis of `opportunity.expected_profit_usd`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gross: Option<String>,
+    /// Basis of `opportunity.net_expected_profit_usd`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub net: Option<String>,
+    /// Basis of `opportunity.amount_in_wei`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub amount: Option<String>,
+}
+
+impl EconomicsBasis {
+    /// True when no producer declared anything (the R8 "undeclared" state).
+    pub fn is_undeclared(&self) -> bool {
+        self.gross.is_none() && self.net.is_none() && self.amount.is_none()
+    }
+}
+
 /// Complete route topology for simulation.
 ///
 /// Carries the multi-hop metadata that `build_round_trip_context_from_candidate`
@@ -41,6 +102,19 @@ pub struct OpportunityCandidate {
     /// DEX router labels per hop (uniswap_v2_router, sushiswap, curveswap, etc).
     /// Length = hops. Used by the encoder to select the correct router contract.
     pub dex_adapters: Vec<String>,
+
+    /// Per-hop pool fee tier, parallel to `pool_addresses` (STEP 4 — fee V3).
+    ///
+    /// Units follow the established `PoolRef::fee_bps` legacy convention: bps
+    /// for V2 pools (e.g. 30 = 0.30%) and the raw `fee()` pips for V3 pools
+    /// (e.g. 500 = the 0.05% tier, 3000 = the 0.30% tier).
+    ///
+    /// ALL-OR-NOTHING (R8): `Some(vec)` only when EVERY hop declared its fee —
+    /// a route with one unknown fee reports `None` ("not computed"), never a
+    /// partial vector that would shift a fee onto the wrong hop. `None` also
+    /// covers legacy rows persisted before this field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fee_tier_bps: Option<Vec<u32>>,
 
     /// Input amount as f64 (USD-normalized or token-normalized).
     /// The encoder converts this to wei using `decimals[token_in]`.
@@ -167,6 +241,35 @@ pub struct RouteMetadata {
     /// hops; present iff the amount arrays are present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub leg_zero_for_one: Option<Vec<bool>>,
+
+    /// Per-hop pool fee tier, parallel to `pool_addresses` (STEP 4 — fee V3).
+    ///
+    /// Same convention and ALL-OR-NOTHING semantics as
+    /// `OpportunityCandidate::fee_tier_bps`: `Some` only when every hop
+    /// declared its fee (V2 bps / V3 raw pips, per `PoolRef::fee_bps`);
+    /// `None` = at least one hop unknown or the producer predates the field.
+    /// Absent ≠ free (R8).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fee_tier_bps: Option<Vec<u32>>,
+
+    /// ECON-DECLARE-01 — the notional in EXACT WEI at which this row's economic
+    /// figures (`expected_profit_usd` / `net_expected_profit_usd`) were computed,
+    /// as DECLARED by the producer that computed them.
+    ///
+    /// This is the missing declaration the operator asked for: without it a card
+    /// cannot know whether the gross and `amount_in_wei` are two cells of one
+    /// arithmetic or two different sizes, so it can only hide them. With it, the
+    /// figure is rendered WITH its notional (R8: absent = no producer declared
+    /// one — legacy rows or a producer whose contract pins no notional — and the
+    /// renderer prints `@undeclared`, never a guess).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub economics_amount_in_wei: Option<String>,
+
+    /// ECON-DECLARE-01 — per-figure basis, written by the producer that computed
+    /// each figure. `None` when no producer declared one. Additive: old readers
+    /// ignore both fields, old writers leave them absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub economics_basis: Option<EconomicsBasis>,
 }
 
 impl RouteMetadata {
@@ -180,7 +283,36 @@ impl RouteMetadata {
             leg_amounts_in: None,
             leg_amounts_out: None,
             leg_zero_for_one: None,
+            fee_tier_bps: None,
+            economics_amount_in_wei: None,
+            economics_basis: None,
         }
+    }
+
+    /// ECON-DECLARE-01 — record the NOTIONAL BASIS of this row's economics.
+    ///
+    /// Pure field write: the CALLER owns the policy (which producer computed
+    /// which figure, at which notional); this only records what that producer
+    /// declared. An all-absent basis is stored as `None` — the same wire state as
+    /// "no producer declared one" — so a renderer can never mistake an empty
+    /// struct for a declaration (R8).
+    ///
+    /// Returns `true` when a declaration was actually recorded.
+    pub fn declare_economics(
+        &mut self,
+        amount_in_wei: Option<String>,
+        basis: EconomicsBasis,
+    ) -> bool {
+        if amount_in_wei.is_none() && basis.is_undeclared() {
+            return false;
+        }
+        if amount_in_wei.is_some() {
+            self.economics_amount_in_wei = amount_in_wei;
+        }
+        if !basis.is_undeclared() {
+            self.economics_basis = Some(basis);
+        }
+        true
     }
 
     /// Returns true if the route metadata is populated (non-empty topology).
@@ -189,6 +321,16 @@ impl RouteMetadata {
         !self.pool_addresses.is_empty()
             && !self.token_addresses.is_empty()
             && !self.dex_adapters.is_empty()
+    }
+
+    /// ECON-DECLARE-01 — true when a producer pinned the SIZE its economic
+    /// figures belong to. This is the predicate a renderer must consult before it
+    /// publishes a notional beside a gross: without a declared size the pair is
+    /// two numbers of unknown provenance, and R8 forbids presenting them as one
+    /// arithmetic. A declared `"0"` counts (the decoder truly observed zero); only
+    /// ABSENCE means "no producer declared one".
+    pub fn has_declared_notional(&self) -> bool {
+        self.economics_amount_in_wei.is_some()
     }
 
     /// Attach the sizing kernel's per-leg ledger (HOPS-LEDGER-04).
@@ -328,6 +470,9 @@ mod tests {
             leg_amounts_in: None,
             leg_amounts_out: None,
             leg_zero_for_one: None,
+            fee_tier_bps: None,
+            economics_amount_in_wei: None,
+            economics_basis: None,
         };
         assert!(rm.is_populated());
     }
@@ -347,6 +492,9 @@ mod tests {
             leg_amounts_in: None,
             leg_amounts_out: None,
             leg_zero_for_one: None,
+            fee_tier_bps: None,
+            economics_amount_in_wei: None,
+            economics_basis: None,
         };
         assert!(
             rm.validate().is_ok(),
@@ -364,6 +512,9 @@ mod tests {
             leg_amounts_in: None,
             leg_amounts_out: None,
             leg_zero_for_one: None,
+            fee_tier_bps: None,
+            economics_amount_in_wei: None,
+            economics_basis: None,
         };
         let err = rm.validate().unwrap_err();
         assert!(
@@ -383,6 +534,9 @@ mod tests {
             leg_amounts_in: None,
             leg_amounts_out: None,
             leg_zero_for_one: None,
+            fee_tier_bps: None,
+            economics_amount_in_wei: None,
+            economics_basis: None,
         };
         let err = rm.validate().unwrap_err();
         assert!(
@@ -406,6 +560,9 @@ mod tests {
             leg_amounts_in: None,
             leg_amounts_out: None,
             leg_zero_for_one: None,
+            fee_tier_bps: None,
+            economics_amount_in_wei: None,
+            economics_basis: None,
         };
 
         let json = serde_json::to_string(&rm).expect("serialize");
@@ -430,6 +587,9 @@ mod tests {
             leg_amounts_in: None,
             leg_amounts_out: None,
             leg_zero_for_one: None,
+            fee_tier_bps: None,
+            economics_amount_in_wei: None,
+            economics_basis: None,
         };
         let json = serde_json::to_string(&rm).expect("serialize");
         assert!(!json.contains("leg_amounts_in"));
@@ -465,6 +625,9 @@ mod tests {
             leg_amounts_in: None,
             leg_amounts_out: None,
             leg_zero_for_one: None,
+            fee_tier_bps: None,
+            economics_amount_in_wei: None,
+            economics_basis: None,
         };
         assert!(rm.attach_leg_ledger(
             &["1000".to_string(), "995".to_string()],
@@ -492,6 +655,9 @@ mod tests {
             leg_amounts_in: None,
             leg_amounts_out: None,
             leg_zero_for_one: None,
+            fee_tier_bps: None,
+            economics_amount_in_wei: None,
+            economics_basis: None,
         };
         // Length mismatch (1 vs 2 hops) ⇒ nothing attached, no partial ledger.
         assert!(!rm.attach_leg_ledger(&["1000".to_string()], &["995".to_string()]));
@@ -515,6 +681,9 @@ mod tests {
             leg_amounts_in: None,
             leg_amounts_out: None,
             leg_zero_for_one: None,
+            fee_tier_bps: None,
+            economics_amount_in_wei: None,
+            economics_basis: None,
         };
         // Amounts ARE correctly aligned (2 vs 2 hops) — the token path is not.
         assert!(!rm.attach_leg_ledger(
@@ -543,6 +712,9 @@ mod tests {
             leg_amounts_in: None,
             leg_amounts_out: None,
             leg_zero_for_one: None,
+            fee_tier_bps: None,
+            economics_amount_in_wei: None,
+            economics_basis: None,
         };
         assert!(rm.attach_leg_ledger(
             &[
@@ -583,5 +755,137 @@ mod tests {
         assert_eq!(back.leg_amounts_in, rm.leg_amounts_in);
         assert_eq!(back.leg_amounts_out, rm.leg_amounts_out);
         assert_eq!(back.leg_zero_for_one, rm.leg_zero_for_one);
+    }
+
+    // ── ECON-DECLARE-01 ──────────────────────────────────────────────────────
+    // The declaration is what lets a card show a value WITH its notional instead
+    // of hiding it behind "—". These pin the three states a producer can be in.
+
+    #[test]
+    fn test_economics_absent_by_default_and_undeclared() {
+        let rm = RouteMetadata::empty();
+        assert!(rm.economics_amount_in_wei.is_none());
+        assert!(rm.economics_basis.is_none());
+        // Serialized absence is the wire's "no producer declared one" — the
+        // fields must NOT be emitted as null (additive + R8: absent is a state).
+        let json = serde_json::to_string(&rm).expect("serialize");
+        assert!(
+            !json.contains("economics_"),
+            "absent fields must not serialize: {json}"
+        );
+    }
+
+    #[test]
+    fn test_declare_economics_records_notional_and_basis() {
+        let mut rm = RouteMetadata::empty();
+        let ok = rm.declare_economics(
+            Some("1000000000000000000".to_string()),
+            EconomicsBasis {
+                gross: Some(economics_basis::PROBE.to_string()),
+                net: Some(economics_basis::KERNEL.to_string()),
+                amount: Some(economics_basis::INTENT.to_string()),
+            },
+        );
+        assert!(ok);
+        assert_eq!(
+            rm.economics_amount_in_wei.as_deref(),
+            Some("1000000000000000000")
+        );
+        let basis = rm.economics_basis.as_ref().expect("basis declared");
+        assert_eq!(basis.gross.as_deref(), Some("probe"));
+        assert_eq!(basis.net.as_deref(), Some("kernel"));
+        assert_eq!(basis.amount.as_deref(), Some("intent"));
+        assert!(!basis.is_undeclared());
+
+        // Round-trip preserves the declaration verbatim (it rides JSONB).
+        let back: RouteMetadata =
+            serde_json::from_str(&serde_json::to_string(&rm).expect("serialize"))
+                .expect("deserialize");
+        assert_eq!(back.economics_amount_in_wei, rm.economics_amount_in_wei);
+        assert_eq!(back.economics_basis, rm.economics_basis);
+    }
+
+    #[test]
+    fn test_declare_economics_refuses_an_empty_declaration() {
+        let mut rm = RouteMetadata::empty();
+        // An all-absent basis with no notional is NOT a declaration: recording it
+        // would let a renderer mistake an empty struct for a stated basis (R8).
+        assert!(!rm.declare_economics(None, EconomicsBasis::default()));
+        assert!(rm.economics_basis.is_none());
+        assert!(rm.economics_amount_in_wei.is_none());
+
+        // A notional WITHOUT a basis is still a real declaration (it pins the size
+        // the figures belong to even when the producer cannot name the figure's
+        // origin) — and the basis stays absent so it renders @undeclared.
+        assert!(rm.declare_economics(Some("42".to_string()), EconomicsBasis::default()));
+        assert_eq!(rm.economics_amount_in_wei.as_deref(), Some("42"));
+        assert!(rm.economics_basis.is_none());
+
+        // A basis WITHOUT a notional is likewise recorded — but this row still has
+        // no declared SIZE, and `has_declared_notional` must say so.
+        let mut rm2 = RouteMetadata::empty();
+        assert!(rm2.declare_economics(
+            None,
+            EconomicsBasis {
+                gross: Some(economics_basis::PROBE.to_string()),
+                ..EconomicsBasis::default()
+            }
+        ));
+        assert!(rm2.economics_amount_in_wei.is_none());
+        assert!(rm2.economics_basis.is_some());
+        assert!(!rm2.has_declared_notional());
+    }
+
+    #[test]
+    fn test_has_declared_notional_requires_a_wei_string() {
+        let mut rm = RouteMetadata::empty();
+        assert!(
+            !rm.has_declared_notional(),
+            "absent must never read as declared"
+        );
+        rm.declare_economics(
+            Some("0".to_string()),
+            EconomicsBasis {
+                gross: Some(economics_basis::PROBE.to_string()),
+                ..EconomicsBasis::default()
+            },
+        );
+        // "0" is a syntactically valid declaration (the decoder truly observed
+        // zero) — it is NOT treated as absent here; the renderer decides.
+        assert!(rm.has_declared_notional());
+    }
+
+    /// STEP 4 (fee V3) — the wire contract for `fee_tier_bps`.
+    ///
+    /// Legacy rows persisted BEFORE this field deserialize with `None`
+    /// (serde default): absence is "not computed", never zero (R8). A
+    /// populated vector round-trips verbatim, and serialization SKIPS the
+    /// key when None so old readers see byte-identical JSON.
+    #[test]
+    fn test_fee_tier_bps_wire_contract() {
+        // Legacy JSON (pre-STEP-4 shape) — no fee_tier_bps key at all.
+        let legacy = serde_json::json!({
+            "pool_addresses": ["0xa", "0xb"],
+            "token_addresses": ["0xt", "0xu", "0xt"],
+            "dex_adapters": ["uniswap_v2", "sushi"],
+            "decimals": {"map": {}}
+        });
+        let rm: RouteMetadata = serde_json::from_value(legacy).expect("legacy row must parse");
+        assert_eq!(rm.fee_tier_bps, None, "legacy row: absent = not computed");
+
+        // Populated vector round-trips; None serializes to NO key.
+        let mut with_fee = RouteMetadata::empty();
+        with_fee.fee_tier_bps = Some(vec![30, 500]);
+        let ser = serde_json::to_value(&with_fee).expect("serialize");
+        assert_eq!(ser["fee_tier_bps"], serde_json::json!([30, 500]));
+        let back: RouteMetadata = serde_json::from_value(ser).expect("deserialize");
+        assert_eq!(back.fee_tier_bps, Some(vec![30, 500]));
+
+        let without_fee = RouteMetadata::empty();
+        let ser2 = serde_json::to_value(&without_fee).expect("serialize");
+        assert!(
+            ser2.get("fee_tier_bps").is_none(),
+            "None must serialize to an ABSENT key, not null"
+        );
     }
 }

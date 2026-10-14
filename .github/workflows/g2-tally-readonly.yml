@@ -1,0 +1,203 @@
+name: G2 Simulations Tally (read-only)
+
+# G2-CHANNEL-01 — canal READ-ONLY para el tally de `simulations`.
+#
+# POR QUE EXISTE: G2 ("≥1 simulacion passed") esta **NO COMPUTADO**, no en FAIL: el
+# unico canal disponible estaba MUDO. Medido con su control:
+#
+#   SELECT 1 AS control;                          -> {"ok":true,"data":"","rows_affected":0}
+#   SELECT COUNT(*) FROM simulations WHERE passed -> {"ok":true,"data":"","rows_affected":0}
+#
+# `SELECT 1` SIEMPRE devuelve una fila. Que el control tambien venga vacio prueba
+# que el canal no contesta — NO que el valor sea cero. Un payload vacio no es un 0.
+# §34.5 exige artefacto reproducible por gate; un tally de PostgreSQL lo es. Este
+# workflow es ese canal.
+#
+# READ-ONLY, por CUATRO capas independientes:
+#   1. El input es `choice` (lista cerrada). No acepta SQL libre: `t54` ya descarto
+#      inyectar comandos por inputs, y aca el input NUNCA se convierte en SQL.
+#   2. El texto SQL sale de un `case` fijo en el propio workflow.
+#   3. Se ejecuta dentro de `BEGIN TRANSACTION READ ONLY; ... ROLLBACK;` — una
+#      escritura falla en el motor ("cannot execute ... in a read-only transaction").
+#   4. Guard de inventario de verbos, calcado del precedente del repo
+#      (`.github/workflows/runtime-identity-probe.yml:160-175`, "the probe must stay
+#      read-only"): si el SQL ensamblado contiene un verbo fuera de {SELECT, COUNT,
+#      FROM, WHERE, AS, BEGIN, TRANSACTION, READ, ONLY, ROLLBACK}, se ABORTA antes
+#      de tocar el host.
+#
+# No firma, no broadcast, no capital. No hay DDL ni DML en ninguna ruta.
+# El mecanismo de acceso es el MISMO ya probado por t37: VPS_SSH_* + ssh.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tally:
+        description: "Tally por NOMBRE (lista cerrada). NO es SQL libre."
+        type: choice
+        options:
+          - g2_simulations_passed
+          - control_select_1
+        required: true
+        default: g2_simulations_passed
+  pull_request:
+    # Corre solo cuando cambia ESTE archivo: el canal se prueba a si mismo en el PR
+    # que lo introduce. No es un flujo de PR general (eso es verifier-policy-tests).
+    paths:
+      - '.github/workflows/g2-tally-readonly.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: g2-tally-readonly
+  cancel-in-progress: false
+
+jobs:
+  tally:
+    name: G2 tally (read-only)
+    # Un PR desde un fork no recibe secretos: no se intenta.
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Assemble the SQL from the CLOSED map and guard it
+        id: sql
+        env:
+          # En un PR se corren los DOS: el control prueba que el canal habla, y el
+          # tally da el numero. En dispatch manda el input.
+          TALLY_KEY: ${{ github.event_name == 'workflow_dispatch' && inputs.tally || 'both' }}
+        run: |
+          set -euo pipefail
+          mkdir -p g2-evidence
+
+          sql_for() {
+            case "$1" in
+              control_select_1)      printf '%s' "SELECT 1 AS control;" ;;
+              g2_simulations_passed) printf '%s' "SELECT COUNT(*)::bigint AS simulations_passed FROM simulations WHERE passed;" ;;
+              *) echo "::error::unknown tally key '$1' — refusing to build SQL"; return 1 ;;
+            esac
+          }
+
+          keys=""
+          if [ "$TALLY_KEY" = "both" ]; then keys="control_select_1 g2_simulations_passed"; else keys="$TALLY_KEY"; fi
+
+          : > g2-evidence/sql.txt
+          for k in $keys; do
+            s="$(sql_for "$k")" || exit 1
+            # GUARD: inventario de verbos permitidos. Se evalua ANTES de tocar el host.
+            words="$(printf '%s' "$s" | tr '[:lower:]' '[:upper:]' | tr -cs 'A-Z' '\n' | sort -u | tr '\n' ' ')"
+            for w in $words; do
+              case "$w" in
+                SELECT|COUNT|FROM|WHERE|AS|BIGINT|SIMULATIONS|PASSED|CONTROL|1|"") ;;
+                *) echo "::error::tally '$k' uses SQL token '$w' outside the read-only whitelist — refusing to run against the host"; exit 1 ;;
+              esac
+            done
+            printf '%s\t%s\n' "$k" "$s" >> g2-evidence/sql.txt
+          done
+          echo "read-only guard OK: every assembled statement is a subset of the whitelist"
+          cat g2-evidence/sql.txt
+
+      - name: Setup SSH (same mechanism as auto-deploy-vps.yml and t37's probe)
+        env:
+          VPS_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+        run: |
+          set -euo pipefail
+          test -n "$VPS_KEY" && test -n "$VPS_HOST"
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$VPS_KEY" > ~/.ssh/deploy_key
+          # ssh se niega a usar una clave con permisos abiertos ("bad permissions"):
+          # medido en el primer run de este canal, que fallo por esto (0644).
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -T 10 -p "$VPS_PORT" -H "$VPS_HOST" > ~/.ssh/known_hosts
+          test -s ~/.ssh/known_hosts
+          echo "ssh material ready (key never echoed)"
+
+      - name: Run the tally on the deploy host inside a READ ONLY transaction
+        env:
+          VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
+          VPS_USER: ${{ secrets.VPS_SSH_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+        run: |
+          set -euo pipefail
+          # El nombre del contenedor esta MEDIDO en el repo, no supuesto:
+          # auto-deploy-vps.yml:177,181,187,313 -> `docker exec arbitragex-v2-postgres-1 pg_isready -U postgres -d arbitragex`
+          PGC=arbitragex-v2-postgres-1
+
+          # PREFLIGHT con discriminador de causa. ssh usa rc=255 para SUS propios
+          # errores (auth/conexion); un rc distinto viene de `docker inspect`. Sin
+          # esta distincion el mensaje "container not found" miente cuando lo que
+          # fallo fue el ssh — exactamente lo que paso en el primer run del canal.
+          : > g2-evidence/host-preflight.txt
+          set +e
+          ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            "$VPS_USER@$VPS_HOST" "docker inspect -f '{{.State.Running}}' $PGC" \
+            > g2-evidence/host-preflight.txt 2>&1
+          pre_rc=$?
+          set -e
+          if [ "$pre_rc" -eq 255 ]; then
+            echo "::error::preflight: SSH FAILED (rc=255). The channel could not even reach the host — this is NOT a missing-container finding. stderr:"
+            head -20 g2-evidence/host-preflight.txt || true
+            exit 1
+          fi
+          if [ "$pre_rc" -ne 0 ]; then
+            echo "::error::preflight: ssh OK but 'docker inspect $PGC' failed (rc=$pre_rc) — container absent or not inspectable. Output:"
+            head -20 g2-evidence/host-preflight.txt || true
+            echo "--- containers actually present on the host ---"
+            ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes \
+              "$VPS_USER@$VPS_HOST" "docker ps --format '{{.Names}}'" || true
+            exit 1
+          fi
+          echo "preflight OK: container $PGC running=$(cat g2-evidence/host-preflight.txt)"
+
+          rc=0
+
+          while IFS=$'\t' read -r key sql; do
+            [ -n "$key" ] || continue
+            out="g2-evidence/$key.tsv"
+            # SQL por STDIN (heredoc): el input nunca se interpola en el shell.
+            # BEGIN ... READ ONLY + ROLLBACK: cualquier escritura falla en el motor.
+            # -q -t -A: solo las filas del resultado, sin ruido.
+            printf 'BEGIN TRANSACTION READ ONLY;\n%s\nROLLBACK;\n' "$sql" > g2-evidence/body.txt
+            if ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes \
+                 "$VPS_USER@$VPS_HOST" \
+                 "docker exec -i $PGC psql -U postgres -d arbitragex -v ON_ERROR_STOP=1 -q -t -A -F '|' -f -" \
+                 < g2-evidence/body.txt > "$out" 2>"$out.err"
+            then
+              rows="$(grep -c . "$out" || true)"
+              if [ "$rows" -eq 0 ]; then
+                echo "::error::MUTE CHANNEL: '$key' returned NO ROW. COUNT(*) always returns a row, so an empty payload is NOT a zero. This is a non-measurement."
+                echo "MUTE_CHANNEL $key (0 rows)" >> g2-evidence/verdict.txt
+                rc=1
+              else
+                echo "MEASURED $key -> $(head -1 "$out")"
+                echo "MEASURED $key -> $(head -1 "$out")" >> g2-evidence/verdict.txt
+              fi
+            else
+              echo "::error::channel error for '$key'; stderr follows"
+              head -20 "$out.err" || true
+              echo "CHANNEL_ERROR $key" >> g2-evidence/verdict.txt
+              rc=1
+            fi
+          done < g2-evidence/sql.txt
+
+          echo "--- verdict ---"
+          cat g2-evidence/verdict.txt
+          {
+            echo "### G2 simulations tally (read-only)"
+            echo ""
+            echo "| tally | resultado |"
+            echo "|---|---|"
+            cat g2-evidence/verdict.txt
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
+
+      - name: Preserve the tally even when it fails
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: g2-tally-${{ github.run_id }}-${{ github.run_attempt }}
+          path: g2-evidence/
+          if-no-files-found: error
+          retention-days: 30

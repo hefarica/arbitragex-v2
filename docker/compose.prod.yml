@@ -23,6 +23,18 @@ services:
   postgres:
     logging: *id001
     image: postgres:15
+    # POSTGRES-SHM-01 (2026-10-06) — Docker's default /dev/shm is 64 MB. PostgreSQL
+    # parallel workers allocate DSM segments in /dev/shm; the observed request was
+    # 50,438,144 bytes (~48 MiB) and died with:
+    #   could not resize shared memory segment "/PostgreSQL.<pid>" to 50438144 bytes:
+    #   No space left on device
+    # surfacing as 503 query_failed on /api/rejections/breakdown. The limit is the
+    # CONTAINER's, not the host's (host /dev/shm had 7.7 GB free; disk had 31 GB).
+    # 1 GB = ~20x the observed segment and covers concurrent parallel aggregates.
+    # /dev/shm is tmpfs: this budget is RAM (16 GB host), never disk. Raising shm is
+    # the canonical fix — disabling parallel query instead would degrade EVERY
+    # aggregate to hide a container misconfiguration.
+    shm_size: 1gb
     # PERF-STACK WO-4 (2026-09-20): tuned for the 8-core/16GB VPS running the
     # full stack. synchronous_commit stays ON (locked decision — durability of
     # the opportunities ledger is not traded for throughput).
@@ -71,6 +83,26 @@ services:
           cpus: '2.0'
         reservations:
           memory: 512M
+  redis-aof-guard:
+    logging: *id001
+    image: redis:7.2
+    # ARBX-AOF-GUARD-01 (2026-10-12): one-shot pre-boot AOF integrity pass.
+    # A 00:43 stack event truncated appendonly.aof.11378.incr.aof mid-rewrite;
+    # redis crash-looped on "Bad file format" (RestartCount 9) and every
+    # redis:service_healthy dependent stalled — api-server sat in Created for
+    # ~3h serving origin-wide 500s. This gate validates every AOF part before
+    # redis boots, backs up and repairs truncated tails (redis-check-aof
+    # --fix) and prunes its own backups (>7d). FAIL-OPEN: never blocks boot.
+    # Full timeline: docs/incidents/2026-10-12-AOF-CORRUPT-01.md
+    volumes:
+    - redis_data:/data
+    - ./redis-aof-guard.sh:/usr/local/bin/redis-aof-guard.sh:ro
+    entrypoint:
+    - sh
+    - /usr/local/bin/redis-aof-guard.sh
+    restart: "no"
+    networks:
+    - arbx-net
   redis:
     logging: *id001
     image: redis:7.2
@@ -98,6 +130,11 @@ services:
     - 127.0.0.1:6379:6379
     volumes:
     - redis_data:/data
+    # ARBX-AOF-GUARD-01: AOF integrity pass must complete before redis loads
+    # the appendonlydir (see redis-aof-guard service above).
+    depends_on:
+      redis-aof-guard:
+        condition: service_completed_successfully
     healthcheck:
       test:
       - CMD
@@ -121,6 +158,8 @@ services:
     build:
       context: ../backend
       dockerfile: searcher-rs/Dockerfile
+      args:
+        ARBX_BUILD_SHA: ${ARBX_DEPLOY_SHA:-unknown}
     env_file:
     - ../.env
     environment:
@@ -166,7 +205,7 @@ services:
     - /bin/sh
     - -c
     command:
-    - exec anvil --fork-url "$$ANVIL_FORK_URL" --host 0.0.0.0 --port 8545
+    - exec anvil --fork-url "$$ANVIL_FORK_URL" $${ANVIL_FORK_BLOCK:+--fork-block-number=$$ANVIL_FORK_BLOCK} --host 0.0.0.0 --port 8545
     expose:
     - "8545"
     networks:
@@ -190,6 +229,8 @@ services:
     build:
       context: ../backend
       dockerfile: sim-ctl/Dockerfile
+      args:
+        ARBX_BUILD_SHA: ${ARBX_DEPLOY_SHA:-unknown}
     env_file:
     - ../.env
     environment:
@@ -230,6 +271,8 @@ services:
     build:
       context: ../backend
       dockerfile: math-engine/Dockerfile
+      args:
+        ARBX_BUILD_SHA: ${ARBX_DEPLOY_SHA:-unknown}
     env_file:
     - ../.env
     environment:
@@ -263,6 +306,8 @@ services:
     build:
       context: ../backend
       dockerfile: relays-client/Dockerfile
+      args:
+        ARBX_BUILD_SHA: ${ARBX_DEPLOY_SHA:-unknown}
     env_file:
     - ../.env
     environment:
@@ -300,6 +345,8 @@ services:
     build:
       context: ../backend
       dockerfile: recon/Dockerfile
+      args:
+        ARBX_BUILD_SHA: ${ARBX_DEPLOY_SHA:-unknown}
     env_file:
     - ../.env
     environment:
@@ -341,6 +388,8 @@ services:
     build:
       context: ..
       dockerfile: backend/selector-api/Dockerfile
+      args:
+        ARBX_BUILD_SHA: ${ARBX_DEPLOY_SHA:-unknown}
     env_file:
     - ../.env
     environment:
@@ -378,6 +427,8 @@ services:
     build:
       context: ..
       dockerfile: backend/api-server/Dockerfile
+      args:
+        ARBX_BUILD_SHA: ${ARBX_DEPLOY_SHA:-unknown}
     env_file:
     - ../.env
     environment:
@@ -455,6 +506,8 @@ services:
     build:
       context: ..
       dockerfile: edge/worker/Dockerfile.node
+      args:
+        ARBX_BUILD_SHA: ${ARBX_DEPLOY_SHA:-unknown}
     env_file:
     - ../.env
     environment:
@@ -463,7 +516,16 @@ services:
       EDGE_PORT: '8787'
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
     ports:
-    - 0.0.0.0:8787:8787
+    # SEC-EDGE-BYPASS-01: antes `0.0.0.0:8787:8787` — el edge era alcanzable
+    # desde Internet sin pasar por Cloudflare (medido: 200 con 167 KB de datos en
+    # /api/opportunities/live, rate limit spoofeable por X-Forwarded-For, y los
+    # 403 por ASN/threatScore saltados porque `request.cf` sólo existe si la
+    # petición entró por Cloudflare).
+    # Ahora sólo loopback: nginx escucha en 8787 con allowlist de los rangos de
+    # Cloudflare y proxya a 127.0.0.1:8788 (ver config/nginx/arbitragex.conf).
+    # El puerto INTERNO del contenedor sigue siendo 8787 (EDGE_PORT + healthcheck
+    # + INTERNAL_EDGE_URL=http://edge:8787 no cambian).
+    - 127.0.0.1:8788:8787
     depends_on:
     - api-server
     healthcheck:
@@ -496,6 +558,7 @@ services:
         # THIS arg closes the chain:
         #   compose build.args -> Dockerfile ARG/ENV -> next.config headers().
         ARBX_TLS_ENABLED: ${ARBX_TLS_ENABLED:-true}
+        ARBX_BUILD_SHA: ${ARBX_DEPLOY_SHA:-unknown}
     environment:
       NEXT_PUBLIC_EDGE_URL: ${NEXT_PUBLIC_EDGE_URL:?NEXT_PUBLIC_EDGE_URL required
         (public edge URL)}
@@ -519,7 +582,16 @@ services:
       # Same secret already used for edge↔api-server auth; reused here, not new.
       ARBX_EDGE_TOKEN: ${ARBX_EDGE_TOKEN:?ARBX_EDGE_TOKEN required}
     ports:
-    - 0.0.0.0:5173:5173
+    # SEC-NEXT-IMGOPT-01: el frontend se alcanza SIEMPRE por loopback — nginx
+    # (`config/nginx/arbitragex.conf`, `location /` → 127.0.0.1:5173) y todos los
+    # smoke tests / healthchecks de CI. Verificado: 0 consumidores usan la IP
+    # pública:5173 (auto-deploy-vps.yml, hardened-vps-audit.yml,
+    # hardened-vps-deploy.yml, hardened-vps-baseline.yml, e2e.yml, action-a-plus*.yml
+    # usan 127.0.0.1/localhost).
+    # Publicarlo en 0.0.0.0 dejaba el frontend ENTERO — y con él su Image Optimization
+    # API (GHSA-2xp9-vwfh-vxw4, RCE critical) — alcanzable desde Internet saltándose
+    # nginx y, por tanto, la CSP enforced de conf.d/security-headers.conf.
+    - 127.0.0.1:5173:5173
     depends_on:
     - edge
     healthcheck:
@@ -661,6 +733,8 @@ services:
     build:
       context: ../backend
       dockerfile: token-enricher/Dockerfile
+      args:
+        ARBX_BUILD_SHA: ${ARBX_DEPLOY_SHA:-unknown}
     env_file:
     - ../.env
     environment:
@@ -747,6 +821,8 @@ services:
     logging: *id001
     build:
       context: ./socket-proxy
+      args:
+        ARBX_BUILD_SHA: ${ARBX_DEPLOY_SHA:-unknown}
     restart: unless-stopped
     networks:
     - arbx-net

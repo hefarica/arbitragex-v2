@@ -6,7 +6,7 @@
 //! those just carry `passed = false` and a documented `fail_reason`.
 
 use crate::fork_manager::ForkManager;
-use crate::tx_builder::{build_probe, BuildError};
+use crate::tx_builder::{build_probe_with_path, BuildError};
 use chrono::Utc;
 use ethers::abi::{decode as abi_decode, ParamType};
 use ethers::core::types::transaction::eip2718::TypedTransaction;
@@ -30,7 +30,22 @@ pub struct SimEngine {
 }
 
 impl SimEngine {
+    /// Route-less entry point: byte-identical to the pre-SIM4-CYCLIC-02
+    /// behaviour (delegates with an empty path).
     pub async fn simulate(&self, opp: &Opportunity) -> SimulationResult {
+        self.simulate_with_route(opp, &[]).await
+    }
+
+    /// SIM4-CYCLIC-02: `route_path` is `route_metadata.token_addresses` — the
+    /// full token traversal (first = token_in, last = token_out, length =
+    /// hops + 1). Empty means "no route available": a closed route then fails
+    /// with its OWN typed reason (`cyclic_route_missing_route_metadata:<kind>`),
+    /// never a fabricated probe and never a silent pass.
+    pub async fn simulate_with_route(
+        &self,
+        opp: &Opportunity,
+        route_path: &[Address],
+    ) -> SimulationResult {
         let trace_id = opp.trace_id;
         let id = opp.id;
 
@@ -44,7 +59,7 @@ impl SimEngine {
         };
 
         // Build probe.
-        let probe = match build_probe(opp, self.signer_from) {
+        let probe = match build_probe_with_path(opp, self.signer_from, route_path) {
             Ok(p) => p,
             // BR-00 (2026-09-07): D-SIM-01 -- the reason now names the EXACT
             // kind it refused (base kind or cartridge stem, never collapsed).
@@ -58,19 +73,39 @@ impl SimEngine {
                     &format!("strategy_not_simulatable_in_s4:{}", kind.as_str()),
                 );
             }
-            // BR-00 (2026-09-07): cyclic routes are a DISTINCT structural gap --
-            // the single-hop probe cannot represent a closed route -- so they
-            // carry their own reason family, also per-kind. Both families are
-            // classified as capability gaps (persistence.rs): a simulator
-            // shape limit is never a market verdict on the opportunity.
-            Err(BuildError::CyclicRouteNotRepresentable(kind)) => {
+            // SIM4-CYCLIC-01 (2026-10-07): a closed route is NO LONGER refused by
+            // SHAPE. A closed route is representable — the V2 router takes the
+            // whole path array in one call — so this arm now fires only when the
+            // traversal path is ABSENT, which is a DATA-AVAILABILITY gap, not a
+            // topological one.
+            //
+            // It gets its OWN reason family on purpose: the old
+            // `strategy_cyclic_route_not_simulatable_in_s4` label asserted an
+            // impossibility that is FALSE, and reusing it would keep publishing a
+            // false verdict on 50k rows.
+            //
+            // Resolution path: `route_metadata.token_addresses` already carries
+            // the full traversal (written by searcher-rs
+            // `build_route_metadata_from_plan`, read by `route_lookup.rs`); feed
+            // it to `tx_builder::build_probe_with_path`.
+            Err(BuildError::CyclicRouteMissingPath(kind)) => {
                 return Self::not_implemented(
                     id,
                     trace_id,
-                    &format!(
-                        "strategy_cyclic_route_not_simulatable_in_s4:{}",
-                        kind.as_str()
-                    ),
+                    &format!("cyclic_route_missing_route_metadata:{}", kind.as_str()),
+                );
+            }
+            // SIM4-CYCLIC-04 (F9 de t91): un path PRESENTE pero incoherente con
+            // `token_in`/`token_out` NO se ignora ni se sustituye por una pata
+            // inventada. Se declara con su propio nombre, y entra TAMBIÉN en el
+            // clasificador (`persistence.rs`): si no, se repetiría el agujero de
+            // F-01 con otro nombre — un gap de capacidad convertido en rechazo
+            // silencioso.
+            Err(BuildError::PathNotRepresentable(kind)) => {
+                return Self::not_implemented(
+                    id,
+                    trace_id,
+                    &format!("route_path_not_representable:{}", kind.as_str()),
                 );
             }
             Err(BuildError::UnsupportedChain(c)) => {

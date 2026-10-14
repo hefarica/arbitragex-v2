@@ -38,6 +38,16 @@ pub mod native_operator_adapter;
 pub mod proposal_contract;
 pub mod rhai_agent_bridge;
 pub mod snapshot_services;
+// PRICE-COVERAGE-01 (§38): `cartridge_boot` se compila en AMBOS roots (lib y
+// bin) y su mapa canónico de precios consulta el bus de precios EN PROCESO,
+// así que el módulo del handle global debe existir en los dos. En el bin ya
+// estaba declarado (`main.rs`); sin esta línea el root `lib` no resuelve
+// `crate::price_bus_global` y `cargo check --lib` falla. Cada root tiene su
+// propio `OnceLock`: el bin lo inicializa en `main` (bus real y vivo), el lib
+// sólo si un consumidor llama a `init()` — sin llamada, `get()` devuelve
+// `None` y el mapa se queda con las fuentes de Redis/config (degradado
+// honesto, R8; nunca un precio inventado).
+pub mod price_bus_global;
 // CARTRIDGE-CONTROL: acople/desacople por cartucho — desired-state store
 // (Redis hash + PG), boot application and a runtime command loop.
 pub mod batch_quote;
@@ -160,7 +170,6 @@ pub mod orchestrator;
 // Workers themselves contain I/O-heavy code that is not called from tests;
 // the lib target only needs the pure-function submodules (triangular_worker,
 // flashloan_arb_worker) which have no async I/O in their math kernels.
-#[allow(dead_code)]
 pub mod workers;
 // Phase 12: StateProjector -- virtual post-tx pool state projection.
 pub mod state_projector;
@@ -252,6 +261,10 @@ pub mod thermodynamics;
 // and the 6-phase SED Engine for the Edge Node deployment.
 #[cfg(feature = "paper-shadow")]
 pub mod connectors;
+// REDEMPTION-PRODUCER-01: lector de estado on-chain de baskets ERC-4626.
+// SIEMPRE compilado (no gated a paper-shadow): los cartuchos de redemption
+// lo necesitan en TODOS los modos (§34.1 mode-invariant).
+pub mod basket_reader;
 #[cfg(feature = "paper-shadow")]
 pub mod normalization;
 #[cfg(feature = "paper-shadow")]
@@ -274,3 +287,7 @@ pub mod telemetry_publisher;
 pub mod telemetry_observability;
 
 pub mod candidate_simulation;
+// ALWAYS-COMPUTE (2026-09-27): the one economics computation object built
+// before the pass/fail decision + the missing_economics census. Exposed on
+// the lib so integration tests can drive the builders directly.
+pub mod economics;

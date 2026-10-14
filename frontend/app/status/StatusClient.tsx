@@ -21,9 +21,12 @@ const POLL_INTERVAL_MS = 5_000;
 
 interface Props {
   initialStatus: StatusResponse;
+  // PAPER-MODE-KPI-HONEST-01: resolved by the server page (NEXT_PUBLIC/layout
+  // source), used only as the pre-hydration value for the Paper-mode KPI.
+  initialPaperMode?: boolean;
 }
 
-export function StatusClient({ initialStatus }: Props) {
+export function StatusClient({ initialStatus, initialPaperMode }: Props) {
   const [status, setStatus] = useState<StatusResponse>(initialStatus);
   const [pollError, setPollError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<number>(0);
@@ -66,7 +69,7 @@ export function StatusClient({ initialStatus }: Props) {
         </Alert>
       )}
 
-      <SystemKpiGrid status={status} />
+      <SystemKpiGrid status={status} paperMode={initialPaperMode} />
 
       {/* AUDIT-2026-08-29 P0-1: WHAT SHA IS PRODUCTION RUNNING? */}
       <DeploymentCard status={status} />

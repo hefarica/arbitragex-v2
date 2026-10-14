@@ -1,0 +1,43 @@
+"VARIABLE DICTIONARY — DEFINICIÓN, UNIDADES, FUENTE Y REGLAS",,,,,,,,,
+Variable,Symbol,Type,Units,Definition,Primary Source,Update/Cadence,Validation Test,Invariant/Constraint,Failure Action
+strategy_id,i,string,id,Identificador canónico MEV-XX-XXX,STRATEGIES_264,config change,unique/non-null,immutable per version,NO-GO
+capital_usd,C,decimal,USD,Notional/capital evaluated for this opportunity,Sizer / flash provider,per candidate,>0 and within provider limits,must equal amount used in exact quote,NO-GO
+gross_profit_usd,GP,decimal,USD,Output value minus input before execution overheads,Exact quote/simulation,per candidate,finite; not NaN,same snapshot as quote,NO-GO
+gas_usd,G,decimal,USD,Gas cost at simulated gas usage and fee market,eth_estimateGas/simulation + gas oracle,per candidate,>=0,included exactly once,NO-GO
+flash_fee_usd,FF,decimal,USD,Fee of atomic capital provider,provider adapter,per candidate,>=0,0 only if no flash fee,NO-GO
+builder_tip_usd,BT,decimal,USD,Builder/priority/private orderflow payment,execution policy,per candidate,>=0,included exactly once,NO-GO
+risk_haircut_usd,RH,decimal,USD,Explicit buffer for model/state uncertainty,risk engine,per candidate,>=0,documented method/version,NO-GO
+external_cost_usd,EC,decimal,USD,Venue/bridge/funding/withdrawal or other explicit costs,adapter/accounting,per candidate,>=0,all required costs represented,NO-GO
+net_profit_usd,NP,formula,USD,Economic profit after all modeled costs,formula F004,per candidate,recompute independently,NP=GP-G-FF-BT-RH-EC,NO-GO
+net_roi,r_net,formula,%,Conditional net return on capital,formula F005,per candidate,capital>0,NP/C,NO-GO
+capture_prob,p_cap,decimal,0-1,Probability candidate is captured/included by this searcher,competition model / observed history,rolling,0<=p<=1,calibrated out-of-sample,NO-GO
+success_prob,p_succ,decimal,0-1,Conditional probability execution succeeds if captured,simulation + realized history,rolling,0<=p<=1,calibrated by strategy/venue,NO-GO
+revert_prob,p_rev,decimal,0-1,Probability of revert/failure cost,realized history + simulation,rolling,0<=p<=1,not double-counted with success,NO-GO
+failure_cost_usd,C_fail,decimal,USD,Expected cost when failed/reverted,receipt/accounting history,rolling,>=0,cost basis documented,NO-GO
+infra_alloc_usd,C_infra,decimal,USD,Allocated infrastructure cost per opportunity,cost ledger,daily/monthly,>=0,allocation policy stable,NO-GO
+expected_value_usd,EV,formula,USD,Probability-weighted economic value,formula F006,per candidate,recompute,EV=p_cap*p_succ*NP-p_rev*C_fail-C_infra,NO-GO
+expected_roi,r_EV,formula,%,EV divided by capital,formula F007,per candidate,capital>0,EV/C,NO-GO
+alpha0_bps,a0,decimal,bps,Initial economic edge estimate; not Sharpe,reconciled/model history,rolling,document calibration window,separate from Sharpe,HOLD
+alpha_current_bps,a(t),formula,bps,Decayed/adjusted economic edge,formula F001,per update,finite,must use lambda and vol ratio,HOLD
+lambda_base_day,lambda0,decimal,1/day,Base decay prior,calibrated history/group prior,daily/weekly,>=0,no double counting competition,HOLD
+competitor_index,N(t),decimal,index,Observed competition intensity,inclusion/bundle/auction evidence,rolling,>=0,defined methodology/version,HOLD
+lambda_comp,lambdaC,decimal,1/day/index,Competition contribution to decay,calibration,weekly,>=0,enters lambda once only,HOLD
+tech_leak_flag,I_leak,bool,0/1,Public leak/commoditization indicator,change control / public evidence,event,0 or 1,manual evidence,HOLD
+lambda_tech,lambdaT,decimal,1/day,Leak contribution to decay,calibration,event/weekly,>=0,enters lambda once only,HOLD
+beta_vol,beta,decimal,scalar,Sensitivity to volatility regime,regression,rolling,stable OOS,baseline ratio uses -1 term,HOLD
+vol_ratio,sigma/sigma0,decimal,x,Current realized volatility divided by baseline,volatility engine,block/minute,>0,same horizon as beta,HOLD
+rolling_sharpe_24h,S24,decimal,x,Risk-adjusted realized return statistic; not alpha,reconciliation ledger,rolling,sufficient samples,must not substitute alpha,HOLD
+data_age_ms,age,integer,ms,Age of quote/state snapshot,ingestor,per candidate,>=0,<= group max,NO-GO
+same_block,SB,bool,YES/NO,All required on-chain state from one block where mandated,ingestor,per candidate,block ids equal,required by policy,NO-GO
+depth_to_notional_x,D/C,decimal,x,Executable depth relative to chosen notional,quoter/liquidity model,per candidate,>0,>= group minimum,NO-GO
+slippage_bps,slip,decimal,bps,Expected amount-aware slippage,exact quoter,per candidate,>=0,<= group max,NO-GO
+sim_pass,SIM,enum,PASS/FAIL,Fork/eth_call/bundle simulation status,simulation engine,per candidate,PASS only with evidence id,required,NO-GO
+math_tests_pass,TEST,enum,PASS/FAIL,All mandatory deterministic/math tests,CI/test engine,per build,PASS with test report,required,NO-GO
+invariants_pass,INV,enum,PASS/FAIL,All strategy invariants,simulation/invariant engine,per candidate/build,PASS with evidence,required,NO-GO
+atomic_repay_pass,AR,enum,PASS/FAIL/NA,Principal+fee repayment proven if atomic funding used,simulation,per candidate,PASS or NA,mandatory when atomic required,NO-GO
+oracle_fresh,OF,enum,PASS/FAIL/NA,Oracle dependency valid and fresh,oracle adapter,per candidate,PASS or NA,mandatory if Oracle_Dep,NO-GO
+bridge_healthy,BH,enum,PASS/FAIL/NA,Bridge/finality dependency healthy,bridge adapter,per candidate,PASS or NA,mandatory if Bridge_Dep,NO-GO
+external_dep_healthy,EH,enum,PASS/FAIL/NA,External venue/dependency healthy,adapter/venue monitor,per candidate,PASS or NA,mandatory if External_Dep,NO-GO
+risk_score,RS,integer,0-100,Composite execution/data/model risk score,risk engine,per candidate,0..100,>= group min,NO-GO
+reconciled_pnl_30d,RP30,decimal,USD,Settled realized net profit last 30d,reconciliation ledger,rolling,receipts/balance deltas,not expected PnL,HOLD/NO-GO
+reconciled_trades_30d,RT30,integer,trades,Count of reconciled trades last 30d,reconciliation ledger,rolling,>=0,LIVE evidence threshold,NO-GO

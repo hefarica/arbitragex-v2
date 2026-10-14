@@ -11,7 +11,9 @@
 //! Categoria: optimization
 //!
 //! R8 fail-honest: liquidity_reserves vacío, r0≤0, r1≤0, γ≤0, bracket
-//! degenerado, o no-convergencia ⇒ scalar_value None.
+//! degenerado, o no-convergencia ⇒ scalar_value None. FEATURES-DEFAULTS-01:
+//! sin NINGUNA clave de fee (`fee_bps` / `pool_fee`) ⇒ hueco declarado
+//! (`reason_fee_unavailable`), nunca los 30 bps de convención.
 
 use super::{MarketState, OperatorOutput, TopologicalOperator};
 use std::collections::HashMap;
@@ -38,15 +40,21 @@ impl GoldenSectionOperator {
         Some(col.iter().sum::<f64>() / col.len() as f64)
     }
 
-    /// Fee en bps (features["fee_bps"]/1e4) o fracción directa (features["pool_fee"]);
-    /// default 0.003 (30 bps, convención Uniswap-V2).
-    fn fee_fraction(state: &MarketState) -> f64 {
+    /// Fee del pool como FRACCION, leida de `features`:
+    ///   * `fee_bps`  → bps / 1e4 (convencion del repo: 30 bps = 0.003)
+    ///   * `pool_fee` → fraccion directa
+    ///
+    /// `None` cuando NINGUNA de las dos esta presente. Un fee DESCONOCIDO no se
+    /// asume: `gamma = 1 - fee` entra directamente en la curva, asi que el
+    /// defecto anterior (0.003 = "30 bps, convencion Uniswap-V2") fabricaba la
+    /// friccion del pool y el operador publicaba igualmente un tamaño optimo
+    /// `x*` como si la hubiera medido (FEATURES-DEFAULTS-01, R8).
+    fn fee_fraction(state: &MarketState) -> Option<f64> {
         state
             .features
             .get("fee_bps")
             .map(|bps| *bps / 10_000.0)
             .or_else(|| state.features.get("pool_fee").copied())
-            .unwrap_or(0.003)
     }
 }
 
@@ -87,7 +95,9 @@ impl TopologicalOperator for GoldenSectionOperator {
             return none_out("degenerate_pool");
         }
 
-        let fee = Self::fee_fraction(state);
+        let Some(fee) = Self::fee_fraction(state) else {
+            return none_out("fee_unavailable");
+        };
         let gamma = 1.0 - fee; // γ = factor de retención post-fee
         if !gamma.is_finite() || gamma <= 0.0 {
             return none_out("invalid_fee");
@@ -193,5 +203,78 @@ impl TopologicalOperator for GoldenSectionOperator {
             matrix_result: None,
             metadata,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Clave canonica del par del fixture (formato FEATURES-01b):
+    /// pair_keys.len() == price_matrix.len(), mismo par en cada fila.
+    const PAR_FIXTURE: &str =
+        "0xaaaa0000000000000000000000000000000000aa|0xbbbb0000000000000000000000000000000000bb";
+
+    /// Pool primario con edge (r1/r0 = 1.05) y referencia cross-venue 1.01.
+    fn state_with(feats: &[(&str, f64)]) -> MarketState {
+        MarketState {
+            price_matrix: vec![vec![1.01], vec![1.01]],
+            pair_keys: vec![PAR_FIXTURE.to_string(); 2],
+            liquidity_reserves: vec![(1_000_000.0, 1_050_000.0)],
+            gas_price_gwei: 20.0,
+            block_timestamp: 1_700_000_000,
+            block_number: 18_000_000,
+            features: feats.iter().map(|(k, v)| (k.to_string(), *v)).collect(),
+        }
+    }
+
+    /// FEATURES-DEFAULTS-01: sin NINGUNA clave de fee el operador declara el
+    /// hueco. Antes fabricaba 30 bps ("convencion V2") y publicaba igualmente un
+    /// tamaño optimo como si ese fee lo hubiera medido.
+    #[test]
+    fn fee_absent_declares_the_gap_instead_of_fabricating_30bps() {
+        let op = GoldenSectionOperator::new();
+        let out = op.evaluate(&state_with(&[]));
+        assert!(
+            out.scalar_value.is_none(),
+            "sin fee medido no hay optimo publicable: {:?}",
+            out.scalar_value
+        );
+        assert!(out.vector_result.is_none());
+        assert_eq!(out.metadata.get("computed"), Some(&0.0));
+        assert_eq!(out.metadata.get("reason_fee_unavailable"), Some(&1.0));
+    }
+
+    /// Camino bueno intacto: con fee medido el operador computa igual que antes.
+    #[test]
+    fn fee_present_computes_as_before() {
+        let op = GoldenSectionOperator::new();
+        let by_bps = op.evaluate(&state_with(&[("fee_bps", 30.0)]));
+        let by_fraction = op.evaluate(&state_with(&[("pool_fee", 0.003)]));
+        for out in [&by_bps, &by_fraction] {
+            assert_eq!(out.metadata.get("computed"), Some(&1.0));
+            assert!(out.scalar_value.unwrap().is_finite());
+            assert!((out.metadata.get("gamma").unwrap() - 0.997).abs() < 1e-12);
+        }
+        // Mismo fee ⇒ mismo optimo, sin importar la unidad de entrada.
+        assert!((by_bps.scalar_value.unwrap() - by_fraction.scalar_value.unwrap()).abs() < 1e-9);
+    }
+
+    /// Precedencia preservada: `fee_bps` gana sobre `pool_fee` (semantica previa).
+    #[test]
+    fn fee_bps_takes_precedence_over_pool_fee() {
+        let op = GoldenSectionOperator::new();
+        let out = op.evaluate(&state_with(&[("fee_bps", 100.0), ("pool_fee", 0.003)]));
+        assert!((out.metadata.get("gamma").unwrap() - 0.99).abs() < 1e-12);
+    }
+
+    /// Un fee PRESENTE pero degenerado conserva su propia razon: "medido y
+    /// invalido" no es lo mismo que "no medido".
+    #[test]
+    fn present_but_degenerate_fee_keeps_its_own_reason() {
+        let op = GoldenSectionOperator::new();
+        let out = op.evaluate(&state_with(&[("pool_fee", 1.0)]));
+        assert!(out.scalar_value.is_none());
+        assert_eq!(out.metadata.get("reason_invalid_fee"), Some(&1.0));
     }
 }

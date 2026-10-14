@@ -4,13 +4,14 @@ const {createRequire}=require('node:module');
 const fromFrontend=createRequire(path.resolve('frontend/package.json'));
 const {chromium,expect}=fromFrontend('@playwright/test');
 const {safeHttp,safeEnginePacket,verified}=require('./read-only-policy.cjs');
+const provenance=require('./socket-frame-provenance.cjs');
 const {readCatalog,catalogUrl}=require(path.join(process.env.CATALOG_BUILD_DIR,'frontend/app/dex-registry/liquidity-catalog-model.js'));
 const origin=new URL(process.env.DAPP_ORIGIN||'').origin;
 assert.equal(new URL(origin).protocol,'https:','Live audit requires the explicit HTTPS origin');
 const output=path.resolve(process.env.EVIDENCE_DIR||'public-evidence');fs.mkdirSync(output,{recursive:true});
 const report={started_at:new Date().toISOString(),origin,source_sha:process.env.SOURCE_SHA||null,
   expected_served_sha:process.env.EXPECTED_SERVED_SHA||null,checks:{},pages:[],api:[],blocked_requests:[],
-  page_errors:[],http_errors:[],socket:{connections:0,handshakes:0,events:{},blocked_frames:0},
+  page_errors:[],http_errors:[],socket:{connections:0,handshakes:0,events:{},blocked_frames:0,blocked:[]},
   catalog_samples:[],opportunity_coverage:{},execution_verified:false,persistence_verified:false};
 const required=['status_before','pages','readiness_contracts','catalog_api','catalog_ui','socket','opportunity_sample','status_after','stable_served_version'];
 const pending=[];
@@ -39,11 +40,12 @@ async function main(){
  await context.routeWebSocket('**/*',async socket=>{
    const target=new URL(socket.url());
    if(target.host!==new URL(origin).host||target.pathname!=='/socket.io/'){
-     report.socket.blocked_frames++;socket.close();return;
+     provenance.recordBlocked(report.socket,provenance.classifyBlockedSocketTarget(target,origin));socket.close();return;
    }
    report.socket.connections++;
    const server=socket.connectToServer();
-   socket.onMessage(message=>{if(safeEnginePacket(message))server.send(message);else report.socket.blocked_frames++;});
+   socket.onMessage(message=>{if(safeEnginePacket(message)){server.send(message);return;}
+     provenance.recordBlocked(report.socket,provenance.classifyBlockedClientFrame(message));});
    server.onMessage(message=>{inbound(message);socket.send(message);});
  });
  const page=await context.newPage();
@@ -145,7 +147,14 @@ async function main(){
  await check('socket',async()=>{
    await expect.poll(()=>report.socket.handshakes,{timeout:20000}).toBeGreaterThan(0);
    await expect.poll(()=>['new_opportunity','route_discovery_telemetry','opportunity:detected','opportunity:validated'].reduce((sum,name)=>sum+(report.socket.events[name]||0),0),{timeout:20000}).toBeGreaterThan(0);
-   assert.equal(report.socket.blocked_frames,0,'An unrecognized socket frame was blocked; coverage incomplete');
+   // Fail-closed. A blocked frame passes ONLY when the discriminator proves it is a
+   // well-formed, non-oversized client event emit whose name is absent from the
+   // read-only allowlist AND the aggregate reconciles with the recorded provenance.
+   // Everything else keeps this RED: a foreign socket target, an unparseable or
+   // oversized frame, and — the case the old counter could not express — a
+   // blocked_frames count that no provenance record accounts for, i.e. an origin
+   // that is NOT COMPUTED.
+   report.socket.provenance=provenance.assertBlockedSocketExplained(report.socket);
  });
  await check('status_after',async()=>{report.after=await status();});
  await check('stable_served_version',async()=>{

@@ -432,7 +432,7 @@ curl -s http://localhost:8787/api/killswitch/status \
   -H "x-arbx-admin-token: $ARBX_ADMIN_TOKEN" | jq
 
 # Check Redis kill-switch key
-docker exec redis redis-cli GET arbx:killswitch:enabled
+docker exec redis redis-cli GET arbx:killswitch
 
 # Check api-server logs
 docker logs api-server --tail 50 | grep -i killswitch
@@ -441,7 +441,7 @@ docker logs api-server --tail 50 | grep -i killswitch
 **Solutions:**
 - Force reset in Redis:
   ```bash
-  docker exec redis redis-cli DEL arbx:killswitch:enabled
+  docker exec redis redis-cli DEL arbx:killswitch
   docker exec redis redis-cli PUBLISH arbx:killswitch:changes "0"
   ```
 - Restart api-server if state is inconsistent

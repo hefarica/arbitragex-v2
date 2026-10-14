@@ -67,7 +67,7 @@ If the API server is down but Redis is accessible:
 redis-cli -h <VPS_IP> -p 6379
 
 # Arm the kill-switch
-SET arbx:killswitch:enabled '{"enabled":true,"reason":"Emergency arm via Redis — API down","triggered_by":"operator:john-doe","updated_at":"2026-05-17T14:32:00Z"}'
+SET arbx:killswitch '{"enabled":true,"reason":"Emergency arm via Redis — API down","triggered_by":"operator:john-doe","updated_at":"2026-05-17T14:32:00Z"}'
 
 # Publish to change channel for immediate propagation
 PUBLISH arbx:killswitch:changes '{"enabled":true,"reason":"Emergency arm via Redis"}'

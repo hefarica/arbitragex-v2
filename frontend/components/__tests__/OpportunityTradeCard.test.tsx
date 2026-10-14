@@ -344,7 +344,9 @@ describe("OpportunityTradeCard — AUDIT-CARDS-MINOR (§3) fallback chip-row mar
 // hop of a 2..7-leg cycle shows ITS numbers (exact wei in→out) on the row that
 // already owns that hop, plus the price-marked leg Δ and the closed-cycle delta
 // on the closing leg. Fail-honest gates: no ledger ⇒ no figures; unknown
-// decimals ⇒ raw wei (never a guessed unit); no live price ⇒ no Δ (never $0).
+// decimals ⇒ raw wei (never a guessed unit); no live price ⇒ Δ NOT computable
+// (never $0) — y desde HOPS-DELTA-01 el slot Δ se pinta igualmente como `Δ —`
+// con el motivo, para que la leg nunca quede con un hueco mudo.
 // ─────────────────────────────────────────────────────────────────────────────
 describe("OpportunityTradeCard — HOPS-LEDGER-04 per-hop amounts", () => {
   const WETH = A;
@@ -442,9 +444,13 @@ describe("OpportunityTradeCard — HOPS-LEDGER-04 per-hop amounts", () => {
     // no unit claim anywhere on those legs; the cycle delta falls back to raw wei
     expect(html).not.toContain("Δ $");
     expect(html).toContain("ciclo 2000000000000000 wei");
+    // HOPS-DELTA-01: sin decimales el Δ no es computable, pero el slot SIGUE ahí
+    // (con `—`), en vez de desaparecer y dejar la leg con un hueco mudo.
+    expect(html).toContain("Δ —");
+    expect(html).toContain("no escalables");
   });
 
-  it("no live price for a leg's symbol ⇒ that leg shows amounts but NO Δ (never a $0)", () => {
+  it("no live price for a leg's symbol ⇒ Δ NO computado: el slot `Δ —` sigue visible con motivo (nunca un $0)", () => {
     const priced = {
       ...sized,
       token_prices_usd: { WETH: 2700 }, // USDC price absent
@@ -452,6 +458,46 @@ describe("OpportunityTradeCard — HOPS-LEDGER-04 per-hop amounts", () => {
     };
     const html = card(priced);
     expect(html).toContain("2,700 USDC");
+    expect(html).not.toContain("Δ $");
+    // HOPS-DELTA-01 (orden del operador: "que se visualice en todas las legs"): antes
+    // esta leg quedaba SIN celda Δ y el hueco era indistinguible de un fallo de
+    // layout. Ahora el slot está siempre, con `—` y la causa concreta.
+    expect(html).toContain("Δ —");
+    expect(html).toContain("sin precio en vivo (PriceBus) para USDC");
+    expect(html).toContain('data-testid="leg-delta-not-computed"');
+  });
+
+  it("ledger AUSENTE (kernel triangular final-amount-only) ⇒ monto y Δ NO computados, DECLARADOS con motivo en todas las legs (R10: jamás un hueco mudo)", () => {
+    // Forma REAL de producción (medida el 2026-09-30 contra
+    // /api/opportunities/live): strategy_kind=triangular con route_metadata de
+    // claves ['decimals','dex_adapters','economics_basis','pool_addresses',
+    // 'token_addresses'] — SIN leg_amounts_in / leg_amounts_out /
+    // leg_zero_for_one. `deriveLegLedger` es all-or-nothing y exige las tres, así
+    // que devuelve null: antes NINGUNA leg recibía celda (valueNode=undefined) y
+    // el operador veía un hueco indistinguible de un fallo de layout.
+    const triangular = mapToOmniOpportunity(
+      wire({
+        strategy_kind: "triangular",
+        token_in: A,
+        token_out: A,
+        route_metadata: {
+          dex_adapters: ["uniswap_v2_router", "uniswap_v3", "sushiswap"],
+          token_addresses: [A, B, C, A],
+          pool_addresses: ["0xpool1", "0xpool2", "0xpool3"],
+        },
+      }),
+    );
+    const html = card(triangular);
+    // Las 3 legs conservan su fila Y su celda: ninguna queda en blanco.
+    expect(html).toContain("Hop 1/3");
+    expect(html).toContain("Hop 2/3");
+    expect(html).toContain("Hop 3/3");
+    // El Δ se declara NO computado, con el motivo REAL del productor.
+    expect(html).toContain("Δ —");
+    expect(html).toContain("ledger ausente en route_metadata");
+    expect(html).toContain("triangular");
+    expect(html).toContain('data-testid="ledger-hop-not-computed"');
+    // R8: nunca un 0 inventado.
     expect(html).not.toContain("Δ $");
   });
 
@@ -488,5 +534,390 @@ describe("OpportunityTradeCard — HOPS-LEDGER-04 per-hop amounts", () => {
     // hop 1 cell: 1 → 2 T-units; closing leg carries the cycle delta (8 − 1 = 7)
     expect(html).toContain("1 T1");
     expect(html).toContain("ciclo 7 T1");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CARDS-NOTIONAL-01 (2026-09-26) — SSR gate on the operator's live
+// contradiction. Live DOM evidence (production build `89d68ec8`,
+// https://arbx.ape-tv.net/opportunities):
+//
+//   4b79551c PEPE | IN $0.00   | GROSS $1.47M    | NET -$0.00 | BPS ~1513332276940974
+//                 | Repay $0.0000 | Total cost $73.4k
+//   ed368994 DAI  | IN $1.00   | GROSS $822215.98 | BPS ~3700454443
+//                 | Repay $1.00 | Total cost $41.1k
+//   one frame:    | Flash loan in (TLS) · WETH $0.0000 | Gross out (AMM spread)
+//                 | $1.45M | Relay fee $72.4k | Total cost $72.4k | Net yield -$0.0000
+//
+// Three doctrine breaks on ONE ladder: a cost ≫ its principal; `net != gross −
+// total_cost` by six orders of magnitude; a seven-figure gross standing on a
+// sub-dollar principal. The fixture below is that row: the recorded notional is
+// the DETECTION PROBE (`amount_in_wei = 1e6` ⇒ 1 USDC ⇒ $1.00, stamped at the
+// emit boundary), the gross is the DEX engine's fast-filter figure at the
+// SEARCHER's own probe, and the net is the sizing KERNEL's at the kernel's own
+// clamped size. Three producers, up to three notionals, one card.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Parse a rendered static-markup card into its ladder cells (`LedgerRow` →
+ * label/value pairs), so the invariants are asserted on the NUMBERS the operator
+ * actually reads rather than on substring luck.
+ */
+function ledgerCells(html: string): Array<{ label: string; value: string }> {
+  const out: Array<{ label: string; value: string }> = [];
+  const re =
+    /class="min-w-0 flex-1 truncate">([^<]*)<\/span>(?:<span class="min-w-0 max-w-\[45%\][^>]*>\([^<]*\)<\/span>)?<\/span><span[^>]*class="shrink-0 whitespace-nowrap tabular-nums[^"]*"[^>]*>([^<]*)<\/span>/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html)) !== null) {
+    out.push({ label: m[1]!, value: m[2]! });
+  }
+  return out;
+}
+
+/** `$12.5k` / `-$0.0000` / `—` → USD, or null for the honest dash. */
+function cellUsd(value: string | null): number | null {
+  if (value == null) return null;
+  const t = value.trim();
+  const mm = /^(-?)\$([\d.]+)([kMBT])?$/.exec(t);
+  if (!mm) return null;
+  const body = Number(mm[2]);
+  if (!Number.isFinite(body)) return null;
+  const suffix = mm[3] ?? "";
+  const mult =
+    suffix === "k" ? 1e3 : suffix === "M" ? 1e6 : suffix === "B" ? 1e9 : suffix === "T" ? 1e12 : 1;
+  return (mm[1] === "-" ? -1 : 1) * body * mult;
+}
+
+const cell = (cells: Array<{ label: string; value: string }>, label: string) =>
+  cells.find((c) => c.label === label)?.value ?? null;
+
+/** The operator's row: a $1.00 probe notional beside the searcher's gross. */
+const probeVsKernelWire = (over: Record<string, unknown> = {}) =>
+  wire({
+    token_in: A,
+    token_out: B,
+    token_in_info: { symbol: "USDC", decimals: 6, logo_url: null, resolved_via: "onchain_full" },
+    amount_in_wei: "1000000", // 1 USDC = $1.00
+    expected_profit_usd: 822215.98, // searcher fast-filter gross (its own probe)
+    net_expected_profit_usd: -0.000011, // sizing kernel net (the kernel's size)
+    roi_pct: 37004544.43,
+    simulated_amount_in_usd: 1.0,
+    simulated_gross_usd: 822215.98,
+    simulated_costs_total_usd: 411107.985,
+    simulated_net_profit_usd: 411107.995,
+    simulated_roi_pct: 41110799.5,
+    simulated_cost_breakdown: {
+      gas_usd: 0.673172225,
+      lp_fees_usd: 0.003,
+      slippage_usd: 0.5,
+      failure_buffer_usd: 0.0004,
+      copied_buffer_usd: 369996.493527375,
+      capital_cost_usd: 0,
+      ops_overhead_usd: 0.01,
+      flashloan_fee_usd: 0.0009,
+      relay_fee_usd: 41110.799,
+    },
+    ...over,
+  });
+
+describe("OpportunityTradeCard — CARDS-NOTIONAL-01 SSR gate (one ladder, one notional)", () => {
+  it("no cost on a sub-dollar principal, no gross on a zero principal, net == gross − total cost", () => {
+    const html = card(mapToOmniOpportunity(probeVsKernelWire()));
+    const cells = ledgerCells(html);
+
+    const principal = cellUsd(cell(cells, "Flash loan in (TLS)"));
+    const gross = cellUsd(cell(cells, "Gross out (AMM spread)"));
+    const totalCost = cellUsd(cell(cells, "Total cost"));
+    const net = cellUsd(cells.find((c) => c.label.startsWith("Net yield"))?.value ?? null);
+    const repay = cell(cells, "Repay (principal + TLS fee)");
+
+    // (1) NO PRINCIPAL is painted for a basis the wire publishes no notional
+    //     for — `IN $0.00` / `IN $1.00` beside a $822k gross IS the defect.
+    //     And `Repay` cannot borrow another basis' number to fill the gap.
+    expect(principal).toBeNull();
+    expect(repay).toBe("—");
+
+    // (2) The ladder is arithmetically CLOSED: net == gross − total cost.
+    //     This is doctrine break #2 — `Total cost $72.4k` beside
+    //     `Net yield -$0.0000`, off by $72.4k on the live row.
+    expect(gross).not.toBeNull();
+    expect(net).not.toBeNull();
+    expect(totalCost).not.toBeNull();
+    expect(Math.abs(net! - (gross! - totalCost!))).toBeLessThanOrEqual(0.01);
+
+    // (3) Cost is non-negative and payable; a painted principal must be able to
+    //     carry the gross beside it (the searcher's own 5× gate). Asserted even
+    //     though the principal is absent here, so the pair cannot come back
+    //     silently in a future change.
+    expect(totalCost!).toBeGreaterThanOrEqual(0);
+    if (principal != null) {
+      expect(totalCost!).toBeLessThanOrEqual(principal + gross!);
+      expect(gross!).toBeLessThanOrEqual(principal * 5);
+    }
+
+    // The row's real numbers are still shown — quiet is not blindness (R8).
+    expect(html).toContain("$822.2k"); // gross, and the derived total cost
+    // CARDS-FALSEZERO-01: the kernel's net is -0.000011, and the cell now prints
+    // THOSE digits. The previous assertion (`-$0.0000`) passed on the collapse —
+    // a nonzero net displayed as exactly zero — and only survived as a substring
+    // prefix of the correct value, so it could not detect a regression.
+    expect(html).toContain("-$0.000011"); // the kernel's net, verbatim
+    expect(html).not.toContain("-$0.0000</span>"); // never a false zero
+    // …and the machine reason travels with every suppressed cell.
+    expect(html).toContain("CARDS-NOTIONAL-01");
+    // OPERATOR ORDER 2026-09-27 (verbatim): "QUITA EL MALDITO RENDER QUE ESCONDE
+    // LOS NUMEROS." This row no longer goes quiet, so the "las celdas van en
+    // guion a proposito" footer is intentionally GONE — the caveat now travels in
+    // each cell's `title` (covered by the CARDS-NOTIONAL-01 assertion above)
+    // instead of silencing the capital path. The footer is asserted ABSENT so a
+    // regression that brings the blanking back is caught here.
+    expect(html).not.toContain('data-testid="ledger-basis-note"');
+  });
+
+  it("la escalera canónica pinta SUS filas y no finge las del basis simulado", () => {
+    // REAL-LIVE-CARDS-SSOT-01: en la base canónica `Capital cost`,
+    // `Failure buffer` y `Copied buffer` pertenecen al basis SIM, así que no se
+    // renderizan como filas vacías (ni cero falso ni notional mezclado). Las
+    // filas que la base canónica SÍ posee están todas presentes.
+    const html = card(mapToOmniOpportunity(probeVsKernelWire()));
+    for (const label of [
+      "Gas",
+      "LP fees",
+      "Decoherence (slippage)",
+      "TLS fee (flash)",
+      "Relay fee",
+      "Ops overhead",
+    ]) {
+      expect(html).toContain(`>${label}</span>`);
+    }
+    for (const simulatedOnly of ["Capital cost", "Failure buffer", "Copied buffer"]) {
+      expect(html).not.toContain(`>${simulatedOnly}</span>`);
+    }
+  });
+
+  it("a CLOSED ladder at the row's own notional renders the full capital path", () => {
+    // The B1 shape: `amount_in_wei` IS the size the economics were computed at
+    // (the orchestrator's Sized arm writes the kernel's `optimal_amount_in`
+    // there), so principal, gross and every cost share ONE basis.
+    const html = card(
+      mapToOmniOpportunity(
+        probeVsKernelWire({
+          amount_in_wei: "1000000000000000000000",
+          expected_profit_usd: 25.22783426,
+          net_expected_profit_usd: 1.369353192,
+          simulated_amount_in_usd: 1000,
+          simulated_gross_usd: 25.22783426,
+          simulated_costs_total_usd: 23.858481068,
+          simulated_net_profit_usd: 1.369353192,
+          simulated_cost_breakdown: {
+            gas_usd: 0.673172225,
+            lp_fees_usd: 3,
+            slippage_usd: 5,
+            failure_buffer_usd: 0.4,
+            copied_buffer_usd: 12.61391713,
+            capital_cost_usd: 0,
+            ops_overhead_usd: 0.01,
+            flashloan_fee_usd: 0.9,
+            relay_fee_usd: 1.261391713,
+          },
+        }),
+      ),
+    );
+    const cells = ledgerCells(html);
+    const principal = cellUsd(cell(cells, "Flash loan in (TLS)"));
+    const gross = cellUsd(cell(cells, "Gross out (AMM spread)"));
+    const totalCost = cellUsd(cell(cells, "Total cost"));
+    const net = cellUsd(cells.find((c) => c.label.startsWith("Net yield"))?.value ?? null);
+
+    expect(principal).toBe(1000);
+    expect(gross).toBeCloseTo(25.23, 1);
+    expect(net).toBeCloseTo(1.37, 1);
+    // Closed inside one notional, and payable out of principal + gross.
+    expect(Math.abs(net! - (gross! - totalCost!))).toBeLessThanOrEqual(0.01);
+    expect(totalCost!).toBeLessThanOrEqual(principal! + gross!);
+    expect(gross!).toBeLessThanOrEqual(principal! * 5);
+    // The ladder says WHICH producer it is, and the largest component is visible.
+    expect(html).toContain("(SIM)");
+    expect(html).toContain("$12.6");
+  });
+
+  it("R8: a row with NO economics paints dashes with the reason — never a 0", () => {
+    const html = card(mapToOmniOpportunity(wire({ token_in: A, token_out: B })));
+    const cells = ledgerCells(html);
+    expect(cellUsd(cell(cells, "Flash loan in (TLS)"))).toBeNull();
+    expect(cellUsd(cell(cells, "Total cost"))).toBeNull();
+    expect(cells.find((c) => c.label.startsWith("Net yield"))?.value).toBe("—");
+    expect(html).toContain("CARDS-NOTIONAL-01");
+  });
+});
+
+// ── ALWAYS-COMPUTE (operator mandate 2026-09-27): the FAIL card shows its
+// arithmetic, not dashes. "Si el resultado da -$50, la card debe decir -$50,
+// no NO COMPUTADO." Everything below is DISPLAY of wire-owned figures — the
+// card computes nothing.
+describe("OpportunityTradeCard — ALWAYS-COMPUTE FAIL arithmetic", () => {
+  const econ = {
+    computation_status: "computed",
+    error_reason: null,
+    amount_in_wei: "1000000000000000000",
+    amount_out_wei: "990000000000000000",
+    amount_in_usd: 2350,
+    amount_out_usd: 2362.5,
+    gross_profit_usd: 12.5,
+    gas_usd: 0.18,
+    dex_fees_usd: null,
+    flash_fee_usd: 2.12,
+    bribe_usd: 0,
+    slippage_usd: null,
+    other_costs_usd: 0.01,
+    total_cost_usd: 2.31,
+    net_profit_usd: -50,
+    roi_pct: -2.13,
+    target_net_usd: 25,
+    target_delta_usd: -75,
+    meets_target: false,
+    quote_block: 123,
+    simulation_block: null,
+    legs: [],
+    not_computed_reasons: {},
+  };
+
+  it("rejected row with computed economics renders ECON chip + target/logrado/delta", () => {
+    const opp = mapToOmniOpportunity(
+      wire({
+        status: "rejected",
+        rejection_reason: "non_positive_profit",
+        expected_profit_usd: 12.5,
+        net_expected_profit_usd: -50,
+        economics: econ,
+      }),
+    );
+    const html = card(opp);
+    // Honest status chip — COMPUTED ≠ PROFITABLE.
+    expect(html).toContain("ECON");
+    expect(html).toContain("computed");
+    // The FAIL arithmetic from the economics object (target vs achieved vs delta).
+    expect(html).toContain("target");
+    expect(html).toContain("logrado");
+    expect(html).toContain("delta");
+    expect(html).toContain("25.00");
+    expect(html).toContain("50.00");
+  });
+
+  it("error-status economics renders the honest reason, never fabricated numbers", () => {
+    const opp = mapToOmniOpportunity(
+      wire({
+        status: "rejected",
+        rejection_reason: "missing_reserves_pool_b",
+        expected_profit_usd: null,
+        net_expected_profit_usd: null,
+        economics: {
+          ...econ,
+          computation_status: "error",
+          error_reason: "missing_reserves_pool_b",
+          gross_profit_usd: null,
+          net_profit_usd: null,
+          target_net_usd: null,
+          target_delta_usd: null,
+        },
+      }),
+    );
+    const html = card(opp);
+    expect(html).toContain("sin quote");
+    expect(html).toContain("missing_reserves_pool_b");
+  });
+
+  it("canonical-basis ladder fills cost cells from the economics decomposition", () => {
+    const opp = mapToOmniOpportunity(
+      wire({
+        status: "rejected",
+        rejection_reason: "non_positive_profit",
+        expected_profit_usd: 12.5,
+        net_expected_profit_usd: -50,
+        economics: econ,
+      }),
+    );
+    const html = card(opp);
+    expect(html).toContain("Gas");
+    expect(html).toContain("0.18");
+    expect(html).toContain("TLS fee");
+    expect(html).toContain("2.12");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// REAL-LIVE-CARDS-SSOT-01 (fixset del operador 2026-09-27) — la celda ROI sigue
+// la BASE renderizada, y las bases NUNCA se mezclan:
+//   canonical → economics.roi_pct del searcher, luego el campo canónico del wire;
+//   simulated → el ratio del forward-sim SOLAMENTE;
+//   none      → guion honesto (esa fila es diagnóstico, no card numérica).
+// ─────────────────────────────────────────────────────────────────────────────
+describe("REAL-LIVE-CARDS-SSOT-01 — la celda ROI sigue la base renderizada", () => {
+  const econBase = {
+    computation_status: "computed",
+    error_reason: null,
+    amount_in_wei: "1000000000000000000",
+    amount_out_wei: "990000000000000000",
+    amount_in_usd: 2350,
+    amount_out_usd: 2362.5,
+    gross_profit_usd: 12.5,
+    gas_usd: 0.18,
+    dex_fees_usd: null,
+    flash_fee_usd: 2.12,
+    bribe_usd: 0,
+    slippage_usd: null,
+    other_costs_usd: 0.01,
+    total_cost_usd: 2.31,
+    net_profit_usd: -50,
+    roi_pct: -2.13,
+    target_net_usd: 25,
+    target_delta_usd: -75,
+    meets_target: false,
+    quote_block: 123,
+    simulation_block: null,
+    legs: [],
+    not_computed_reasons: {},
+  };
+
+  // `expected/net` cerrados ⇒ buildLedger elige la base CANÓNICA (la que rige).
+  const roiCard = (over: Record<string, unknown>) =>
+    card(
+      mapToOmniOpportunity(
+        wire({ expected_profit_usd: 5, net_expected_profit_usd: 4, ...over }),
+      ),
+    );
+
+  // La MISMA celda del header: el div cuyo `title` empieza con el rótulo.
+  const roiCell = (html: string): string =>
+    html.match(/title="Net Convergence Ratio \(ROI %\)[^"]*">[\s\S]*?<\/div>/)?.[0] ?? "";
+  const roiText = (html: string): string =>
+    roiCell(html).replace(/^[^>]*>/, "").replace(/<\/div>$/, "").replace(/<[^>]*>/g, "").trim();
+
+  it("base canónica: manda economics.roi_pct del searcher", () => {
+    const html = roiCard({ economics: { ...econBase, roi_pct: -3.5 }, roi_pct: 1.25 });
+    expect(roiText(html)).toBe("-3.50%");
+  });
+
+  it("base canónica sin economics.roi_pct: usa el campo canónico del wire", () => {
+    const html = roiCard({ roi_pct: 1.25, simulated_roi_pct: 0.75 });
+    expect(roiText(html)).toBe("1.25%");
+    // Las bases no se mezclan: el ratio del forward-sim no entra en una canónica.
+    expect(roiText(html)).not.toContain("0.75");
+  });
+
+  it("base canónica con SOLO ratio simulado: guion — no se mezclan bases", () => {
+    const html = roiCard({ simulated_roi_pct: 0.75 });
+    expect(roiText(html)).toBe("—");
+  });
+
+  it("sin economics y sin ratios: guion honesto (R8)", () => {
+    const html = roiCard({ roi_pct: null, simulated_roi_pct: null });
+    expect(roiText(html)).toBe("—");
+  });
+
+  it("NaN no se pinta como ratio (formatPctOrDash degrada a guion)", () => {
+    const html = roiCard({ roi_pct: Number.NaN });
+    expect(roiText(html)).toBe("—");
+    expect(roiCell(html)).not.toContain("NaN");
   });
 });

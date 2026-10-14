@@ -314,6 +314,12 @@ mod tests {
     use super::*;
     use crate::operators::MarketState;
 
+    /// Clave canonica del par simulado (tokens hex en minusculas, orden
+    /// lexicografico, unidos por '|' — formato de FEATURES-01b). Cada estado de
+    /// estos tests trae UNA fila, asi que la lista lleva una sola clave.
+    const PAR_FIXTURE: &str =
+        "0xaaaa0000000000000000000000000000000000aa|0xbbbb0000000000000000000000000000000000bb";
+
     #[test]
     fn test_topology_map_dimensions() {
         let map = TopologyMap::new();
@@ -334,6 +340,7 @@ mod tests {
         let registry = OperatorRegistry::new();
         let state = MarketState {
             price_matrix: vec![vec![1.0, 2.0]],
+            pair_keys: vec![PAR_FIXTURE.to_string()],
             liquidity_reserves: vec![(1000.0, 2000.0)],
             gas_price_gwei: 20.0,
             block_timestamp: 1234567890,
@@ -351,6 +358,7 @@ mod tests {
         let states: Vec<MarketState> = (0..10)
             .map(|i| MarketState {
                 price_matrix: vec![vec![i as f64, (i + 1) as f64]],
+                pair_keys: vec![PAR_FIXTURE.to_string()],
                 liquidity_reserves: vec![(1000.0, 2000.0)],
                 gas_price_gwei: 20.0,
                 block_timestamp: 1234567890 + i as u64,

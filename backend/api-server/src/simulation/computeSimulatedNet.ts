@@ -61,12 +61,82 @@ export interface SimulatedCostBreakdown {
 
 export interface SimulationResult {
   amount_in_usd: number;
+  /**
+   * The gross THIS simulation consumed, verbatim from the wire.
+   *
+   * CARDS-NOTIONAL-01 (2026-09-26): this field was already computed here but
+   * never left the api-server — the route published only `net_usd` /
+   * `amount_in_usd` / `roi_pct` / `cost_breakdown`, so every consumer that
+   * needed "the gross of THIS ladder" reached for `expected_profit_usd`
+   * instead, which is a DIFFERENT producer's figure at a DIFFERENT size (the
+   * full chain lives in the header of `frontend/lib/opportunity-ledger.ts`).
+   * Publishing it is what lets the card render `net == gross − total_cost`
+   * inside one notional instead of crossing two.
+   */
   gross_usd: number;
   net_usd: number;
   roi_pct: number;
   cost_breakdown: SimulatedCostBreakdown;
+  /**
+   * Σ of every component of `cost_breakdown` — derived from THAT object and
+   * nothing else, so the total and the per-component rows can never disagree.
+   * This is the ladder's ONLY legitimate "Total cost": the card used to sum a
+   * hand-picked subset of the rows that OMITTED `copied_buffer_usd` (the
+   * largest component at the live `p_copied_max=0.5`), which is one of the two
+   * ways the rendered row broke `net == gross − total_cost`.
+   */
+  costs_total_usd: number;
   source: "simulation";
   notes: string[];
+}
+
+/**
+ * Half a cent: the card rounds every ledger cell to 2 decimals, so a closure
+ * residual below this can never be VISIBLE on the rendered row.
+ * CARDS-NOTIONAL-01: the closure identity is `net == gross − total_cost` under
+ * the SAME rounding as the display, and this is that rounding.
+ */
+export const COST_CLOSURE_TOLERANCE_USD = 0.005;
+
+/**
+ * Exact Σ of a cost breakdown. Pure, and the single definition of "total cost"
+ * for every consumer (route, card, notifier) — never a hand-maintained list of
+ * components re-declared at a render site.
+ */
+export function costsTotalUsd(cb: SimulatedCostBreakdown): number {
+  return (
+    cb.gas_usd +
+    cb.lp_fees_usd +
+    cb.slippage_usd +
+    cb.failure_buffer_usd +
+    cb.copied_buffer_usd +
+    cb.capital_cost_usd +
+    cb.ops_overhead_usd +
+    cb.flashloan_fee_usd +
+    cb.relay_fee_usd
+  );
+}
+
+/**
+ * R8 fail-honest closure check for a (gross, net, Σcosts) triple: true only
+ * when the three figures are one computation seen three ways. A triple that
+ * fails this describes two different notionals and must never be rendered as a
+ * single ladder.
+ */
+export function tripleIsClosed(
+  grossUsd: number,
+  netUsd: number,
+  costsTotal: number,
+  tolerance: number = COST_CLOSURE_TOLERANCE_USD,
+): boolean {
+  if (
+    !Number.isFinite(grossUsd) ||
+    !Number.isFinite(netUsd) ||
+    !Number.isFinite(costsTotal)
+  ) {
+    return false;
+  }
+  return Math.abs(netUsd - (grossUsd - costsTotal)) <= tolerance;
 }
 
 /**
@@ -108,10 +178,26 @@ export interface InverseSizingResult {
     | "tie";
   /**
    * Amount_in (USD) the linear model says is needed to satisfy BOTH floors,
-   * BEFORE capital cap. Infinity when binding_floor is "roi-unreachable" or
-   * "net-per-usd-nonpositive".
+   * BEFORE capital cap.
+   *
+   * ALWAYS-COMPUTE (operator mandate 2026-09-27): `"Infinity"` — the STRING —
+   * when binding_floor is "roi-unreachable" or "net-per-usd-nonpositive".
+   * Why a string: JSON has no Infinity literal, and `JSON.stringify(Infinity)`
+   * is `null` — which is indistinguishable from "not computed" and is exactly
+   * how the field used to vanish silently on the `net-per-usd-nonpositive`
+   * branch (41/41 live rows). The sentinel string is lossless and
+   * self-describing; consumers that only accept numbers keep seeing `null`
+   * semantics via `required_is_infinite`, and `Number(v)` recovers ±Infinity
+   * for anyone who wants the numeric value. Frontend tolerance: the store
+   * mapper normalizes `"Infinity"` → `Number.POSITIVE_INFINITY`.
    */
-  required_amount_in_usd: number;
+  required_amount_in_usd: number | "Infinity";
+  /**
+   * Machine-friendly companion: true exactly when `required_amount_in_usd`
+   * is the `"Infinity"` sentinel (no finite amount reaches the target). A
+   * filter/branch never has to string-compare.
+   */
+  required_is_infinite: boolean;
   /** Effective capital cap for this (token, strategy) pair from trading_config. */
   cap_amount_in_usd: number;
   /** min(required, cap) — what we'd actually trade with. */
@@ -259,7 +345,35 @@ export function forwardSimulate(
   // Component 5: copied buffer — apply the cap as a worst-case proxy.
   // (The spine has the actual p_copied per-pool from dex_chain_metrics; we
   // assume the max as a conservative upper bound.)
-  const copied_buffer_usd = grossUsd * cfg.p_copied_max;
+  //
+  // SIM-COST-NONNEGATIVE-01 (2026-09-27): `Math.max(0, grossUsd)` — a COST
+  // component may never be a CREDIT.
+  //
+  // WHY: this component scales with `grossUsd`, and `grossUsd` is the wire's
+  // `expected_profit_usd`, which is NEGATIVE on essentially every live row
+  // (arbitrage that does not pay). Unbounded, the buffer flipped sign with it:
+  // at the operator's live `p_copied_max = 0.5`, `grossUsd = -1000` produced
+  // `copied_buffer_usd = -500`, so `costsTotalUsd()` returned a NEGATIVE total
+  // (-490.15) and the whole ladder collapsed downstream —
+  // `frontend/lib/opportunity-ledger.ts::buildLedger` refuses any
+  // `simulated_costs_total_usd < 0` ("CARDS-NOTIONAL-01: simulated total cost is
+  // negative — not a closed ladder"), which blanked EVERY capital-path cell of
+  // `frontend/components/OpportunityTradeCard.tsx` (Gross out, Repay/principal,
+  // Gas, LP fees, Decoherence/slippage, TLS fee, Relay fee, Capital cost,
+  // Failure buffer, Ops overhead, Copied buffer, Total cost) while still
+  // painting `Net yield = -509.85` — a net BETTER than the gross, paid for by a
+  // cost that does not exist. Measured over a 500+ card census of the live
+  // feed: 196 counter resets, 100 % of them carrying this exact reason (card
+  // ids fb6148d0-4c4a-4181-a4e1-912f0341c956,
+  // 9ee1e291-5f9b-4136-befe-23505b3c39de,
+  // d3d3b19a-401b-49bc-80b6-e89981c2f420).
+  //
+  // The producer's intent survives verbatim — "in the worst case a competing
+  // searcher copies the upside" — because there IS no upside to copy when the
+  // gross is ≤ 0: the honest worst-case buffer is 0, not a rebate. Same guard
+  // class as `relayFeeUsd` below (`Math.max(gross × 5%, $0.50)`), which is
+  // exactly why the relay fee never showed this defect.
+  const copied_buffer_usd = Math.max(0, grossUsd) * cfg.p_copied_max;
   if (cfg.p_copied_max > 0) notes.push(`p-copied-max=${cfg.p_copied_max}`);
 
   // Component 6: capital opportunity cost.
@@ -278,17 +392,30 @@ export function forwardSimulate(
   const relay_fee_usd = relayFeeUsd(row.chain_id, grossUsd);
   if (relay_fee_usd > 0) notes.push("relay-cold-start-floor");
 
-  const net_usd =
-    grossUsd -
-    gas_usd -
-    flashloan_fee_usd -
-    lp_fees_usd -
-    slippage_usd -
-    failure_buffer_usd -
-    capital_cost_usd -
-    ops_overhead_usd -
-    copied_buffer_usd -
-    relay_fee_usd;
+  // CARDS-NOTIONAL-01: the ladder's basis is stated on the wire, never
+  // inferred. Every component above is either `rate × amount_in_usd` (gas
+  // aside, which is a per-attempt scalar) or `rate × gross`, and `gross_usd`
+  // is the wire's own figure — so the ONLY notional this ladder can honestly
+  // claim is the row's recorded `amount_in_wei`. A consumer that also holds
+  // canonical (searcher) economics must not mix them in; it reads this marker
+  // to know which figure the ladder belongs to.
+  notes.push("basis=amount_in_wei");
+
+  const cost_breakdown: SimulatedCostBreakdown = {
+    gas_usd,
+    lp_fees_usd,
+    slippage_usd,
+    failure_buffer_usd,
+    copied_buffer_usd,
+    capital_cost_usd,
+    ops_overhead_usd,
+    flashloan_fee_usd,
+    relay_fee_usd,
+  };
+  // Totals and net derived from the SAME object, in one place: closure
+  // (`net == gross − Σcomponents`) is then an identity of this function, not a
+  // property that happens to hold because two call sites agree.
+  const net_usd = grossUsd - costsTotalUsd(cost_breakdown);
 
   const roi_pct = amountInUsdVal > 0 ? (net_usd / amountInUsdVal) * 100 : 0;
 
@@ -297,17 +424,8 @@ export function forwardSimulate(
     gross_usd: grossUsd,
     net_usd,
     roi_pct,
-    cost_breakdown: {
-      gas_usd,
-      lp_fees_usd,
-      slippage_usd,
-      failure_buffer_usd,
-      copied_buffer_usd,
-      capital_cost_usd,
-      ops_overhead_usd,
-      flashloan_fee_usd,
-      relay_fee_usd,
-    },
+    cost_breakdown,
+    costs_total_usd: costsTotalUsd(cost_breakdown),
     source: "simulation",
     notes,
   };
@@ -542,7 +660,13 @@ export function inverseSize(
       target_roi_pct: target.roi_pct,
       target_source: target.source,
       binding_floor: binding,
-      required_amount_in_usd: required,
+      // ALWAYS-COMPUTE: the "Infinity" STRING, never the number —
+      // JSON.stringify(Infinity) === null is how this field used to vanish
+      // silently on this exact branch (41/41 live rows null while the kernel
+      // HAD computed the verdict). The companion boolean is the machine
+      // filter; Number("Infinity") === Infinity recovers the numeric value.
+      required_amount_in_usd: "Infinity",
+      required_is_infinite: true,
       cap_amount_in_usd: capAmountInUsd,
       suggested_amount_in_usd: 0,
       suggested_net_usd: forward?.net_usd ?? 0,
@@ -587,6 +711,7 @@ export function inverseSize(
     target_source: target.source,
     binding_floor: binding,
     required_amount_in_usd: required,
+    required_is_infinite: false,
     cap_amount_in_usd: capAmountInUsd,
     suggested_amount_in_usd: suggestedAmountInUsd,
     suggested_net_usd: suggestedNet,

@@ -1,4 +1,4 @@
-﻿# OMEGA MAXIMUM OVERRIDE: SUPREME FINANCIAL PREDATOR DIRECTIVE (TOP 1% HFT ELITE)
+# OMEGA MAXIMUM OVERRIDE: SUPREME FINANCIAL PREDATOR DIRECTIVE (TOP 1% HFT ELITE)
 
 **ESTADO:** ARMA LETAL FINANCIERA ACTIVADA. SIN PIEDAD. SIN PÃ‰RDIDAS.
 
@@ -12,14 +12,29 @@ Este documento rige la actuaciÃ³n de todo agente en el ecosistema ArbitrageX. 
 **Severity:** warning (but often preceded by a critical)
 **Alert:** `KillSwitchActivated` (monitoring/alerts.rules.yml)
 
-## State precedence (audit B10, 2026-05-10)
+## State precedence (audit B10, 2026-05-10 · clave corregida 2026-09-29)
 
 The kill-switch state is read in this priority order:
 
-1. **Redis key `arbx:killswitch:enabled`** (canonical, runtime-mutable). Set via
-   `POST /admin/killswitch` or `redis-cli SET arbx:killswitch:enabled 1`.
+1. **Redis key `arbx:killswitch`** (canonical, runtime-mutable). It holds the
+   `KillSwitchState` JSON (`backend/shared-rs/src/killswitch.rs:15,27-32`):
+   `{"enabled":true,"reason":"…","triggered_by":"operator:<id>","updated_at":"…Z"}`.
+   Set via `POST /admin/killswitch` or, when the API is down:
+
+   ```bash
+   # SOLO el JSON completo: los lectores deserializan KillSwitchState, un "1" crudo
+   # no parsea y el fail-closed lo trata como ARMED (ver killswitch.rs:85-95).
+   docker exec arbitragex-v2-redis-1 redis-cli SET arbx:killswitch \
+     '{"enabled":true,"reason":"emergency arm via redis","triggered_by":"operator:<id>","updated_at":"<ISO8601>"}'
+   docker exec arbitragex-v2-redis-1 redis-cli PUBLISH arbx:killswitch:changes \
+     '{"enabled":true,"reason":"emergency arm via redis"}'
+   ```
+
+   ⚠️ La clave `arbx:killswitch:enabled` que citaban las versiones anteriores de
+   este runbook **no la lee ningún camino de ejecución**: armarla ahí no detiene
+   nada (defecto medido el 2026-09-29, KS-KEY-01).
 2. **File `killswitch.json` at repo root** (legacy boot-time fallback). Read once
-   at service boot if Redis is unreachable. NOT polled at runtime â€” Redis is the
+   at service boot if Redis is unreachable. NOT polled at runtime — Redis is the
    live source of truth.
 3. **Default when both are absent**: `cfg.system.kill_switch_enabled_default` from
    `configs/app.toml` (defaults to `false` in dev, `true` in prod profile).

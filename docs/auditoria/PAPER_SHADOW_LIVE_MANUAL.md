@@ -212,7 +212,7 @@ El killswitch es un mecanismo de **fail-closed** que bloquea TODAS las ejecucion
 
 | Prioridad | Fuente | Mutable en runtime | Persistencia |
 |-----------|--------|-------------------|--------------|
-| 1 | Redis key `arbx:killswitch:enabled` | **Si** (canonical) | TTL en Redis |
+| 1 | Redis key `arbx:killswitch` | **Si** (canonical) | TTL en Redis |
 | 2 | Archivo `killswitch.json` (repo root) | No (legacy fallback) | Solo en boot si Redis unreachable |
 | 3 | `configs/app.toml` `kill_switch_enabled_default` | No (config) | Valor por defecto |
 

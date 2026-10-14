@@ -24,6 +24,16 @@ export interface OpportunitySocketOptions {
   onStatus: (status: WsStatus) => void;
   onOpportunity: (opp: Opportunity) => void;
   /**
+   * STREAM-SEQ-01 (§11.4): the ORDERED leg of the same feed. The producer
+   * publishes every row twice on the `opportunities` room — the raw
+   * `new_opportunity` (unchanged contract) and an
+   * `opportunity_stream_event` envelope carrying `seq` / `strategy_key` /
+   * `plan_key` / `progress`. Optional so every existing consumer of this factory
+   * keeps compiling and behaving identically; a caller that omits it simply
+   * keeps the arrival-order path (and the frontend's own clock fallback).
+   */
+  onStreamEvent?: (event: unknown) => void;
+  /**
    * FRONT-04 fix (2026-09-24): the original C4 comment claimed the backend
    * `setupWebSocketGateway` "rejects every handshake without an admin token"
    * — that was FALSE. The gateway is PUBLIC by design (websocket.ts:391-393
@@ -62,6 +72,7 @@ export function createOpportunitySocket(
   opts: OpportunitySocketOptions,
 ): OpportunitySocketHandle {
   const { url, ioFactory, onStatus, onOpportunity, authToken, onPriceTick, onPricesSnapshot } = opts;
+  const { url, ioFactory, onStatus, onOpportunity, onStreamEvent, authToken } = opts;
 
   // C4: assemble the auth payload the backend `extractHandshakeToken` expects.
   // Use ALL three transport channels for compatibility (auth + query + header).
@@ -91,6 +102,10 @@ export function createOpportunitySocket(
   const onNewOpportunity = (opp: unknown) => onOpportunity(opp as Opportunity);
   const onPrice = (tick: unknown) => onPriceTick?.(tick);
   const onSnapshot = (payload: unknown) => onPricesSnapshot?.(payload);
+  // STREAM-SEQ-01: the ordered leg. Registered ONLY when the caller asked for
+  // it, so a consumer on the raw path observes exactly the same socket it
+  // always did (no new listener, no new teardown obligation).
+  const onStream = (event: unknown) => onStreamEvent?.(event);
 
   socket.on("connect", onConnect);
   socket.on("disconnect", onDisconnect);
@@ -98,6 +113,7 @@ export function createOpportunitySocket(
   socket.on("new_opportunity", onNewOpportunity);
   if (onPriceTick) socket.on("prices:tick", onPrice);
   if (onPricesSnapshot) socket.on("prices:snapshot", onSnapshot);
+  if (onStreamEvent) socket.on("opportunity_stream_event", onStream);
 
   return {
     dispose: () => {
@@ -109,6 +125,7 @@ export function createOpportunitySocket(
       socket.off("new_opportunity", onNewOpportunity);
       if (onPriceTick) socket.off("prices:tick", onPrice);
       if (onPricesSnapshot) socket.off("prices:snapshot", onSnapshot);
+      if (onStreamEvent) socket.off("opportunity_stream_event", onStream);
       socket.disconnect();
     },
   };

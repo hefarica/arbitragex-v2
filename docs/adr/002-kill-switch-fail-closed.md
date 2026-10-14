@@ -33,7 +33,7 @@ We will implement a **global kill-switch** with a three-layer resolution hierarc
 
 ```mermaid
 flowchart TD
-    A["Execution Request"] --> B{"Layer 1:<br/>Redis<br/>arbx:killswitch:enabled"}
+    A["Execution Request"] --> B{"Layer 1:<br/>Redis<br/>arbx:killswitch"}
     B -->|"key = true"| C["REFUSE<br/>Execution"]
     B -->|"key = false"| D["ALLOW<br/>Execution"]
     B -->|"Redis<br/>unreachable"| E{"Layer 2:<br/>killswitch.json<br/>(boot-time fallback)"}
@@ -48,7 +48,7 @@ flowchart TD
 
 | Layer | Source | Scope | Mutable at Runtime |
 |-------|--------|-------|-------------------|
-| 1 | Redis key `arbx:killswitch:enabled` | Canonical, cluster-wide | Yes — via `POST /admin/killswitch` |
+| 1 | Redis key `arbx:killswitch` | Canonical, cluster-wide | Yes — via `POST /admin/killswitch` |
 | 2 | `killswitch.json` at repo root | Boot-time fallback, per-host | No — read once at startup |
 | 3 | `cfg.system.kill_switch_enabled_default` | Config default | No — requires config reload |
 
@@ -96,7 +96,7 @@ sequenceDiagram
         API-->>Edge: 401 Unauthorized<br/>{ error: "unauthorized" }
         Edge-->>Op: 401
     else Valid token
-        API->>Redis: SET arbx:killswitch:enabled<br/>+ PUBLISH to change channel
+        API->>Redis: SET arbx:killswitch<br/>+ PUBLISH to change channel
         API->>DB: INSERT INTO audit_log
         API-->>Edge: 200 OK<br/>{ enabled, reason, triggered_by, updated_at }
         Edge-->>Op: 200 OK

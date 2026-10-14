@@ -7,9 +7,12 @@
 // Pins the streaming contract the store's in-place upsert depends on:
 //   - DUPLICATE: re-broadcasts of the same id collapse to ONE row per flush
 //     window (Map key semantics).
-//   - OUT-OF-ORDER: last ARRIVAL wins the CONTENT while the row keeps its
-//     FIRST-arrival position (JS Map.set does not move an existing key) —
-//     the same doctrine the store applies to card positions.
+//   - OUT-OF-ORDER: a NEWER computation on the SAME detection replaces the
+//     content while the row keeps its FIRST-arrival position (JS Map.set does
+//     not move an existing key) — the same doctrine the store applies to card
+//     positions. An OLDER observation is REJECTED (STREAM-SEQ-01, §11.4) — see
+//     the dedicated block at the bottom, which corrects the previous
+//     "last ARRIVAL wins the CONTENT" rule.
 //   - FLUSH: one batch per cadence, then empty; empty window → [] (never
 //     null — R8: absence is an honest empty array).
 import { describe, it, expect } from "vitest";
@@ -108,5 +111,82 @@ describe("ws-ingest-buffer — clear (unmount / dispose path)", () => {
     buffer.upsert(makeOpp("opp-2"));
     buffer.clear();
     expect(buffer.flush()).toEqual([]);
+  });
+});
+
+// ─── STREAM-SEQ-01 (§11.4) — an OLD event never overwrites a NEW one ─────────
+// This is the correction of the rule the previous header documented ("last
+// ARRIVAL wins the CONTENT"). Arrival order is not authority on a push channel:
+// a NOTIFY replay, a reconnected socket and an overlapping REST snapshot all
+// deliver indistinguishable messages.
+describe("ws-ingest-buffer — §11.4 an older observation is REJECTED, not applied", () => {
+  const at = (iso: string, over: Partial<OmniOpportunity> = {}) =>
+    makeOpp("opp-1", { detected_at: iso, ...over });
+
+  it("same id, OLDER clock: the newer content survives and the rejection is counted", () => {
+    const buffer = createWsIngestBuffer();
+    buffer.upsert(at("2026-08-24T00:05:00Z", { status: "scored", expected_profit_usd: 12.5 }));
+    const outcome = buffer.upsert(
+      at("2026-08-24T00:00:00Z", { status: "detected", expected_profit_usd: null }),
+    );
+    expect(outcome).toBe("stale_rejected");
+    // Counters are per-WINDOW: read them before the flush resets the window.
+    expect(buffer.counters().stale_rejected).toBe(1);
+    const [row] = buffer.flush();
+    expect(row!.status).toBe("scored");
+    expect(row!.expected_profit_usd).toBe(12.5);
+  });
+
+  it("NEW id, same plan, older clock: a delayed re-detection is rejected too", () => {
+    const buffer = createWsIngestBuffer();
+    const route = {
+      token_in: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      token_out: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      dex_a: "uniswap_v2",
+      dex_b: "sushiswap",
+    };
+    buffer.upsert(makeOpp("det-2", { ...route, detected_at: "2026-08-24T00:05:00Z" }));
+    const outcome = buffer.upsert(
+      makeOpp("det-1", { ...route, detected_at: "2026-08-24T00:00:00Z" }),
+    );
+    expect(outcome).toBe("stale_rejected");
+    expect(buffer.counters().stale_rejected).toBe(1);
+    expect(buffer.flush().map((o) => o.id)).toEqual(["det-2"]);
+  });
+
+  it("a NEWER computation on the SAME detection is still an accepted UPDATE (migration-107)", () => {
+    const buffer = createWsIngestBuffer();
+    buffer.upsert(at("2026-08-24T00:00:00Z"));
+    expect(buffer.upsert(at("2026-08-24T00:00:00Z", { status: "validated" }))).toBe(
+      "accepted_update",
+    );
+    expect(buffer.counters().accepted).toBe(2);
+  });
+
+  it("a row we cannot date is ACCEPTED and counted as incomparable (R8: never dropped)", () => {
+    const buffer = createWsIngestBuffer();
+    buffer.upsert(at("2026-08-24T00:05:00Z"));
+    expect(buffer.upsert(at(null as unknown as string))).toBe("accepted_incomparable");
+    expect(buffer.counters().incomparable).toBe(1);
+  });
+
+  it("an identical replay is a NO-OP (duplicate), so reconnect replays cannot churn the grid", () => {
+    const buffer = createWsIngestBuffer();
+    buffer.upsert(at("2026-08-24T00:00:00Z", { expected_profit_usd: 3 }));
+    expect(buffer.upsert(at("2026-08-24T00:00:00Z", { expected_profit_usd: 3 }))).toBe("duplicate");
+    expect(buffer.counters().duplicates).toBe(1);
+    expect(buffer.flush()).toHaveLength(1);
+  });
+
+  it("flush resets the window counters (each window reports its own truth)", () => {
+    const buffer = createWsIngestBuffer();
+    buffer.upsert(at("2026-08-24T00:00:00Z"));
+    buffer.flush();
+    expect(buffer.counters()).toEqual({
+      accepted: 0,
+      duplicates: 0,
+      stale_rejected: 0,
+      incomparable: 0,
+    });
   });
 });

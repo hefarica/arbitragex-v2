@@ -100,28 +100,26 @@ export interface SimulatedTarget {
    * (`GET /api/opportunities/live`: `required_amount_in_usd: null` on 41/41
    * items, every one with `binding_floor: "net-per-usd-nonpositive"`).
    *
-   * Mechanism, line-exact: `solveDualFloors` returns
-   * `{ required: Infinity, binding: "net-per-usd-nonpositive" }`
-   * (`backend/api-server/src/simulation/computeSimulatedNet.ts:415`; same at
-   * `:439` for `roi-unreachable`), that `Infinity` is emitted verbatim at
-   * `:545`/`:589`, and `JSON.stringify(Infinity)` is `null`. The kernel's own
-   * doc says so at `:111-112` ("Infinity when binding_floor is …").
+   * ALWAYS-COMPUTE (2026-09-27) — the wire now carries the STRING "Infinity"
+   * on exactly that branch (JSON cannot hold Infinity; `JSON.stringify`
+   * turned it into the ambiguous null above). The mapper normalizes the
+   * sentinel to `Number.POSITIVE_INFINITY` HERE, so this ViewModel field
+   * stays `number | null` and every existing consumer keeps compiling:
+   *   · `Number.isFinite(v)` guards see false (unreachable),
+   *   · renderers that print it should show "∞" when `!Number.isFinite(v)`
+   *     (the detail tabs do),
+   *   · `required_is_infinite` is the boolean companion for logic/filters.
    *
-   * R8: a null required floor is "no finite floor computed", NOT 0, and it is
-   * NOT the same state as a floor of 0. It was mistyped as a non-nullable
-   * `number` while the mapper casts `raw.simulated_target as SimulatedTarget`
-   * unchecked (below), so `usd4(target.required_amount_in_usd)` in
-   * `components/opportunities/OpportunityDetailTabs.tsx` threw
-   * `TypeError: Cannot read properties of null (reading 'toFixed')` on 100% of
-   * live rows — the operator's "the pipeline breaks and the calculations do not
-   * arrive".
-   *
-   * The OTHER five numeric fields below stay non-nullable on purpose: their
-   * kernel paths are provably finite (the non-finite branch returns early at
-   * `computeSimulatedNet.ts:538-554`, before those values are computed at
-   * `:584-597`). Widening them would be type churn without evidence.
+   * R8 unchanged: null means "no target block", never 0; Infinity means
+   * COMPUTED and "no finite size reaches the target".
    */
   required_amount_in_usd: number | null;
+  /**
+   * ALWAYS-COMPUTE companion: true when the kernel's verdict was
+   * "roi-unreachable" / "net-per-usd-nonpositive" (the required amount is the
+   * "Infinity" sentinel on the wire; the mapper mirrors it here as a boolean).
+   */
+  required_is_infinite?: boolean;
   cap_amount_in_usd: number;
   suggested_amount_in_usd: number;
   suggested_net_usd: number;
@@ -154,6 +152,13 @@ export interface SimulatedTarget {
  *   - `leg_amounts_in`    length = hops     (exact wei entering leg i)
  *   - `leg_amounts_out`   length = hops     (exact wei leaving leg i)
  *   - `leg_zero_for_one`  length = hops     (Uniswap token0→token1 convention)
+ *
+ * STEP 4 (fee V3) — the per-hop fee tier is OPTIONAL and ALL-OR-NOTHING:
+ *   - `fee_tier_bps`      length = hops     (V2 bps / V3 raw pips, mirrors
+ *                                           `PoolRef::fee_bps`); present only
+ *                                           when EVERY hop declared its fee.
+ *                                           Absent = some hop unknown or a
+ *                                           legacy row (R8: never zero).
  */
 export interface RouteMetadataWire {
   token_addresses: string[];
@@ -163,6 +168,145 @@ export interface RouteMetadataWire {
   leg_amounts_in?: string[];
   leg_amounts_out?: string[];
   leg_zero_for_one?: boolean[];
+  /**
+   * STEP 4 (fee V3) — per-hop pool fee tier, parallel to `pool_addresses`.
+   * Mirrors `shared_rs::candidates::RouteMetadata::fee_tier_bps` (units: V2
+   * bps, V3 raw `fee()` pips). `undefined` = at least one hop unknown or a
+   * row persisted before the field existed — absence is a STATE (R8), the
+   * renderer must never read it as a free hop.
+   */
+  fee_tier_bps?: number[];
+  /**
+   * ECON-DECLARE-01 — the notional in EXACT WEI at which this row's economic
+   * figures were computed, as DECLARED by the producer (searcher-rs).
+   *
+   * This is the declaration the operator's complaint named ("no están
+   * declarados"): three producers write economic figures onto one row, each at
+   * its own size, and without this key a renderer cannot know whether the gross
+   * and the amount it sits beside are ONE arithmetic or two different sizes — so
+   * it can only hide them behind `—`. Mirrors
+   * `shared_rs::candidates::RouteMetadata::economics_amount_in_wei`.
+   *
+   * `undefined` = no producer declared one (legacy rows, or a row with no
+   * economics to attribute). Absence is a STATE: the renderer prints
+   * `@undeclared` and never guesses (R8 / RULE 00).
+   */
+  economics_amount_in_wei?: string;
+  /**
+   * ECON-DECLARE-01 — which producer computed each figure. Mirrors
+   * `shared_rs::candidates::EconomicsBasis`. Every member is optional: a figure
+   * whose producer did not declare a basis stays absent and renders
+   * `@undeclared`.
+   */
+  economics_basis?: {
+    gross?: string;
+    net?: string;
+    amount?: string;
+  };
+}
+
+/**
+ * ALWAYS-COMPUTE (operator mandate 2026-09-27): the searcher's ONE complete
+ * economics computation object, persisted on BOTH branches (accepted and
+ * rejected). Display-only mirror of `shared-rs/src/contracts.rs::
+ * EconomicsComputation` — the frontend NEVER recomputes economics; it renders
+ * exactly what the producer sent (R8: every field nullable-with-reason; the
+ * reasons ride `not_computed_reasons`).
+ */
+export interface EconomicsComputationWire {
+  computation_status: "computed" | "partial" | "error";
+  error_reason: string | null;
+  amount_in_wei: string | null;
+  amount_out_wei: string | null;
+  amount_in_usd: number | null;
+  amount_out_usd: number | null;
+  gross_profit_usd: number | null;
+  gas_usd: number | null;
+  dex_fees_usd: number | null;
+  flash_fee_usd: number | null;
+  bribe_usd: number | null;
+  slippage_usd: number | null;
+  other_costs_usd: number | null;
+  total_cost_usd: number | null;
+  net_profit_usd: number | null;
+  roi_pct: number | null;
+  target_net_usd: number | null;
+  target_delta_usd: number | null;
+  meets_target: boolean | null;
+  quote_block: number | null;
+  simulation_block: number | null;
+  legs: Array<{
+    token_in: string;
+    token_out: string;
+    amount_in_wei: string;
+    amount_out_wei: string;
+  }>;
+  not_computed_reasons: Record<string, string>;
+}
+
+/**
+ * Parse the `economics` wire object (JSONB hardened by the api-server) into
+ * the ViewModel shape. Null when absent/non-object (pre-migration rows, knob
+ * off) — R8. Numeric-string tolerance at this boundary: non-empty strings
+ * that parse finite become numbers; anything else degrades to null (never a
+ * coerced 0).
+ */
+export function parseEconomics(raw: unknown): EconomicsComputationWire | null {
+  if (raw == null || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const r = raw as Record<string, unknown>;
+  const num = (v: unknown): number | null => {
+    if (typeof v === "number" && Number.isFinite(v)) return v;
+    if (typeof v === "string" && v.trim() !== "" && Number.isFinite(Number(v))) return Number(v);
+    return null;
+  };
+  const str = (v: unknown): string | null =>
+    typeof v === "string" && v !== "" ? v : null;
+  const status = str(r.computation_status);
+  if (status !== "computed" && status !== "partial" && status !== "error") return null;
+  const wei = (v: unknown): string | null =>
+    typeof v === "string" && /^-?\d+$/.test(v) ? v : null;
+  return {
+    computation_status: status,
+    error_reason: str(r.error_reason),
+    amount_in_wei: wei(r.amount_in_wei),
+    amount_out_wei: wei(r.amount_out_wei),
+    amount_in_usd: num(r.amount_in_usd),
+    amount_out_usd: num(r.amount_out_usd),
+    gross_profit_usd: num(r.gross_profit_usd),
+    gas_usd: num(r.gas_usd),
+    dex_fees_usd: num(r.dex_fees_usd),
+    flash_fee_usd: num(r.flash_fee_usd),
+    bribe_usd: num(r.bribe_usd),
+    slippage_usd: num(r.slippage_usd),
+    other_costs_usd: num(r.other_costs_usd),
+    total_cost_usd: num(r.total_cost_usd),
+    net_profit_usd: num(r.net_profit_usd),
+    roi_pct: num(r.roi_pct),
+    target_net_usd: num(r.target_net_usd),
+    target_delta_usd: num(r.target_delta_usd),
+    meets_target: typeof r.meets_target === "boolean" ? r.meets_target : null,
+    quote_block: num(r.quote_block),
+    simulation_block: num(r.simulation_block),
+    legs: Array.isArray(r.legs)
+      ? r.legs
+          .filter(
+            (l): l is Record<string, unknown> =>
+              l != null && typeof l === "object" && !Array.isArray(l),
+          )
+          .map((l) => ({
+            token_in: String(l.token_in ?? ""),
+            token_out: String(l.token_out ?? ""),
+            amount_in_wei: wei(l.amount_in_wei) ?? "",
+            amount_out_wei: wei(l.amount_out_wei) ?? "",
+          }))
+      : [],
+    not_computed_reasons:
+      r.not_computed_reasons != null &&
+      typeof r.not_computed_reasons === "object" &&
+      !Array.isArray(r.not_computed_reasons)
+        ? (r.not_computed_reasons as Record<string, string>)
+        : {},
+  };
 }
 
 /**
@@ -369,9 +513,36 @@ export interface OmniOpportunity {
   simulated_amount_in_usd: number | null;
   simulated_roi_pct: number | null;
   simulated_cost_breakdown: SimulatedCostBreakdown | null;
+  /**
+   * CARDS-NOTIONAL-01 (2026-09-26): the gross the SIM ladder itself consumed,
+   * and the Σ of the ladder's own cost components.
+   *
+   * All three (`simulated_gross_usd`, `simulated_costs_total_usd`,
+   * `simulated_net_profit_usd`) come from ONE `forwardSimulate` call at ONE
+   * notional, so they satisfy `net == gross − total_cost` by construction.
+   * They exist precisely so no consumer has to pair the SIM's cost ladder with
+   * `expected_profit_usd` / `net_expected_profit_usd` — canonical figures the
+   * SEARCHER produced at the searcher's own size, which is how the card came to
+   * print `IN $0.00` beside `GROSS $1.47M` and `Total cost $73.4k` beside
+   * `Net yield -$0.0000`. See `frontend/lib/opportunity-ledger.ts`.
+   *
+   * Null (never 0) when no forward ran, or on any payload predating the field.
+   */
+  simulated_gross_usd: number | null;
+  simulated_costs_total_usd: number | null;
   simulated_target: SimulatedTarget | null;
   simulated_at: string | null;
   simulated_notes: string[] | null;
+
+  // === ALWAYS-COMPUTE economics (operator mandate 2026-09-27) ===
+  // The searcher's ONE complete computation object, on BOTH branches. Pure
+  // display surface: the card renders these figures verbatim and NEVER
+  // recomputes economics in React — the ladder SSOT
+  // (`opportunity-ledger.ts`) keeps deciding which closed arithmetic may
+  // paint; this object additionally shows the FAIL arithmetic (target,
+  // achieved, delta, per-component costs) and the honest status chip
+  // (computed | partial | error + reason). Null on pre-migration rows.
+  economics: EconomicsComputationWire | null;
 
   // === Confidence & Gas (UI display) ===
   // FRONT-06 (2026-09-24): confidence_score_bps and gas_used REMOVED from
@@ -399,6 +570,55 @@ export interface OmniOpportunity {
  * @param raw - The raw opportunity from API/WebSocket
  * @returns A sanitized OmniOpportunity ready for the store
  */
+/**
+ * ALWAYS-COMPUTE (2026-09-27): normalize the inverse-sizing target at the
+ * ingest boundary.
+ *   · `required_amount_in_usd` accepts `number` OR the "Infinity" sentinel
+ *     string (the api-server emits the string because
+ *     `JSON.stringify(Infinity)` is null — the silent disappearance this
+ *     fixes). The sentinel maps to `Number.POSITIVE_INFINITY` here so the
+ *     ViewModel type stays `number | null` and every existing consumer keeps
+ *     compiling; `required_is_infinite` mirrors it as a boolean.
+ *   · Every other numeric field tolerates non-empty numeric strings
+ *     (deliverable #4 hardening); anything unparseable degrades to null /
+ *     the pre-existing defaults — never a coerced 0 (R8).
+ */
+function normalizeSimulatedTarget(raw: unknown): SimulatedTarget | null {
+  if (raw == null || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const r = raw as Record<string, unknown>;
+  const num = (v: unknown, fallback: number | null = null): number | null => {
+    if (typeof v === "number" && Number.isFinite(v)) return v;
+    if (typeof v === "string" && v.trim() !== "" && Number.isFinite(Number(v))) return Number(v);
+    return fallback;
+  };
+  const isSentinel =
+    r.required_amount_in_usd === "Infinity" || r.required_amount_in_usd === "-Infinity";
+  const required =
+    isSentinel
+      ? r.required_amount_in_usd === "-Infinity"
+        ? Number.NEGATIVE_INFINITY
+        : Number.POSITIVE_INFINITY
+      : num(r.required_amount_in_usd);
+  return {
+    target_net_usd: num(r.target_net_usd),
+    target_roi_pct: num(r.target_roi_pct),
+    target_source: r.target_source === "strategy_config" ? "strategy_config" : "simulation_tab",
+    binding_floor: (typeof r.binding_floor === "string"
+      ? r.binding_floor
+      : "usd-floor") as SimulatedTarget["binding_floor"],
+    estimation_basis: r.estimation_basis === "roi-assumed" ? "roi-assumed" : "observed-gross",
+    required_amount_in_usd: required,
+    required_is_infinite:
+      isSentinel || r.required_is_infinite === true || (required != null && !Number.isFinite(required)),
+    cap_amount_in_usd: num(r.cap_amount_in_usd, 0) ?? 0,
+    suggested_amount_in_usd: num(r.suggested_amount_in_usd, 0) ?? 0,
+    suggested_net_usd: num(r.suggested_net_usd, 0) ?? 0,
+    suggested_roi_pct: num(r.suggested_roi_pct, 0) ?? 0,
+    meets_target_at_cap: r.meets_target_at_cap === true,
+    notes: Array.isArray(r.notes) ? (r.notes as string[]) : [],
+  };
+}
+
 export function mapToOmniOpportunity(raw: Record<string, unknown>): OmniOpportunity {
   // Parsed once here so hop_count can derive from the SAME topology object the
   // ViewModel carries (FE-0028 §19).
@@ -535,11 +755,25 @@ export function mapToOmniOpportunity(raw: Record<string, unknown>): OmniOpportun
       raw.simulated_roi_pct != null ? Number(raw.simulated_roi_pct) : null,
     simulated_cost_breakdown:
       (raw.simulated_cost_breakdown as SimulatedCostBreakdown) ?? null,
-    simulated_target: (raw.simulated_target as SimulatedTarget) ?? null,
+    // CARDS-NOTIONAL-01: the SIM's OWN gross and the Σ of its OWN cost
+    // components — same `forwardSimulate` call, same notional as
+    // `simulated_net_profit_usd`. Absent on legacy payloads → null (R8: the
+    // ladder then renders on the canonical pair, never on a borrowed gross).
+    simulated_gross_usd:
+      raw.simulated_gross_usd != null ? Number(raw.simulated_gross_usd) : null,
+    simulated_costs_total_usd:
+      raw.simulated_costs_total_usd != null
+        ? Number(raw.simulated_costs_total_usd)
+        : null,
+    simulated_target: normalizeSimulatedTarget(raw.simulated_target),
     simulated_at: raw.simulated_at != null ? String(raw.simulated_at) : null,
     simulated_notes: Array.isArray(raw.simulated_notes)
       ? (raw.simulated_notes as string[])
       : null,
+
+    // ALWAYS-COMPUTE (2026-09-27): the complete economics object, parsed with
+    // numeric-string tolerance at this boundary (display-only downstream).
+    economics: parseEconomics(raw.economics),
 
     // Confidence & Gas
     // FRONT-06 fix (2026-09-24): these two fields have NO producer on the
@@ -636,6 +870,18 @@ export function parseRouteMetadata(
     ? [...obj.leg_amounts_out] as string[] : undefined;
   const legZeroForOne = ledgerValid && Array.isArray(obj.leg_zero_for_one)
     ? [...obj.leg_zero_for_one] as boolean[] : undefined;
+  // STEP 4 (fee V3): project the per-hop fee tier ONLY when it is a
+  // full-length vector of unsigned integers — all-or-nothing, same contract
+  // as the producer. A partial/malformed vector stays undefined ("not
+  // computed"), never repaired (R8: absence is a state, RULE 00: no coercion).
+  const feeTierBps: number[] | undefined =
+    Array.isArray(obj.fee_tier_bps) &&
+    obj.fee_tier_bps.length === dexAdapters.length &&
+    obj.fee_tier_bps.every(
+      (v) => typeof v === "number" && Number.isSafeInteger(v) && v >= 0,
+    )
+      ? [...obj.fee_tier_bps] as number[]
+      : undefined;
   return {
     token_addresses: tokenAddresses,
     dex_adapters: dexAdapters,
@@ -644,6 +890,28 @@ export function parseRouteMetadata(
     leg_amounts_in: legAmountsIn,
     leg_amounts_out: legAmountsOut,
     leg_zero_for_one: legZeroForOne,
+    fee_tier_bps: feeTierBps,
+    // ECON-DECLARE-01: the notional declaration is OPTIONAL and never coerced.
+    // A malformed/absent value stays undefined (= undeclared) rather than being
+    // repaired into a plausible-looking basis (R8: absence is a state).
+    economics_amount_in_wei:
+      typeof obj.economics_amount_in_wei === "string" &&
+      /^[0-9]{1,78}$/.test(obj.economics_amount_in_wei)
+        ? obj.economics_amount_in_wei
+        : undefined,
+    economics_basis: (() => {
+      const raw = obj.economics_basis;
+      if (raw == null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+      const src = raw as Record<string, unknown>;
+      const pick = (k: string): string | undefined =>
+        typeof src[k] === "string" && (src[k] as string).trim() !== ""
+          ? (src[k] as string)
+          : undefined;
+      const out = { gross: pick("gross"), net: pick("net"), amount: pick("amount") };
+      return out.gross === undefined && out.net === undefined && out.amount === undefined
+        ? undefined
+        : out;
+    })(),
   };
 }
 

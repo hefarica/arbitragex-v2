@@ -195,6 +195,12 @@ pub struct HttpEntry {
     /// `with_retry` — `pick()` only consults (never consumes) so external
     /// pick() callers are unaffected.
     pub budget: Option<Arc<crate::rate_budget::TokenBucket>>,
+    /// RPC-RECOVERY-01: per-provider in-flight request cap. `None` =
+    /// unlimited (compat). Permits are taken per ATTEMPT (non-blocking:
+    /// a saturated provider is skipped like a budget-exhausted one, never
+    /// reported as a failure) and released on success, error, timeout or
+    /// cancellation (RAII drop of the owned permit).
+    pub concurrency: Option<Arc<tokio::sync::Semaphore>>,
 }
 
 impl HttpEntry {
@@ -253,6 +259,20 @@ impl HttpRpcPool {
         // WO-13: per-provider client-side rate budgets. Env absent/empty =
         // no budgets (backward compatible). Parsed once, matched by entry name.
         let budgets = parse_budgets(&std::env::var("RPC_HTTP_RATE_BUDGETS").unwrap_or_default());
+        // RPC-RECOVERY-01: burst (bucket capacity) and concurrency (in-flight
+        // cap) are INDEPENDENT knobs — same CSV grammar, matched by entry
+        // name. Absent = defaults (burst=one minute of quota for compat,
+        // concurrency=unlimited).
+        let bursts = parse_named_u32_csv(
+            &std::env::var("RPC_HTTP_RATE_BURSTS").unwrap_or_default(),
+            "rpc_pool.burst_malformed",
+            "burst tokens",
+        );
+        let concurrency_limits = parse_named_u32_csv(
+            &std::env::var("RPC_HTTP_CONCURRENCY").unwrap_or_default(),
+            "rpc_pool.concurrency_malformed",
+            "max in-flight requests",
+        );
         for (name, url) in raw_entries {
             let parsed_url = match url.parse::<reqwest::Url>() {
                 Ok(u) => u,
@@ -277,11 +297,14 @@ impl HttpRpcPool {
                 .unwrap_or(10_000);
             // `with_reqwest` hands the closure alloy's OWN reqwest::ClientBuilder, so we set the
             // timeout without any reqwest-version-mismatch on the Client type.
+            // RPC-USER-AGENT-01: the UA is NOT cosmetic — without it 6 of the 8
+            // configured providers answer 403 (measured, see `rpc_user_agent`).
             let provider = Arc::new(
                 ProviderBuilder::new()
                     .disable_recommended_fillers()
                     .with_reqwest(parsed_url, |b| {
-                        b.timeout(std::time::Duration::from_millis(http_timeout_ms))
+                        b.user_agent(rpc_user_agent())
+                            .timeout(std::time::Duration::from_millis(http_timeout_ms))
                             .build()
                             .expect("build reqwest client with request timeout")
                     }),
@@ -335,16 +358,29 @@ impl HttpRpcPool {
             if !admitted {
                 continue;
             }
-            // WO-13: compute the budget BEFORE the struct moves `name`.
+            // WO-13 + RPC-RECOVERY-01: compute the budget (with the explicit
+            // burst override when configured) BEFORE the struct moves `name`.
             let budget = budgets.get(name.as_str()).map(|rpm| {
+                let burst = bursts.get(name.as_str()).copied().unwrap_or(*rpm); // compat: burst = one minute of quota
                 info!(
                     event = "rpc_pool.rate_budget_set",
                     chain_id,
                     name = name.as_str(),
                     calls_per_min = rpm,
+                    burst_tokens = burst,
                     "client-side rate budget active for provider"
                 );
-                Arc::new(crate::rate_budget::TokenBucket::new(*rpm))
+                Arc::new(crate::rate_budget::TokenBucket::with_burst(*rpm, burst))
+            });
+            let concurrency = concurrency_limits.get(name.as_str()).map(|n| {
+                info!(
+                    event = "rpc_pool.concurrency_set",
+                    chain_id,
+                    name = name.as_str(),
+                    max_in_flight = n,
+                    "client-side concurrency cap active for provider"
+                );
+                Arc::new(tokio::sync::Semaphore::new(*n as usize))
             });
             alive.push(Arc::new(HttpEntry {
                 name,
@@ -355,7 +391,42 @@ impl HttpRpcPool {
                 latency_ms_ewma: AtomicU64::new(0),
                 circuit: RwLock::new(CircuitState::default()),
                 budget,
+                concurrency,
             }));
+        }
+
+        // RPC-RECOVERY-01 (fail-honest config diagnostics): a profile alias
+        // that matches NO admitted entry is an operator error — warn loudly
+        // instead of silently running unlimited. A burst without a budget is
+        // equally meaningless (no refill rate to cap).
+        let admitted: std::collections::HashSet<&str> =
+            alive.iter().map(|e| e.name.as_str()).collect();
+        for (kind, map) in [
+            ("budget", &budgets),
+            ("burst", &bursts),
+            ("concurrency", &concurrency_limits),
+        ] {
+            for alias in map.keys() {
+                if !admitted.contains(alias.as_str()) {
+                    warn!(
+                        event = "rpc_pool.profile_alias_unknown",
+                        chain_id,
+                        kind,
+                        alias = %alias,
+                        "profile entry matches no admitted provider — it is NOT applied"
+                    );
+                }
+            }
+        }
+        for alias in bursts.keys() {
+            if !budgets.contains_key(alias) {
+                warn!(
+                    event = "rpc_pool.burst_without_budget",
+                    chain_id,
+                    alias = %alias,
+                    "burst configured without a rate budget — it is NOT applied"
+                );
+            }
         }
 
         if alive.is_empty() {
@@ -406,12 +477,31 @@ impl HttpRpcPool {
     /// sorts behind every clean Healthy entry (the selection weight: a
     /// recently-429ing provider is only chosen when it is the only Healthy
     /// option); if none Healthy, lowest EWMA latency among Degraded; never
-    /// Open.
+    /// Open — SALVO el caso de abajo.
+    ///
+    /// QUOTE-LOCKOUT-01 (2026-09-29, incidente medido en producción): cuando
+    /// TODOS los proveedores están `Open`, esta función devolvía `AllUnhealthy`
+    /// y **ninguna petición se intentaba nunca** ⇒ ningún éxito podía observarse
+    /// ⇒ el breaker no cerraba JAMÁS. El pool quedaba en un bloqueo permanente
+    /// que sólo un reinicio rompía. Medido: 10 horas seguidas con 0,0 % de
+    /// cotizaciones no cacheadas (`arbx_v3_quote_total`, ventanas de 10 min) con
+    /// apenas 128 errores de transporte en 6 h — el searcher no estaba fallando,
+    /// había dejado de intentar — y recuperación instantánea a 80-85 % al
+    /// reiniciar (deploy).
+    ///
+    /// Ahora, si no hay ningún candidato sano, se fuerza UNA sonda *half-open*
+    /// sobre el proveedor abierto de menor latencia: al menos se intenta, y el
+    /// éxito cierra el circuito (el camino `report_success_after_half_open_...`
+    /// ya existía, pero era inalcanzable sin un intento). `AllUnhealthy` se
+    /// reserva para el pool sin proveedores; `BudgetExhausted` (throttle local
+    /// deliberado del operador) mantiene su precedencia.
     pub fn pick(&self) -> Result<Arc<HttpEntry>, PoolError> {
         let now = Instant::now();
         let mut best_clean: Option<&Arc<HttpEntry>> = None;
         let mut best_sticky: Option<&Arc<HttpEntry>> = None;
         let mut best_degraded: Option<&Arc<HttpEntry>> = None;
+        // QUOTE-LOCKOUT-01: candidato para la sonda forzada si todo está Open.
+        let mut best_open: Option<&Arc<HttpEntry>> = None;
         // WO-13: a pick failure where at least one entry was blocked by its
         // client-side budget reports BudgetExhausted (not AllUnhealthy) so
         // callers can distinguish a local throttle from provider failures.
@@ -428,7 +518,16 @@ impl HttpRpcPool {
                 continue;
             }
             match e.snapshot_state() {
-                ProviderState::Open => continue,
+                ProviderState::Open => {
+                    let lat = e.snapshot_latency_ms();
+                    if best_open
+                        .map(|b| lat < b.snapshot_latency_ms() || b.snapshot_latency_ms() == 0)
+                        .unwrap_or(true)
+                    {
+                        best_open = Some(e);
+                    }
+                    continue;
+                }
                 ProviderState::Healthy => {
                     let lat = e.snapshot_latency_ms();
                     let better = |b: Option<&Arc<HttpEntry>>| {
@@ -455,7 +554,9 @@ impl HttpRpcPool {
             }
         }
 
-        match best_clean.or(best_sticky).or(best_degraded) {
+        // QUOTE-LOCKOUT-01: `best_open` entra en la cadena como ÚLTIMO recurso —
+        // es la sonda half-open que rompe el bloqueo permanente.
+        match best_clean.or(best_sticky).or(best_degraded).or(best_open) {
             Some(e) => Ok(Arc::clone(e)),
             None if budget_blocked => Err(PoolError::BudgetExhausted(self.chain_id)),
             None => Err(PoolError::AllUnhealthy(self.chain_id)),
@@ -498,7 +599,32 @@ impl HttpRpcPool {
             }
             None => true,
         };
-        if first_acquired {
+        // RPC-RECOVERY-01: non-blocking in-flight cap. A saturated provider is
+        // skipped exactly like a budget-exhausted one — NEVER reported as a
+        // provider failure. The permit is RAII: released on success, error,
+        // timeout or cancellation (drop).
+        let first_permit = match &first.concurrency {
+            Some(sem) => match Arc::clone(sem).try_acquire_owned() {
+                Ok(p) => Some(p),
+                Err(_) => {
+                    crate::metrics::RPC_PROVIDER_BUDGET_THROTTLED_TOTAL
+                        .with_label_values(&[first.name.as_str(), "http"])
+                        .inc();
+                    debug!(
+                        event = "rpc_pool.concurrency_throttled_attempt",
+                        chain_id = self.chain_id,
+                        name = first.name.as_str(),
+                        "try-1 skipped: client-side concurrency cap saturated"
+                    );
+                    None
+                }
+            },
+            None => None, // no cap configured — no permit needed
+        };
+        let first_eligible =
+            first_acquired && (first.concurrency.is_none() || first_permit.is_some());
+        if first_eligible {
+            let _hold_permit = first_permit; // vive mientras viva la tentativa
             let started = Instant::now();
             match op(first.provider.clone()).await {
                 Ok(v) => {
@@ -553,6 +679,34 @@ impl HttpRpcPool {
                 None => true,
             };
             if bk_acquired {
+                // RPC-RECOVERY-01: in-flight cap del backup (misma semántica
+                // no bloqueante que try-1; saturado ≠ fallo del proveedor).
+                let bk_permit = match &bk.concurrency {
+                    Some(sem) => match Arc::clone(sem).try_acquire_owned() {
+                        Ok(p) => Some(p),
+                        Err(_) => {
+                            crate::metrics::RPC_PROVIDER_BUDGET_THROTTLED_TOTAL
+                                .with_label_values(&[bk.name.as_str(), "http"])
+                                .inc();
+                            debug!(
+                                event = "rpc_pool.concurrency_throttled_attempt",
+                                chain_id = self.chain_id,
+                                name = bk.name.as_str(),
+                                "try-2 skipped: client-side concurrency cap saturated"
+                            );
+                            None
+                        }
+                    },
+                    None => None,
+                };
+                if bk.concurrency.is_some() && bk_permit.is_none() {
+                    return if provider_error_seen {
+                        Err(PoolError::AllUnhealthy(self.chain_id))
+                    } else {
+                        Err(PoolError::BudgetExhausted(self.chain_id))
+                    };
+                }
+                let _hold_permit = bk_permit;
                 crate::metrics::RPC_POOL_FAILOVERS_TOTAL
                     .with_label_values(&[&self.chain_id.to_string()])
                     .inc();
@@ -1046,21 +1200,104 @@ fn push_uniquely_named(out: &mut Vec<(String, String)>, name: String, url: Strin
     out.push((format!("{name}-{i}"), url));
 }
 
+/// ARBX-R-0003 env overrides — OPERATOR ORDER 2026-09-27 ("quita los gates que
+/// sean necesarios para que los datos fluyan", "ADELANTE CON TODO").
+///
+/// MEASURED DEFECT this exists for. A 429 floors the breaker cooldown at
+/// `RATE_LIMIT_MIN_COOLDOWN` (120s) and the reopen backoff caps at
+/// `REOPEN_BACKOFF_CAP` (600s). With every free endpoint rate-limited, the whole
+/// pool reported `AllUnhealthy(chain_id=1)` and the V3 quoter stopped ATTEMPTING
+/// any call — live evidence 2026-09-27: `state_projector.v3_quote_failed:
+/// "v3 quote rpc failover exhausted: all providers unhealthy for chain_id=1"`
+/// 3 187×/60s, `v3_quote_unavailable` 34 500 rows/10min, 96% of emitted rows
+/// without economics. The cooldowns were compile-time constants, so no
+/// deployment could shorten the lockout without a rebuild.
+///
+/// Defaults remain the measured-safe values; a deployment may lower them per
+/// environment. Fail-honest parse: malformed/zero ⇒ default.
+fn env_cooldown_ms(key: &str, default: Duration) -> Duration {
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|ms| *ms > 0)
+        .map(Duration::from_millis)
+        .unwrap_or(default)
+}
+
+/// RPC-USER-AGENT-01 (measured 2026-09-28): `reqwest` sends **no** `User-Agent`
+/// header unless one is set, and the free public endpoints sit behind a WAF that
+/// answers a UA-less request with **HTTP 403**. Measured on the VPS with the
+/// exact call shapes the quoter issues (`eth_blockNumber`, `eth_call` to
+/// Multicall3, `eth_call` with an 8 KB payload) against the 8 configured
+/// providers:
+///
+///   · no `User-Agent`  → **6 of 8 returned 403** (`error code: 1010` on the
+///     Cloudflare-fronted ones); only `oxrpc` and `tenderly` answered.
+///   · any explicit UA (`curl/8.5.0`, a browser UA, or this project's) → the
+///     same 8 providers answer **200**.
+///
+/// That asymmetry is the whole reason the failover kept logging
+/// `v3 quote rpc failover exhausted: all providers unhealthy for chain_id=1`
+/// while a `curl`-based probe showed every provider healthy: the pool was
+/// effectively down to two endpoints, and their 429s then took the pool to zero.
+///
+/// `ARBX_RPC_USER_AGENT` overrides it per environment. A blank/whitespace value
+/// falls back to the default — never send an empty UA, that IS the blocked case.
+pub const RPC_USER_AGENT_DEFAULT: &str =
+    "arbitragex-v2/searcher-rs (+https://github.com/hefarica/arbitragex-v2; free sovereign RPC client)";
+
+/// The `User-Agent` every RPC request must carry. Never empty.
+pub fn rpc_user_agent() -> &'static str {
+    static V: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    V.get_or_init(|| {
+        std::env::var("ARBX_RPC_USER_AGENT")
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| RPC_USER_AGENT_DEFAULT.to_string())
+    })
+    .as_str()
+}
+
+/// `RPC_CB_OPEN_MS` — default `CB_OPEN_DURATION` (30s).
+pub fn cb_open_duration() -> Duration {
+    static V: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
+    *V.get_or_init(|| env_cooldown_ms("RPC_CB_OPEN_MS", CB_OPEN_DURATION))
+}
+
+/// `RPC_CB_RATE_LIMIT_FLOOR_MS` — default `RATE_LIMIT_MIN_COOLDOWN` (120s).
+pub fn rate_limit_min_cooldown() -> Duration {
+    static V: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
+    *V.get_or_init(|| env_cooldown_ms("RPC_CB_RATE_LIMIT_FLOOR_MS", RATE_LIMIT_MIN_COOLDOWN))
+}
+
+/// `RPC_CB_STICKY_MS` — default `RATE_LIMIT_STICKY` (60s).
+pub fn rate_limit_sticky() -> Duration {
+    static V: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
+    *V.get_or_init(|| env_cooldown_ms("RPC_CB_STICKY_MS", RATE_LIMIT_STICKY))
+}
+
+/// `RPC_CB_REOPEN_CAP_MS` — default `REOPEN_BACKOFF_CAP` (600s).
+pub fn reopen_backoff_cap() -> Duration {
+    static V: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
+    *V.get_or_init(|| env_cooldown_ms("RPC_CB_REOPEN_CAP_MS", REOPEN_BACKOFF_CAP))
+}
+
 /// ARBX-R-0003: cooldown before the breaker may half-open. Base `CB_OPEN_DURATION`
 /// (30s); a rate-limit opening floors it at `RATE_LIMIT_MIN_COOLDOWN` (120s);
 /// each reopen doubles it (`open_count − 1` exponent), capped at
 /// `REOPEN_BACKOFF_CAP`. Exponential backoff against the open/close/reopen
-/// hammer loop of the 429-storm incident.
+/// hammer loop of the 429-storm incident. All three are env-overridable above.
 pub fn effective_cooldown(cb: &CircuitState) -> Duration {
     let base = if cb.opened_by_rate_limit {
-        RATE_LIMIT_MIN_COOLDOWN
+        rate_limit_min_cooldown()
     } else {
-        CB_OPEN_DURATION
+        cb_open_duration()
     };
     let exp = cb.open_count.saturating_sub(1).min(3);
     let ms = base.as_millis() as u64;
     let scaled = ms.saturating_mul(1u64 << exp);
-    Duration::from_millis(scaled.min(REOPEN_BACKOFF_CAP.as_millis() as u64))
+    Duration::from_millis(scaled.min(reopen_backoff_cap().as_millis() as u64))
 }
 
 /// ARBX-R-0003: `with_retry`'s inter-attempt backoff — a rate-limit-class
@@ -1084,7 +1321,7 @@ pub fn is_rate_limit_sticky(entry: &HttpEntry, now: Instant) -> bool {
         .try_read()
         .map(|cb| {
             cb.last_rate_limit_at
-                .is_some_and(|t| now.duration_since(t) < RATE_LIMIT_STICKY)
+                .is_some_and(|t| now.duration_since(t) < rate_limit_sticky())
         })
         .unwrap_or(false)
 }
@@ -1113,28 +1350,35 @@ pub fn budget_has_token(e: &HttpEntry) -> bool {
 /// Malformed tokens are skipped with a warn — one typo must not disarm the
 /// remaining budgets (same criterion as `parse_csv`, MC-RPC-1).
 pub fn parse_budgets(csv: &str) -> std::collections::HashMap<String, u32> {
+    parse_named_u32_csv(csv, "rpc_pool.budget_malformed", "calls_per_min")
+}
+
+/// RPC-RECOVERY-01: generic `name=N` CSV parser shared by budgets, bursts and
+/// concurrency limits. Malformed tokens warn-and-skip (never panic, never
+/// silently disarm the rest).
+fn parse_named_u32_csv(
+    csv: &str,
+    malformed_event: &str,
+    what: &str,
+) -> std::collections::HashMap<String, u32> {
     let mut out = std::collections::HashMap::new();
     for tok in csv.split(',') {
         let tok = tok.trim();
         if tok.is_empty() {
             continue;
         }
-        let Some((name, rpm)) = tok.split_once('=') else {
-            warn!(
-                event = "rpc_pool.budget_malformed",
-                token = %tok,
-                "expected name=calls_per_min"
-            );
+        let Some((name, n)) = tok.split_once('=') else {
+            warn!(event = malformed_event, token = %tok, "expected name={what}");
             continue;
         };
-        match rpm.trim().parse::<u32>() {
-            Ok(n) if n >= 1 => {
-                out.insert(name.trim().to_string(), n);
+        match n.trim().parse::<u32>() {
+            Ok(v) if v >= 1 => {
+                out.insert(name.trim().to_string(), v);
             }
             _ => warn!(
-                event = "rpc_pool.budget_invalid_rpm",
+                event = malformed_event,
                 token = %tok,
-                "calls_per_min must be an integer >= 1"
+                "{what} must be an integer >= 1"
             ),
         }
     }
@@ -1199,6 +1443,23 @@ fn emit_rotation_needed_if_credential_error(entry: &HttpEntry, cause: &str) {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    /// RPC-USER-AGENT-01 (measured 2026-09-28): a UA-less request is answered
+    /// with HTTP 403 by 6 of the 8 configured providers, so the pool must NEVER
+    /// send an empty User-Agent — and it must not rotate per request either.
+    #[test]
+    fn rpc_user_agent_is_never_empty_and_identifies_the_client() {
+        let ua = rpc_user_agent();
+        assert!(
+            !ua.trim().is_empty(),
+            "an empty UA is the measured-blocked case (HTTP 403)"
+        );
+        assert!(
+            ua.contains("arbitragex-v2"),
+            "the UA must identify this client, got: {ua}"
+        );
+        assert_eq!(ua, rpc_user_agent(), "the UA is stable for the process");
+    }
 
     #[test]
     fn parse_named_csv() {
@@ -1307,6 +1568,7 @@ mod tests {
             latency_ms_ewma: AtomicU64::new(0),
             circuit: RwLock::new(CircuitState::default()),
             budget: None,
+            concurrency: None,
         })
     }
 
@@ -1316,6 +1578,103 @@ mod tests {
         let mut inner = Arc::try_unwrap(e).ok().unwrap();
         inner.budget = Some(Arc::new(crate::rate_budget::TokenBucket::new(per_minute)));
         Arc::new(inner)
+    }
+
+    /// RPC-RECOVERY-01: dummy con tope de concurrencia `n`.
+    fn dummy_entry_capped(name: &str, n: u32) -> Arc<HttpEntry> {
+        let e = dummy_entry(name);
+        let mut inner = Arc::try_unwrap(e).ok().unwrap();
+        inner.concurrency = Some(Arc::new(tokio::sync::Semaphore::new(n as usize)));
+        Arc::new(inner)
+    }
+
+    /// RPC-RECOVERY-01 (aceptación): el permiso de concurrencia se libera en
+    /// ÉXITO, en ERROR y en CANCELACIÓN (drop del future) — nunca se fuga.
+    #[tokio::test]
+    async fn concurrency_permit_released_on_success_error_and_cancel() {
+        let pool = HttpRpcPool {
+            chain_id: 1,
+            entries: vec![dummy_entry_capped("solo", 1)],
+        };
+        let sem = pool.entries[0].concurrency.as_ref().unwrap();
+        // Éxito.
+        let r = pool
+            .with_retry(|_| async { Ok::<_, anyhow::Error>(7u8) })
+            .await
+            .unwrap();
+        assert_eq!(r, 7);
+        assert_eq!(sem.available_permits(), 1, "permiso liberado tras éxito");
+        // Error.
+        let _ = pool
+            .with_retry(|_| async { Err::<u8, _>(anyhow::anyhow!("boom")) })
+            .await;
+        assert_eq!(sem.available_permits(), 1, "permiso liberado tras error");
+        // Cancelación: el future se aborta a mitad de la tentativa.
+        let fut = pool.with_retry(|_| async {
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            Ok::<u8, anyhow::Error>(0)
+        });
+        let handle = tokio::time::timeout(std::time::Duration::from_millis(20), fut).await;
+        assert!(handle.is_err(), "timeout externo = cancelación");
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        assert_eq!(
+            sem.available_permits(),
+            1,
+            "permiso liberado tras cancelación/drop"
+        );
+    }
+
+    /// RPC-RECOVERY-01 (aceptación): un proveedor saturado de concurrencia se
+    /// SALTA (como el presupuesto agotado) — no es fallo del proveedor: no
+    /// toca el breaker, y el backup ejecuta la solicitud.
+    #[tokio::test]
+    async fn concurrency_saturated_skips_to_backup_without_breaker_trip() {
+        let pool = HttpRpcPool {
+            chain_id: 1,
+            entries: vec![dummy_entry_capped("primario", 1), dummy_entry("backup")],
+        };
+        // El primario gana por latencia pero su único permiso está tomado.
+        pool.entries[0].latency_ms_ewma.store(1, Ordering::Relaxed);
+        pool.entries[1]
+            .latency_ms_ewma
+            .store(100, Ordering::Relaxed);
+        let external = pool.entries[0]
+            .concurrency
+            .as_ref()
+            .unwrap()
+            .clone()
+            .try_acquire_owned()
+            .unwrap();
+        let used_calls = std::sync::atomic::AtomicUsize::new(0);
+        let r = pool
+            .with_retry(|p| {
+                let _ = p;
+                used_calls.fetch_add(1, Ordering::Relaxed);
+                async move { Ok::<u8, anyhow::Error>(42) }
+            })
+            .await
+            .unwrap();
+        drop(external);
+        assert_eq!(r, 42);
+        assert_eq!(
+            used_calls.load(Ordering::Relaxed),
+            1,
+            "la op ejecutó exactamente una vez (vía backup; el primario saturado jamás la llamó)"
+        );
+        assert_eq!(
+            pool.entries[0].snapshot_state(),
+            ProviderState::Healthy,
+            "saturación local NO tripó el breaker del primario"
+        );
+        assert!(
+            pool.entries[0]
+                .circuit
+                .read()
+                .await
+                .failures_window
+                .is_empty(),
+            "sin fallos registrados contra el primario"
+        );
     }
 
     #[tokio::test]
@@ -1345,13 +1704,35 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pick_returns_all_unhealthy_when_only_open() {
+    async fn pick_forces_half_open_probe_when_all_providers_open() {
+        // QUOTE-LOCKOUT-01: antes esto devolvía AllUnhealthy y, al no intentar
+        // nada, NINGÚN éxito podía observarse ⇒ el breaker no cerraba nunca
+        // (medido: 10 h al 0,0 % de cotizaciones hasta reiniciar). Ahora se
+        // devuelve exactamente UN proveedor abierto para sondearlo.
         let pool = HttpRpcPool {
             chain_id: 1,
             entries: vec![dummy_entry("a"), dummy_entry("b")],
         };
         pool.entries[0].set_state(ProviderState::Open);
         pool.entries[1].set_state(ProviderState::Open);
+
+        let probe = pool.pick().expect("debe forzar una sonda, no fallar");
+        assert!(
+            probe.name == "a" || probe.name == "b",
+            "la sonda debe salir del pool, no inventarse un proveedor"
+        );
+        // Determinista: dos picks seguidos eligen el mismo.
+        let again = pool.pick().expect("segunda sonda");
+        assert_eq!(probe.name, again.name);
+    }
+
+    #[tokio::test]
+    async fn pick_returns_all_unhealthy_when_pool_is_empty() {
+        // El único caso que sigue siendo AllUnhealthy: no hay proveedores.
+        let pool = HttpRpcPool {
+            chain_id: 1,
+            entries: vec![],
+        };
         let err = pool.pick().unwrap_err();
         assert!(matches!(err, PoolError::AllUnhealthy(1)));
     }

@@ -151,14 +151,16 @@ pub async fn insert_opportunity_with_route(
             expected_profit_usd, net_expected_profit_usd, roi_pct, risk_score,
             block_number, status, rejection_reason, trace_id, detected_at,
             route_metadata, cartridge_id,
-            detector_id, pipeline_latency_ms
+            detector_id, pipeline_latency_ms,
+            economics
         ) VALUES (
             $1, $2, $3, $4, $5, $6,
             $7, $8, $9,
             $10, $11, $12, $13,
             $14, $20, $15, $16, $17,
             $18, $19,
-            $21, $22
+            $21, $22,
+            $23
         )
         ON CONFLICT (id) DO NOTHING
         "#,
@@ -187,6 +189,16 @@ pub async fn insert_opportunity_with_route(
     // latency (migration 121). Both NULL-able — legacy rows carry None (R8).
     .bind(o.detector_id.as_deref())
     .bind(o.pipeline_latency_ms.map(|m| m as i64))
+    // ALWAYS-COMPUTE (2026-09-27, migration 126): the one complete economics
+    // computation object on BOTH branches. NULL on pre-migration rows and
+    // when ARBX_ALWAYS_COMPUTE_ECONOMICS=off (R8 — never backfilled).
+    .bind(
+        o.economics
+            .as_ref()
+            .map(serde_json::to_value)
+            .transpose()
+            .context("serialize economics")?,
+    )
     .execute(pool)
     .await
     .context("insert opportunity")?;
@@ -226,6 +238,10 @@ pub fn build_route_metadata_from_plan(plan: &RoutePlan) -> RouteMetadata {
     let mut pool_addresses = Vec::with_capacity(plan.legs.len());
     let mut dex_adapters = Vec::with_capacity(plan.legs.len());
     let mut token_addresses: Vec<String> = Vec::with_capacity(plan.legs.len() + 1);
+    // STEP 4 (fee V3): per-hop fee tier, ALL-OR-NOTHING. `collect` into
+    // `Option<Vec>` yields None the moment ANY leg lacks `fee_bps` — a partial
+    // vector would shift a fee onto the wrong hop (R8: unknown ≠ 0).
+    let fee_tier_bps: Option<Vec<u32>> = plan.legs.iter().map(|leg| leg.fee_bps).collect();
 
     for (i, leg) in plan.legs.iter().enumerate() {
         // First leg seeds token_addresses with token_in; subsequent legs append token_out.
@@ -267,6 +283,9 @@ pub fn build_route_metadata_from_plan(plan: &RoutePlan) -> RouteMetadata {
         leg_amounts_in: None,
         leg_amounts_out: None,
         leg_zero_for_one: None,
+        fee_tier_bps,
+        economics_amount_in_wei: None,
+        economics_basis: None,
     }
 }
 
@@ -446,11 +465,48 @@ mod fidelity_tests {
             leg_amounts_in: None,
             leg_amounts_out: None,
             leg_zero_for_one: None,
+            fee_tier_bps: None,
+            economics_amount_in_wei: None,
+            economics_basis: None,
         };
         assert_ne!(
             candidate_flattened.token_addresses.len(),
             candidate_flattened.dex_adapters.len() + 1,
             "flattened candidate path must FAIL the structural gate — documents why the plan legs are the source"
         );
+    }
+
+    /// STEP 4 (fee V3) — the builder propagates per-leg fees ALL-OR-NOTHING:
+    /// every leg with `fee_bps` → `Some(vec)` parallel to the hops; ANY leg
+    /// without → `None` ("not computed"), never a partial vector (R8).
+    #[test]
+    fn build_from_plan_fee_tier_all_or_nothing() {
+        // All legs carry a fee → Some, aligned per hop.
+        let mut p = plan(vec![
+            leg("0xA", "0xB", Some("0xp1"), "uniswap_v2_router"),
+            leg("0xB", "0xC", Some("0xp2"), "uniswap_v3"),
+        ]);
+        p.legs[0].fee_bps = Some(30);
+        p.legs[1].fee_bps = Some(3000); // V3 raw fee() pips
+        let rm = build_route_metadata_from_plan(&p);
+        assert_eq!(rm.fee_tier_bps, Some(vec![30, 3000]));
+        assert_eq!(
+            rm.fee_tier_bps.as_ref().map(|v| v.len()),
+            Some(rm.dex_adapters.len()),
+            "fee vector must be parallel to the hops"
+        );
+
+        // ONE unknown leg poisons the whole vector → None (not a zero, not a
+        // shifted partial — the fee would land on the wrong hop).
+        let mut partial = plan(vec![
+            leg("0xA", "0xB", Some("0xp1"), "uniswap_v2_router"),
+            leg("0xB", "0xC", Some("0xp2"), "uniswap_v3"),
+            leg("0xC", "0xA", Some("0xp3"), "sushiswap"),
+        ]);
+        partial.legs[0].fee_bps = Some(30);
+        partial.legs[2].fee_bps = Some(500);
+        // legs[1].fee_bps stays None
+        let rm2 = build_route_metadata_from_plan(&partial);
+        assert_eq!(rm2.fee_tier_bps, None, "one unknown hop ⇒ None (R8)");
     }
 }

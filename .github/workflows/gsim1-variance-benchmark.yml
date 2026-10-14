@@ -1,0 +1,299 @@
+name: G-SIM-1 Evidence — variance benchmark (scheduled, G-SIM1-AUTOREFRESH)
+
+# G-SIM-1 checklist item 4 (`variance_benchmark`) — SCHEDULED producer.
+#
+# WHY THIS WORKFLOW EXISTS (G-SIM1-AUTOREFRESH, 2026-09-26)
+# The benchmark was a MANUAL VPS macro (`bash scripts/gsim1_variance_benchmark.sh`).
+# Its four recorded attempts either aborted before writing anything or wrote a row
+# whose reason the readiness gate could not read, so the operator saw
+# "premature flag — SECURE_BOOT violated ... missing evidence: [variance_benchmark]"
+# with no cause and no refresh cadence. Two things are fixed here:
+#   1. a schedule runs the real harness against real mainnet state and the driver
+#      ALWAYS writes a row (evidenced|failed + the measured reason);
+#   2. the job ASSERTS that the row advanced inside this run — a producer that
+#      stops delivering fails loudly instead of letting the registry go stale.
+#
+# HONESTY CONTRACT (RULE 00 / R8)
+#   * No fabricated pass: the status comes from the harness' own
+#     `VARIANCE_BENCH_OUTCOME` marker, never from this YAML.
+#   * No silent skip: if the row does not advance, this job FAILS with the reason.
+#   * A genuine FAIL is NOT a pipeline failure — the registry row + the job
+#     summary carry it, and `.github/workflows/gsim1-readiness-attention.yml`
+#     opens/updates the actionable operator issue. `strict` (manual dispatch)
+#     restores fail-on-FAIL for operator runs.
+#   * Read-only on production: export is a SELECT, the harness only mutates its
+#     in-process REVM CacheDB, NO signing / NO broadcast / NO capital (§32/§34).
+
+on:
+  schedule:
+    # 3×/day. Freshness is 30d, but the labelable population is small and each
+    # run labels a handful of pairs — frequency is how the sample grows.
+    - cron: '17 2,10,18 * * *'
+  workflow_dispatch:
+    inputs:
+      min_samples:
+        description: 'Override VARIANCE_MIN_SAMPLES (default: the measured labelable population of the window)'
+        type: string
+        required: false
+      strict:
+        description: 'Fail the job when the benchmark outcome is not PASS'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gsim1-variance-benchmark
+  cancel-in-progress: false
+
+jobs:
+  variance-benchmark:
+    name: run variance benchmark on VPS → readiness_evidence row
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - name: Setup SSH
+        env:
+          VPS_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+        run: |
+          set -euo pipefail
+          test -n "$VPS_KEY" && test -n "$VPS_HOST"
+          [[ "$VPS_PORT" =~ ^[0-9]+$ ]] && (( VPS_PORT > 0 && VPS_PORT < 65536 ))
+          install -m 700 -d ~/.ssh
+          umask 077
+          printf '%s\n' "$VPS_KEY" > ~/.ssh/deploy_key
+          ssh-keyscan -T 10 -p "$VPS_PORT" -H "$VPS_HOST" > ~/.ssh/known_hosts
+          test -s ~/.ssh/known_hosts
+
+      - name: Validate manual inputs
+        env:
+          MIN_SAMPLES: ${{ inputs.min_samples }}
+        run: |
+          set -euo pipefail
+          if [ -n "${MIN_SAMPLES:-}" ]; then
+            [[ "$MIN_SAMPLES" =~ ^[0-9]+$ ]] || { echo "::error::min_samples must be an integer"; exit 1; }
+          fi
+
+      - name: Preflight — driver + export present on the deployment
+        env:
+          VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
+          VPS_USER: ${{ secrets.VPS_SSH_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+          DEPLOY_PATH: ${{ secrets.VPS_DEPLOY_PATH }}
+        run: |
+          set -euo pipefail
+          REMOTE_PATH="${DEPLOY_PATH:-/opt/arbitragex-v2}"
+          ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" -o BatchMode=yes -o IdentitiesOnly=yes \
+            "$VPS_USER@$VPS_HOST" \
+            "cd '$REMOTE_PATH' && test -f scripts/gsim1_variance_benchmark.sh && test -f scripts/gsim1_variance_export.sql && grep -q '^ARBX_ADMIN_TOKEN=' .env && echo PREFLIGHT_OK"
+
+      - name: Run the variance benchmark (driver ALWAYS records a row)
+        id: driver
+        env:
+          VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
+          VPS_USER: ${{ secrets.VPS_SSH_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+          DEPLOY_PATH: ${{ secrets.VPS_DEPLOY_PATH }}
+          MIN_SAMPLES: ${{ inputs.min_samples }}
+          STRICT_INPUT: ${{ inputs.strict }}
+        run: |
+          set -uo pipefail
+          REMOTE_PATH="${DEPLOY_PATH:-/opt/arbitragex-v2}"
+          # Scheduled runs never fail on a legitimately FAILED benchmark: the
+          # FAIL must be RECORDED, and it is. Manual dispatch can opt into strict.
+          if [ "${STRICT_INPUT:-false}" = "true" ]; then STRICT=1; else STRICT=0; fi
+          REMOTE_ENV=""
+          if [ -n "${MIN_SAMPLES:-}" ]; then REMOTE_ENV="VARIANCE_MIN_SAMPLES=${MIN_SAMPLES}"; fi
+          set +e
+          ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" -o BatchMode=yes -o IdentitiesOnly=yes \
+            "$VPS_USER@$VPS_HOST" \
+            "cd '$REMOTE_PATH' && ${REMOTE_ENV} GSIM1_STRICT=${STRICT} bash scripts/gsim1_variance_benchmark.sh" \
+            2>&1 | tee variance-benchmark.log
+          RC=${PIPESTATUS[0]}
+          set -e
+          echo "driver_rc=${RC}" >> "$GITHUB_OUTPUT"
+          if [ "$RC" -ne 0 ]; then
+            echo "::warning::driver exited rc=${RC} (GSIM1_STRICT=${STRICT}) — inspecting the registry row next to decide whether anything was delivered"
+          fi
+
+      - name: Read back the G-SIM-1 registry rows (read-only)
+        env:
+          VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
+          VPS_USER: ${{ secrets.VPS_SSH_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+        run: |
+          set -euo pipefail
+          # PGTZ=UTC keeps timestamptz rendering deterministic; -t -A keeps the
+          # output to JSON lines only (no psql command tags to trip the parser).
+          ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" -o BatchMode=yes -o IdentitiesOnly=yes \
+            "$VPS_USER@$VPS_HOST" \
+            'docker exec -e PGTZ=UTC arbitragex-v2-postgres-1 psql -U postgres -d arbitragex -t -A -c "SELECT row_to_json(t) FROM (SELECT item_key, status, evidence_ref, detail, verified_at FROM readiness_evidence WHERE gate_id = '"'"'G-SIM-1'"'"') t;"' \
+            > gsim1-rows.jsonl
+          test -s gsim1-rows.jsonl || { echo "::error::empty registry read-back"; exit 1; }
+          wc -l gsim1-rows.jsonl
+
+      - name: Attribute each exported sample to an observable cause (read-only, advisory)
+        # GSIM-PRED-REASON-01 (R1): `skips.pred_failed=22/22` names only the CATEGORY.
+        # This step names, PER SAMPLE, the cause that is observable in production
+        # today: whether the sample has a `simulations` row at all, and if it has
+        # one, whether it passed and with which `fail_reason`.
+        #
+        # ADVISORY BY CONSTRUCTION — it cannot change the verdict:
+        #   * it only SELECTs (no INSERT/UPDATE/DELETE, no signing, no capital);
+        #   * it never feeds `samples_labeled`, `pass_reason`, `threshold_mean_pct`
+        #     nor the registry status — the approval criterion is untouched;
+        #   * `continue-on-error` so a failure of this observational step can never
+        #     redden the gate.
+        #
+        # WHAT IT IS NOT (R8 — never read a label as another thing): the harness' OWN
+        # internal branch (why `sim_at_block` returned `passed=false` for these rows)
+        # is NOT reachable from here. The producer of that reason is
+        # backend/sim-core/tests/variance_benchmark.rs:483-486 (`hist.pred_failed += 1;
+        # continue;`), outside this workflow's scope. This step attributes the
+        # sample's PRODUCTION state; it does not claim to be the harness' error code.
+        if: always()
+        continue-on-error: true
+        env:
+          VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
+          VPS_USER: ${{ secrets.VPS_SSH_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+          DEPLOY_PATH: ${{ secrets.VPS_DEPLOY_PATH }}
+        run: |
+          set -uo pipefail
+          REMOTE_PATH="${DEPLOY_PATH:-/opt/arbitragex-v2}"
+          set +e
+          ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" -o BatchMode=yes -o IdentitiesOnly=yes \
+            "$VPS_USER@$VPS_HOST" "bash -s" <<'REMOTE' > sample-reasons.log 2>&1
+          set -uo pipefail
+          INPUT=/tmp/gsim1/input.jsonl
+          echo "tool_docker=$(command -v docker || echo MISSING) input=$INPUT"
+          if [ ! -s "$INPUT" ]; then
+            echo "SAMPLE_REASON_UNAVAILABLE reason=input_jsonl_absent_or_empty path=$INPUT"
+            echo "  the driver writes it at its export stage; absent here means the driver never reached it"
+            exit 0
+          fi
+          IDS=$(sed -nE 's/.*"opportunity_id"[[:space:]]*:[[:space:]]*"([0-9a-fA-F-]{36})".*/\1/p' "$INPUT")
+          N=$(printf '%s\n' "$IDS" | grep -c .)
+          echo "exported_rows=$N"
+          if [ "$N" -eq 0 ]; then
+            echo "SAMPLE_REASON_UNAVAILABLE reason=no_opportunity_id_extracted from=$INPUT (extraction zero, not an absence of samples)"
+            exit 0
+          fi
+          LIST=$(printf "'%s'," $IDS)
+          LIST=${LIST%,}
+          docker exec arbitragex-v2-postgres-1 psql -U postgres -d arbitragex -t -A -F'|' -c "
+            WITH s AS (
+              SELECT opportunity_id,
+                     count(*) AS n_sims,
+                     (array_agg(passed ORDER BY simulated_at DESC NULLS LAST))[1] AS last_passed,
+                     (array_agg(fail_reason ORDER BY simulated_at DESC NULLS LAST))[1] AS last_reason
+              FROM simulations
+              WHERE opportunity_id IN ($LIST)
+              GROUP BY opportunity_id)
+            SELECT o.id, o.status, coalesce(nullif(o.rejection_reason,''),'-'), coalesce(o.pair_symbol,'-'),
+                   coalesce(s.n_sims,0),
+                   CASE WHEN s.opportunity_id IS NULL THEN 'no_simulation_row'
+                        WHEN s.last_passed THEN 'sim_passed'
+                        ELSE 'sim_failed:' || coalesce(nullif(s.last_reason,''),'unnamed') END
+            FROM opportunities o
+            LEFT JOIN s ON s.opportunity_id = o.id
+            WHERE o.id IN ($LIST)
+            ORDER BY 6, 2;" > /tmp/sre_t127_samples.txt
+          PSQL_RC=$?
+          echo "psql_rc=$PSQL_RC rows_returned=$(grep -c . /tmp/sre_t127_samples.txt)"
+          while IFS='|' read -r sid st re pr nr code; do
+            [ -n "$sid" ] || continue
+            echo "sample_reason opportunity_id=$sid status=$st rejection=$re pair=$pr sim_rows=$nr code=$code"
+          done < /tmp/sre_t127_samples.txt
+          echo "SAMPLE_REASON_DISTRIBUTION total=$(grep -c . /tmp/sre_t127_samples.txt) $(awk -F'|' '{c[$6]++} END {for (k in c) printf "%s=%d ", k, c[k]}' /tmp/sre_t127_samples.txt)"
+          echo "SAMPLE_REASON_HARNESS_INTERNAL=not_observable_here producer=backend/sim-core/tests/variance_benchmark.rs:483-486"
+          rm -f /tmp/sre_t127_samples.txt
+          REMOTE
+          RC=$?
+          set -e
+          echo "attribution_rc=${RC}"
+          sed -n '1,80p' sample-reasons.log
+          if [ "$RC" -ne 0 ]; then
+            echo "::warning::per-sample attribution rc=${RC} — advisory only; the verdict above is untouched (see sample-reasons.log)"
+          fi
+
+      - name: Assert the producer actually delivered in THIS run
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/gsim1_evidence_state.py assert-fresh \
+            --rows gsim1-rows.jsonl --item variance_benchmark --max-age-minutes 90
+
+      - name: Annotate the honest checklist state
+        run: |
+          set -euo pipefail
+          STATUS=$(python3 - <<'PY'
+          import json
+          for line in open("gsim1-rows.jsonl", encoding="utf-8"):
+              line = line.strip()
+              if not line:
+                  continue
+              row = json.loads(line)
+              if row.get("item_key") == "variance_benchmark":
+                  print(row.get("status", ""))
+                  break
+          PY
+          )
+          echo "variance_benchmark status=${STATUS}"
+          if [ "${STATUS}" != "evidenced" ]; then
+            echo "::warning::G-SIM-1 variance_benchmark row status=${STATUS} — the item stays PENDING. The recorded detail is the reason; the operator issue is refreshed by gsim1-readiness-attention.yml."
+          fi
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## G-SIM-1 item 4 — variance benchmark"
+            echo
+            echo "- driver exit code: \`${{ steps.driver.outputs.driver_rc }}\`"
+            echo "- rows read back: \`$(wc -l < gsim1-rows.jsonl 2>/dev/null || echo 0)\`"
+            echo
+            echo "### Why each exported sample went unlabeled (per sample, read-only)"
+            echo
+            echo '```'
+            cat sample-reasons.log 2>/dev/null || echo "(no per-sample attribution log)"
+            echo '```'
+            echo
+            echo '```'
+            tail -n 25 variance-benchmark.log 2>/dev/null || echo "(no driver log)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Preserve the harness log
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: gsim1-variance-benchmark-log-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            variance-benchmark.log
+            gsim1-rows.jsonl
+            sample-reasons.log
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
+
+      - name: Enforce strict mode (manual dispatch only)
+        if: ${{ inputs.strict == true }}
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.driver.outputs.driver_rc }}" != "0" ]; then
+            echo "::error::strict mode: benchmark outcome was not PASS (driver rc=${{ steps.driver.outputs.driver_rc }})"
+            exit 1
+          fi

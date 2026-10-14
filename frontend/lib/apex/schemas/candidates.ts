@@ -37,6 +37,11 @@ export const OpportunityCandidateSchema = z
     amount_in: z.number().positive(),
     expected_amount_out: z.number().nonnegative(),
     gross_profit: UsdDecimalSchema,
+    // STEP 4 (fee V3): per-hop pool fee tier, parallel to `pool_addresses`
+    // (units: V2 bps, V3 raw `fee()` pips). Optional + ALL-OR-NOTHING:
+    // absent = some hop unknown or a legacy row (R8 — never read as free).
+    // Mirrors `shared_rs::candidates::OpportunityCandidate::fee_tier_bps`.
+    fee_tier_bps: z.array(z.number().int().min(0)).optional(),
     decimals: DecimalsMapSchema,
     // FRONT-07 fix (2026-09-24): reuse the wire-tolerant block_number schema
     // from schemas.ts — a future PG-sourced candidate would carry int8 as a

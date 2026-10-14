@@ -1,0 +1,241 @@
+name: Runtime Identity Probe (read-only, VPS)
+
+# RUNTIME-PROBE-ACTIONS-01 (t37) — read the BAKED identity of the deployed images.
+#
+# WHY A WORKFLOW: the axis org.opencontainers.image.revision can only be read with
+# `docker inspect` ON the deploy host. The Actions runner reaches that host over SSH
+# using the SAME secret mechanism auto-deploy-vps.yml already uses
+# (VPS_SSH_KEY / VPS_SSH_HOST / VPS_SSH_USER / VPS_PORT). No new mechanism is invented.
+#
+# OUTPUT DISCIPLINE: this workflow publishes ONLY image/service identity — service name,
+# verdict, declared sha, image digest, image created, container started_at, built_from_sha.
+# It NEVER prints environment variables, secrets, tokens or .env contents, and it FAILS
+# on a secret-leak guard if the probe output would carry any of those patterns.
+#
+# READ-ONLY: the probe body only calls `docker inspect` / `docker image inspect`.
+# A guard step refuses to run if the probe source contains a mutating docker verb.
+# It does not sign, broadcast, or change anything on the host.
+#
+# PROVENANCE: the probe body below is a verbatim copy of tools/arbx_identity_probe.sh as
+# measured on 2026-10-06 (3703 bytes, sha256
+# 0FA9E0411D847B25FDD5B311005294E76DEA1BF3326CA992D05D31676084876B, LF endings).
+# That file is NOT tracked in this repository (absent from main's tree and from
+# `git ls-files` in the worktree), so the workflow must carry the body to be runnable in
+# CI. A step re-computes the sha256 at runtime and FAILS on mismatch, so the executed
+# bytes are provably the intended ones and any drift is visible in the log.
+
+on:
+  workflow_dispatch:
+    inputs:
+      deploy_start:
+        description: "Optional ISO-8601 ARBX_DEPLOY_START. When set, a container whose StartedAt precedes it is reported stale (the deploy did not recreate it)."
+        required: false
+        default: ""
+      services:
+        description: "Optional space-separated service override (defaults to the probe's own list of 10 services)."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runtime-identity-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: Read baked identity from deployed images (read-only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
+      VPS_USER: ${{ secrets.VPS_SSH_USER }}
+      VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+      VPS_KEY: ${{ secrets.VPS_SSH_KEY }}
+      DEPLOY_START: ${{ inputs.deploy_start }}
+      SERVICES: ${{ inputs.services }}
+      EXPECTED_PROBE_SHA256: 0fa9e0411d847b25fdd5b311005294e76dea1bf3326ca992d05d31676084876b # lowercase (sha256sum output)
+
+    steps:
+      - name: Materialize the probe and assert its provenance hash
+        run: |
+          set -euo pipefail
+          cat > /tmp/arbx_identity_probe.sh <<'ARBX_PROBE_EOF_9F2C'
+          #!/usr/bin/env bash
+          # arbx_identity_probe.sh — RUNTIME-IDENTITY-01
+          # Owner: Integration (1379d506-d159-59a8-9f7b-7e017d2f464d)
+          #
+          # READ-ONLY. Measures the runtime identity of every service across three
+          # independent axes and refuses to promote a declaration into a verification.
+          #
+          # Runs ON the deploy host (no nested quoting, no remote script injection):
+          #     ssh arbx 'bash -s' < tools/arbx_identity_probe.sh
+          #
+          # Optional env:
+          #   ARBX_DEPLOY_START   ISO-8601 of the deploy run start. When set, a container
+          #                       whose StartedAt precedes it is reported `stale`
+          #                       (i.e. "this service was NOT recreated by that deploy").
+          #   ARBX_IDENTITY_SERVICES  override the service list.
+          #
+          # Exit codes:  0 = every service measured and none stale
+          #              1 = at least one service `undeclared`/`mismatch` (integrity gap)
+          #              2 = at least one service `stale` (deploy did not recreate it)
+          #              3 = probe could not run (no docker)
+          #
+          # DESIGN INVARIANT — the verdict vocabulary is closed on purpose:
+          #   `verified` is only reachable when a build-baked value exists AND equals the
+          #   declared value. Because no Dockerfile currently bakes
+          #   org.opencontainers.image.revision, `verified` is UNREACHABLE today and this
+          #   probe reports `declared_only` instead of guessing. A declared env var is an
+          #   INTENTION; it is never evidence that the binary corresponds to it.
+          
+          set -uo pipefail
+          
+          command -v docker >/dev/null 2>&1 || { echo '{"ok":false,"reason":"docker_absent"}'; exit 3; }
+          
+          DEPLOY_START="${ARBX_DEPLOY_START:-}"
+          SERVICES="${ARBX_IDENTITY_SERVICES:-api-server frontend edge searcher-rs selector-api sim-ctl recon token-enricher relays-client math-engine}"
+          
+          worst=0
+          first=1
+          printf '['
+          for c in $SERVICES; do
+            n="arbitragex-v2-${c}-1"
+          
+            if [ "$(docker inspect -f '{{.State.Running}}' "$n" 2>/dev/null)" != "true" ]; then
+              obj=$(printf '{"service":"%s","verdict":"unmeasurable","reason":"container_absent_or_not_running"}' "$c")
+              [ $worst -lt 1 ] && worst=1
+            else
+              envv=$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$n" 2>/dev/null)
+              declared=$(printf '%s\n' "$envv" | grep '^ARBX_DEPLOY_SHA=' | cut -d= -f2-)
+              declared_at=$(printf '%s\n' "$envv" | grep '^ARBX_DEPLOYED_AT=' | cut -d= -f2-)
+              img=$(docker inspect -f '{{.Image}}' "$n" 2>/dev/null)
+              started=$(docker inspect -f '{{.State.StartedAt}}' "$n" 2>/dev/null)
+              created=$(docker inspect -f '{{.Created}}' "$n" 2>/dev/null)
+              built=$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$img" 2>/dev/null)
+              [ -z "$built" ] && built="ABSENT"
+          
+              if [ "$built" != "ABSENT" ]; then
+                if [ -n "$declared" ] && [ "$built" = "$declared" ]; then v="verified"; else v="mismatch"; fi
+              elif [ -n "$declared" ]; then
+                v="declared_only"
+              else
+                v="undeclared"
+              fi
+          
+              recreated="unknown"
+              if [ -n "$DEPLOY_START" ] && [ -n "$started" ]; then
+                if [[ "$started" > "$DEPLOY_START" ]]; then recreated="true"; else recreated="false"; v="stale"; fi
+              fi
+          
+              [ "$v" = "undeclared" ] && [ $worst -lt 1 ] && worst=1
+              [ "$v" = "mismatch" ]   && [ $worst -lt 1 ] && worst=1
+              [ "$v" = "stale" ]      && worst=2
+          
+              obj=$(printf '{"service":"%s","verdict":"%s","declared_sha":"%s","declared_at":"%s","image_digest":"%s","image_created":"%s","container_started_at":"%s","built_from_sha":"%s","recreated_by_deploy":%s}' \
+                "$c" "$v" "$declared" "$declared_at" "$img" "$created" "$started" "$built" \
+                "$([ "$recreated" = "unknown" ] && echo 'null' || echo "$recreated")")
+            fi
+          
+            [ $first -eq 1 ] || printf ','
+            first=0
+            printf '%s' "$obj"
+          done
+          printf ']'
+          echo
+          exit $worst
+          ARBX_PROBE_EOF_9F2C
+          chmod +x /tmp/arbx_identity_probe.sh
+          ACTUAL="$(sha256sum /tmp/arbx_identity_probe.sh | awk '{print $1}' | tr 'A-F' 'a-f')"
+          EXPECTED="$(printf '%s' "$EXPECTED_PROBE_SHA256" | tr 'A-F' 'a-f')"
+          echo "probe_sha256=$ACTUAL"
+          echo "probe_bytes=$(wc -c < /tmp/arbx_identity_probe.sh)"
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "::error::probe provenance mismatch: expected $EXPECTED got $ACTUAL"
+            exit 1
+          fi
+          echo "probe provenance OK (matches tools/arbx_identity_probe.sh)"
+
+      - name: Guard — the probe must stay read-only
+        run: |
+          set -euo pipefail
+          # Closed invariant: the ONLY docker verbs the probe may use are `inspect` and
+          # `image` (for `docker image inspect`). Anything else -- rm/stop/kill/prune/
+          # down/up/exec/run/build/tag/... -- aborts the job before it touches the host.
+          # This is deliberately a verb inventory instead of a redirect grep: `2>/dev/null`
+          # and the bash string comparison `[[ "$a" > "$b" ]]` are legitimate here and a
+          # redirect pattern would flag them (it did, on run 37397289654).
+          VERBS="$(grep -oE 'docker[[:space:]]+[a-z-]+' /tmp/arbx_identity_probe.sh | awk '{print $2}' | sort -u | tr '\n' ' ')"
+          echo "docker verbs found in the probe: ${VERBS:-<none>}"
+          if printf '%s\n' $VERBS | grep -vxE 'inspect|image'; then
+            echo "::error::the probe uses a docker verb outside {inspect,image} — refusing to run against the host"
+            exit 1
+          fi
+          echo "read-only guard OK: verb inventory is a subset of {inspect,image}"
+
+      - name: Setup SSH (same mechanism as auto-deploy-vps.yml)
+        run: |
+          set -euo pipefail
+          test -n "$VPS_KEY" && test -n "$VPS_HOST"
+          [[ "$VPS_PORT" =~ ^[0-9]+$ ]] && (( VPS_PORT > 0 && VPS_PORT < 65536 ))
+          install -m 700 -d ~/.ssh
+          umask 077
+          printf '%s\n' "$VPS_KEY" > ~/.ssh/deploy_key
+          ssh-keyscan -T 10 -p "$VPS_PORT" -H "$VPS_HOST" > ~/.ssh/known_hosts
+          test -s ~/.ssh/known_hosts
+          echo "ssh material ready (key never echoed)"
+
+      - name: Run the probe on the deploy host (read-only)
+        id: probe
+        run: |
+          set -uo pipefail
+          REMOTE_ENV=""
+          if [ -n "$DEPLOY_START" ]; then REMOTE_ENV="export ARBX_DEPLOY_START=$(printf %q "$DEPLOY_START");"; fi
+          if [ -n "$SERVICES" ]; then REMOTE_ENV="$REMOTE_ENV export ARBX_IDENTITY_SERVICES=$(printf %q "$SERVICES");"; fi
+          set +e
+          ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" \
+            -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
+            -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            "$VPS_USER@$VPS_HOST" \
+            "$REMOTE_ENV bash -s" < /tmp/arbx_identity_probe.sh > /tmp/probe.json 2> /tmp/probe.err
+          rc=$?
+          set -e
+          echo "probe_exit_code=$rc   (0=all measured, none stale | 1=undeclared/mismatch | 2=stale | 3=docker absent | 255=ssh failure)"
+          if [ -s /tmp/probe.err ]; then echo "--- ssh stderr (first 15 lines) ---"; head -15 /tmp/probe.err; fi
+          echo "probe_json_bytes=$(wc -c < /tmp/probe.json)"
+          if [ "$rc" = "255" ] || [ ! -s /tmp/probe.json ]; then
+            echo "::error::probe could not reach the host or produced no output (ssh rc=$rc)"
+            exit 1
+          fi
+          echo "probe_rc=$rc" >> "$GITHUB_OUTPUT"
+
+      - name: Secret-leak guard on the probe output
+        run: |
+          set -euo pipefail
+          # Fail WITHOUT printing the offending line: only the pattern NAME is reported.
+          if grep -nEi '(_key=|_token=|password=|passwd=|secret=|private_key|database_url=|minio_root_|admin_token|ghp_|github_token|bearer |BEGIN [A-Z ]*PRIVATE KEY)' /tmp/probe.json > /tmp/leak.txt; then
+            echo "::error::secret-leak guard tripped on the probe output ($(wc -l < /tmp/leak.txt) matching line(s)); refusing to publish. Matching lines are NOT printed."
+            cut -d: -f1 /tmp/leak.txt | head -5 > /dev/null
+            exit 1
+          fi
+          echo "leak guard OK: no env/secret/token pattern in the published payload"
+
+      - name: Publish identity (only image/service identity fields)
+        run: |
+          set -euo pipefail
+          echo "=== RUNTIME IDENTITY (baked label) ==="
+          jq -r '.[] | [.service, .verdict, .built_from_sha, .declared_sha, .image_digest, .image_created, .container_started_at, (.recreated_by_deploy|tostring)] | @tsv' /tmp/probe.json
+          echo "=== verdict tally ==="
+          jq -r 'group_by(.verdict)[] | "\(.[0].verdict): \(length)"' /tmp/probe.json
+          {
+            echo "## Runtime identity — baked label (\`org.opencontainers.image.revision\`)"
+            echo ""
+            echo "| service | verdict | built_from_sha | declared_sha | image_digest | image_created | container_started_at | recreated_by_deploy |"
+            echo "|---|---|---|---|---|---|---|---|"
+            jq -r '.[] | "| \(.service) | \(.verdict) | \(.built_from_sha) | \(.declared_sha) | \(.image_digest) | \(.image_created) | \(.container_started_at) | \(.recreated_by_deploy|tostring) |"' /tmp/probe.json
+            echo ""
+            echo "Fields are identity only: no environment variables, secrets or .env contents are read or printed."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "=== raw probe payload (identity fields only, by construction) ==="
+          jq -c '.[]' /tmp/probe.json

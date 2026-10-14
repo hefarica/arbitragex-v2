@@ -26,6 +26,14 @@ import { mapToOmniOpportunity, type OmniOpportunity } from "./types";
 // FE-0047: the MEM-RENDER-01 buffer as a pure seam (dedup/out-of-order are
 // §33 semantics — now testable without renderHook; behavior identical).
 import { createWsIngestBuffer, type WsIngestBuffer } from "./ws-ingest-buffer";
+// STREAM-SEQ-01 (§11.4): the ordered envelope leg + its idempotency verdicts.
+import {
+  parseStreamEnvelope,
+  sequenceVerdict,
+  type SeqState,
+  type StreamPublisherProgress,
+} from "./stream-contract";
+import { recordObservation } from "./search-state";
 
 // =============================================================================
 // Constants
@@ -60,6 +68,24 @@ const OPP_TTL_MS = 5 * 60_000;
 interface UseOmniOpportunitiesOptions {
   viableOnly?: boolean;
   initialOpportunities?: OmniOpportunity[];
+  /**
+   * Server lookback for the snapshot reconcile, in seconds (WINDOW-01, operator
+   * order 2026-09-27: the profitable detections are rejected rows that expire
+   * out of the 5-minute live window). Forwarded to the api-server as
+   * `max_age_seconds` (it clamps to [10, 86400]) and used as the local vigency
+   * TTL so a wider window is not immediately pruned away by the store.
+   * Default 300 s — the previous behaviour, unchanged.
+   */
+  maxAgeSeconds?: number;
+  /**
+   * ROUTE-REP-01 (operator order 2026-09-28): which row of a route group the
+   * server uses to represent it. `latest` (default) keeps the previous
+   * behaviour; `best_net` returns the COMPUTED row with the highest net in the
+   * window, so a later re-detection cannot bury a real gain. The SSR snapshot
+   * and this reconcile loop MUST send the same value, or the gains would appear
+   * on the first paint and vanish on the next 5-second reconcile.
+   */
+  routeRepresentative?: "latest" | "best_net";
 }
 
 // =============================================================================
@@ -84,27 +110,53 @@ interface UseOmniOpportunitiesOptions {
 export function useOmniOpportunities({
   viableOnly = false,
   initialOpportunities = [],
+  maxAgeSeconds = OPP_TTL_MS / 1000,
+  routeRepresentative = "latest",
 }: UseOmniOpportunitiesOptions) {
   // Store actions (stable references)
   const setOpportunities = useOmniStore((state) => state.setOpportunities);
   const setWindowTotal = useOmniStore((state) => state.setWindowTotal);
   const pruneStale = useOmniStore((state) => state.pruneStale);
   const setWsStatus = useOmniStore((state) => state.setWsStatus);
+  const markSnapshotReceived = useOmniStore((state) => state.markSnapshotReceived);
+  const setStrategyPublishers = useOmniStore((state) => state.setStrategyPublishers);
 
   // Refs for stable closure access
   const errorCountRef = useRef(0);
   const usingPollingRef = useRef(false);
   const pollingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const viableOnlyRef = useRef(viableOnly);
+  // WINDOW-01: the live lookback lives in a ref so the ≤5s reconcile loop reads
+  // the CURRENT window without being torn down and rebuilt on every change.
+  const maxAgeRef = useRef(maxAgeSeconds);
+  // ROUTE-REP-01: same seam for the representative selector.
+  const routeRepRef = useRef(routeRepresentative);
   const initializedRef = useRef(false);
   // MEM-RENDER-01: WS ingest buffer — upsert by id, flushed on WS_FLUSH_MS.
   // (Same per-render-allocation parity as the old `useRef(new Map())`.)
   const bufferRef = useRef<WsIngestBuffer>(createWsIngestBuffer());
+  // STREAM-SEQ-01 (§11.4): idempotency state of the ordered envelope leg, per
+  // strategy key. `seq` from the producer is the PRIMARY order authority; the
+  // raw `new_opportunity` leg has none and is ordered by the row's own clock
+  // inside the buffer/store.
+  const seqByStrategyRef = useRef<Map<string, SeqState>>(new Map());
+  /** Last transport status, so a reconnect (not the first connect) is visible. */
+  const lastStatusRef = useRef<WsStatus | null>(null);
 
   // Keep viableOnly ref in sync
   useEffect(() => {
     viableOnlyRef.current = viableOnly;
   }, [viableOnly]);
+
+  // WINDOW-01: keep the lookback ref in sync (and widen the local vigency TTL
+  // with it, so the snapshot's older rows survive the next prune).
+  useEffect(() => {
+    maxAgeRef.current = maxAgeSeconds;
+  }, [maxAgeSeconds]);
+
+  useEffect(() => {
+    routeRepRef.current = routeRepresentative;
+  }, [routeRepresentative]);
 
   // Initialize store with initial opportunities (once)
   useEffect(() => {
@@ -125,8 +177,13 @@ export function useOmniOpportunities({
       const viable = viableOnlyRef.current;
       // FE-EDGE-DIRECT-01: snapshot reconcile delivered edge-direct — the cards
       // feed has ONE origin (public edge), no Next double-hop proxy.
+      // WINDOW-01: the lookback rides the same request (api-server clamps it).
+      const maxAge = maxAgeRef.current;
+      // ORDER-01: same ordering the SSR snapshot asks for, so the reconcile
+      // cannot silently re-order the grid by arrival time.
+      // ROUTE-REP-01: same representative selector as the SSR snapshot.
       const res = await fetch(
-        `${getPublicEdgeBaseUrl()}/api/opportunities/live?viable_only=${viable}&limit=50`,
+        `${getPublicEdgeBaseUrl()}/api/opportunities/live?viable_only=${viable}&limit=50&max_age_seconds=${maxAge}&order=profit_usd&route_representative=${routeRepRef.current}`,
         {
           headers: { accept: "application/json" },
           signal: AbortSignal.timeout(POLL_INTERVAL_MS),
@@ -143,13 +200,19 @@ export function useOmniOpportunities({
       // AUDIT-CARDS-MINOR (§2): the envelope's window_total (WO-H4) rides the
       // same snapshot — null when the payload doesn't carry it (R8).
       setWindowTotal(parseWindowTotal(data));
+      // STREAM-SEQ-01 (§11.3): the snapshot's RECEIVE time is a real
+      // measurement — the card derives "antigüedad" from it, and reports ABSENT
+      // (never 0) until a snapshot has actually been accepted.
+      markSnapshotReceived(Date.now());
       // MEM-RENDER-01: vigency applies on every path, not only the WS flush —
       // a stale row inside the server snapshot must not resurrect a card.
-      pruneStale(OPP_TTL_MS);
+      // WINDOW-01: the TTL IS the requested lookback, so widening the window is
+      // not undone by the very next prune (pruning is by detection time).
+      pruneStale(maxAge * 1000);
     } catch {
       // Swallow — R8: the status badge (LIVE/POLLING/STALE) owns surfacing.
     }
-  }, [setOpportunities, setWindowTotal, pruneStale]);
+  }, [setOpportunities, setWindowTotal, pruneStale, markSnapshotReceived]);
 
   // HTTP polling fallback
   const startPolling = useCallback(() => {
@@ -189,11 +252,23 @@ export function useOmniOpportunities({
     // cadence. Collapses burst arrivals (measured up to ~2 events/s on prod)
     // into a single merge + a single vigency prune per second.
     const buffer = bufferRef.current;
+    // STREAM-SEQ-01: the producer's progress declarations collected since the
+    // last flush. Applied in ONE batched store write (MEM-RENDER-01 parity).
+    const pendingPublishers = new Map<string, StreamPublisherProgress>();
+    const applyPublishers = () => {
+      if (pendingPublishers.size === 0) return;
+      const entries = Array.from(pendingPublishers.entries());
+      pendingPublishers.clear();
+      setStrategyPublishers(entries);
+    };
     const flushPending = () => {
       const batch = buffer.flush();
+      applyPublishers();
       if (batch.length === 0) return;
       setOpportunities(batch);
-      pruneStale(OPP_TTL_MS);
+      // WINDOW-01: same TTL as the reconcile — the 1 Hz flush must not evict the
+      // wider window's rows a second after the snapshot delivered them.
+      pruneStale(maxAgeRef.current * 1000);
     };
     const flushTimer = setInterval(flushPending, WS_FLUSH_MS);
 
@@ -232,13 +307,72 @@ export function useOmniOpportunities({
             startPolling();
           }
         } else if (status === "LIVE") {
+          const reconnected = lastStatusRef.current !== null && lastStatusRef.current !== "LIVE";
           errorCountRef.current = 0;
+          if (reconnected) {
+            // §11.4 "reconexión y resync". Two things must happen on a reconnect
+            // and neither is optional:
+            //   · the producer's `seq` high-water marks are dropped. A restarted
+            //     api-server restarts its counter at 0, and keeping the old marks
+            //     would reject every legitimate post-restart event as stale;
+            //   · a source-of-truth snapshot is pulled immediately, because the
+            //     events missed while disconnected are gone — the grid must be
+            //     rebuilt from the SSOT rather than left showing a gap it cannot
+            //     see. The prune keeps the snapshot honest.
+            seqByStrategyRef.current.clear();
+            void refreshSnapshot();
+          }
         }
+        lastStatusRef.current = status;
       },
       onOpportunity: (opp) => {
         // MEM-RENDER-01: buffer the mapped row — the store is touched only by
-        // flushPending (1 Hz), not per message.
+        // flushPending (1 Hz), not per message. The sequencing verdict is the
+        // buffer's own (clock-based) when this leg carries no envelope.
         const mapped = mapToOmniOpportunity(opp as unknown as Record<string, unknown>);
+        buffer.upsert(mapped);
+      },
+      onStreamEvent: (raw) => {
+        // ── STREAM-SEQ-01 (§11.4): the ORDERED leg ──────────────────────────
+        // A malformed envelope is a hard reject with its own reason: it is never
+        // guessed into the grid, and it never falls back to "apply anyway".
+        const parsed = parseStreamEnvelope(raw);
+        if (!parsed.ok) return;
+        const envelope = parsed.envelope;
+        const seqMap = seqByStrategyRef.current;
+        const prevSeq: SeqState = seqMap.get(envelope.strategy_key) ?? {
+          seq: null,
+          event_id: null,
+        };
+        const verdict = sequenceVerdict(prevSeq, {
+          seq: envelope.seq,
+          event_id: envelope.event_id,
+        });
+        // Duplicate (same event_id — a replay) and stale (seq not advancing) are
+        // BOTH no-ops. Advancing the high-water mark on `first`/`accept` only.
+        if (verdict === "first" || verdict === "accept") {
+          seqMap.set(envelope.strategy_key, {
+            seq: envelope.seq,
+            event_id: envelope.event_id,
+          });
+        } else {
+          return;
+        }
+        // §11.3: the snapshot the observation belongs to rides the producer's
+        // progress group. When the group is absent but the envelope names a
+        // snapshot, the id is carried through anyway — it is a fact about the
+        // wire, not an invented metric.
+        const progress =
+          envelope.progress != null || envelope.snapshot_id != null
+            ? {
+                ...(envelope.progress ?? {}),
+                ...(envelope.snapshot_id != null ? { snapshot_id: envelope.snapshot_id } : {}),
+              }
+            : null;
+        if (progress != null) {
+          pendingPublishers.set(envelope.strategy_key, progress);
+        }
+        const mapped = mapToOmniOpportunity(envelope.payload);
         buffer.upsert(mapped);
       },
     });
@@ -256,9 +390,10 @@ export function useOmniOpportunities({
       // gone, so reset the SSOT status. Keeps the global header indicator
       // truthful (reads IDLE) instead of a stale LIVE/STALE on other pages.
       usingPollingRef.current = false;
+      lastStatusRef.current = null;
       setWsStatus("DISCONNECTED");
     };
-  }, [startPolling, setWsStatus, refreshSnapshot]);
+  }, [startPolling, setWsStatus, refreshSnapshot, setStrategyPublishers]);
 
   // Return nothing — consumers read directly from store
   // This enforces SSOT pattern

@@ -70,10 +70,16 @@ function fixtureRow(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function fakePool(opts: { rows?: Array<Record<string, unknown>>; fail?: boolean }) {
+function fakePool(opts: { rows?: Array<Record<string, unknown>>; fail?: boolean; sinkPresent?: boolean }) {
   const query = vi.fn(async (q: unknown) => {
     if (opts.fail) throw new Error("connection refused");
     const text = typeof q === "string" ? q : ((q as { text?: string }).text ?? "");
+    // A.8 sink-presence probe (`to_regclass('public.scored_opportunities')`).
+    // Defaults to PRESENT so the suite exercises the production query; the
+    // absent case is spelled out explicitly by the tests that want it.
+    if (text.includes("to_regclass('public.scored_opportunities')")) {
+      return { rows: [{ exists: opts.sinkPresent !== false }] };
+    }
     if (text.includes("FROM opportunities o")) {
       return { rows: opts.rows ?? [] };
     }
@@ -90,6 +96,28 @@ function fakePool(opts: { rows?: Array<Record<string, unknown>>; fail?: boolean 
 // of any single test's 5s timeout (the in-test dynamic import made the first
 // test absorb the transform and flake out).
 const { mountOpportunitiesLive } = await import("./opportunities-live.js");
+
+/**
+ * The LIVE window SQL among a fake pool's calls.
+ *
+ * A8-CONF-01 made the route probe the catalog (`to_regclass`) BEFORE the window
+ * query, so `mock.calls[0]` is no longer the window — tests must select by
+ * shape, not by position.
+ */
+function liveSqlOf(pool: unknown): string {
+  const calls = (pool as { query: ReturnType<typeof vi.fn> }).query.mock.calls.map((c) =>
+    String(c[0]),
+  );
+  return calls.find((s) => s.includes("WITH grouped AS")) ?? "";
+}
+
+/** The parameter array of the LIVE window call (not of the catalog probe). */
+function liveParamsOf(pool: unknown): unknown[] | undefined {
+  const call = (pool as { query: ReturnType<typeof vi.fn> }).query.mock.calls.find((c) =>
+    String(c[0]).includes("WITH grouped AS"),
+  );
+  return call?.[1] as unknown[] | undefined;
+}
 
 async function buildApp(pool: unknown, redis: unknown = null): Promise<Express> {
   const app = express();
@@ -185,9 +213,7 @@ describe("GET /api/v1/opportunities/live — window_total contract (WO-H4)", () 
     const pool = fakePool({ rows: [] });
     const app = await buildApp(pool);
     await request(app).get("/api/v1/opportunities/live?limit=50");
-    const firstCall = (pool.query as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
-    const text =
-      typeof firstCall === "string" ? firstCall : ((firstCall as { text?: string })?.text ?? "");
+    const text = liveSqlOf(pool);
     expect(text).toContain("COUNT(*) OVER ()");
     expect(text).toContain("AS window_total");
   });
@@ -207,7 +233,10 @@ describe("opportunity evidence provenance — constructed unit inputs, not produ
     expect(row.net_expected_profit_usd).toBe(7.240022);
     expect(row.paper_status).toBe("paper_rejected");
     for (const key of ["simulated_net_profit_usd", "simulated_amount_in_usd", "simulated_roi_pct",
-      "simulated_cost_breakdown", "simulated_at", "simulated_target"]) expect(row[key], key).toBeNull();
+      "simulated_cost_breakdown", "simulated_at", "simulated_target",
+      // CARDS-NOTIONAL-01: the ladder's own gross/Σcosts are null too when no
+      // forward ran — never a 0 the card could pair with a canonical figure.
+      "simulated_gross_usd", "simulated_costs_total_usd"]) expect(row[key], key).toBeNull();
   });
   for (const hops of [2, 3, 4, 5]) {
     it(`${hops} hops preserve every pool/token and ALL intermediate DEX names`, async () => {
@@ -303,6 +332,35 @@ describe("opportunity evidence provenance — constructed unit inputs, not produ
     expect(result.simulated_at).toBe(sim.simulated_at);
     expect(result.net_expected_profit_usd).toBe(0.5);
   });
+
+  // CARDS-NOTIONAL-01 (2026-09-26): the ladder's OWN gross and Σcosts must ride
+  // the wire next to its net. Without them every consumer had to pair the SIM
+  // cost breakdown with `expected_profit_usd` / `net_expected_profit_usd` —
+  // canonical figures the SEARCHER produced at the searcher's own size — which
+  // is how the card printed `IN $0.00` beside `GROSS $1.47M` and
+  // `Total cost $73.4k` beside `Net yield -$0.0000`.
+  it("CARDS-NOTIONAL-01: publishes the ladder's own gross and Σcosts, closed against its net", async () => {
+    const { __forTesting } = await import("./opportunities-live.js");
+    const cost = {gas_usd: 11.8, lp_fees_usd: 3, slippage_usd: 5, failure_buffer_usd: 0.4,
+      copied_buffer_usd: 12.61391713, capital_cost_usd: 0, ops_overhead_usd: 0.01,
+      flashloan_fee_usd: 0.9, relay_fee_usd: 1.261391713};
+    const total = 34.985308843;
+    const sim = {forward:{gross_usd: 25.22783426, net_usd: 25.22783426 - total,
+        costs_total_usd: total, amount_in_usd: 1000, roi_pct: -0.97,
+        cost_breakdown: cost, notes: ["basis=amount_in_wei"]},
+      inverse:null, simulated_at:"2026-09-26T00:00:00Z"};
+    const result = __forTesting.rowToOpportunity(
+      fixtureRow() as never, sim as never, null, new Map(), new Map(),
+    );
+    expect(result.simulated_gross_usd).toBe(25.22783426);
+    expect(result.simulated_costs_total_usd).toBe(total);
+    // Closure inside ONE computation, on the wire itself.
+    expect(
+      Math.abs(result.simulated_net_profit_usd - (result.simulated_gross_usd - result.simulated_costs_total_usd)),
+    ).toBeLessThanOrEqual(0.005);
+    // The basis marker travels with the ladder.
+    expect(result.simulated_notes).toContain("basis=amount_in_wei");
+  });
 });
 
 // CARDS-DEDUP-HOPS (2026-09-20, WO-3): LIVE_QUERY now collapses re-detections
@@ -316,17 +374,18 @@ describe("CARDS-DEDUP-HOPS — grouped CTE + route-group aggregates on the wire"
     const pool = fakePool({ rows: [] });
     const app = await buildApp(pool);
     await request(app).get("/api/v1/opportunities/live?limit=50");
-    const firstCall = (pool.query as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
-    const text =
-      typeof firstCall === "string" ? firstCall : ((firstCall as { text?: string })?.text ?? "");
+    const text = liveSqlOf(pool);
     expect(text).toContain("WITH grouped AS");
     expect(text).toContain("MIN(o.detected_at) AS first_seen_at");
     expect(text).toContain("MAX(o.detected_at) AS last_seen_at");
     expect(text).toContain("COUNT(*)::int      AS confirmations");
     // id DESC tiebreaker: same-burst detections must resolve to the same
-    // latest row every poll (economics stability, WARN-1 review WO-3).
+    // representative row every poll (economics stability, WARN-1 review WO-3).
+    // ROUTE-REP-01 (2026-09-28): the primary key is `$6`-gated — with
+    // route_representative=best_net the group is represented by its computed
+    // best net, so a later re-detection cannot bury a real gain.
     expect(text).toContain(
-      "(ARRAY_AGG(o.id ORDER BY o.detected_at DESC, o.id DESC))[1] AS latest_id",
+      "(ARRAY_AGG(o.id ORDER BY\n       CASE WHEN $6::bool\n            THEN (o.economics->>'net_profit_usd')::numeric\n            ELSE NULL END DESC NULLS LAST,\n       o.detected_at DESC, o.id DESC))[1] AS latest_id",
     );
     expect(text).toContain("GROUP BY 1");
     expect(text).toContain("JOIN opportunities o");
@@ -336,6 +395,35 @@ describe("CARDS-DEDUP-HOPS — grouped CTE + route-group aggregates on the wire"
     expect(text).toContain(
       "concat_ws('|',\n      o.chain_id::text,\n      COALESCE(o.chain_id_out::text, ''),\n      COALESCE(o.strategy_kind, ''),\n      o.token_in,\n      o.token_out,\n      o.dex_a,\n      COALESCE(o.dex_b, '')\n    ) AS route_group_key",
     );
+  });
+
+  // ROUTE-REP-01 (2026-09-28): the representative selector is opt-in. The
+  // default must stay `latest` (previous behaviour for every other consumer),
+  // and an unknown value must never open a third silent mode.
+  it("(h) ROUTE-REP-01: best_net rides the query as $6; latest is the default", async () => {
+    const poolBest = fakePool({ rows: [] });
+    const appBest = await buildApp(poolBest);
+    const resBest = await request(appBest).get(
+      "/api/v1/opportunities/live?limit=50&route_representative=best_net",
+    );
+    const paramsBest = liveParamsOf(poolBest);
+    expect(paramsBest?.[5]).toBe(true);
+    expect(resBest.body?.route_representative).toBe("best_net");
+
+    const poolDefault = fakePool({ rows: [] });
+    const appDefault = await buildApp(poolDefault);
+    const resDefault = await request(appDefault).get("/api/v1/opportunities/live?limit=50");
+    const paramsDefault = liveParamsOf(poolDefault);
+    expect(paramsDefault?.[5]).toBe(false);
+    expect(resDefault.body?.route_representative).toBe("latest");
+
+    const poolBogus = fakePool({ rows: [] });
+    const appBogus = await buildApp(poolBogus);
+    const resBogus = await request(appBogus).get(
+      "/api/v1/opportunities/live?limit=50&route_representative=cuac",
+    );
+    expect(liveParamsOf(poolBogus)?.[5]).toBe(false);
+    expect(resBogus.body?.route_representative).toBe("latest");
   });
 
   it("(g) route-group aggregates forward verbatim; TIMESTAMPTZ Date → ISO string", async () => {
@@ -409,5 +497,422 @@ describe("WO-G2-PARITY — block_number wire normalization (int8-as-string)", ()
       undefined, null, new Map(), new Map(),
     );
     expect(result.block_number).toBeNull();
+  });
+});
+
+// ── ECON-DECLARE-01 (2026-09-27) ─────────────────────────────────────────────
+// The operator's complaint: "hay muchos valores que no se ven, no están
+// declarados." The census is how the closure is MEASURED from outside the
+// producer instead of asserted. Baseline it must reproduce, measured on the live
+// feed (33 rows, 2026-09-27T02:06Z):
+//
+//     route_metadata present            33/33
+//     economics_amount_in_wei declared   0/33   ← the entire gap
+//     economics_basis declared           0/33
+//     expected_profit_usd present       18/33
+//     net_expected_profit_usd present   15/33
+//     roi_pct present                    0/33
+//     risk_score present                 0/33
+
+describe("ECON-DECLARE-01 — economics-declaration census", () => {
+  /** One live-shaped item: the fields the census reads, and nothing else. */
+  const item = (over: Record<string, unknown> = {}) => ({
+    amount_in_wei: "1000000000000000000",
+    expected_profit_usd: 12.5,
+    net_expected_profit_usd: -50,
+    roi_pct: null,
+    risk_score: null,
+    route_metadata: { dex_adapters: ["uniswap-v2", "sushiswap"] },
+    ...over,
+  });
+
+  it("reproduces the measured baseline: route present, NOTHING declared", async () => {
+    const { __forTesting } = await import("./opportunities-live.js");
+    const census = __forTesting.censusEconomicsDeclaration([
+      item(),
+      item({ expected_profit_usd: null }),
+      item({ net_expected_profit_usd: null, amount_in_wei: "0" }),
+    ]);
+    expect(census.rows).toBe(3);
+    expect(census.rows_with_route_metadata).toBe(3);
+    // The gap, stated as a number: 0 of 3 rows declare what the figures are.
+    expect(census.rows_with_declared_notional).toBe(0);
+    expect(census.rows_with_declared_basis).toBe(0);
+    expect(census.declaration_rate_pct).toBe(0);
+    // Every figure that IS present counts against the declaration rate.
+    expect(census.present_but_undeclared["expected_profit_usd"]).toBe(2);
+    expect(census.present_but_undeclared["net_expected_profit_usd"]).toBe(2);
+    // amount "0" is not a carried amount — it is the lost-decoder state (R8).
+    expect(census.present_but_undeclared["amount_in_wei"]).toBe(2);
+  });
+
+  it("goes to 100% once a producer declares the notional and the basis", async () => {
+    const { __forTesting } = await import("./opportunities-live.js");
+    const census = __forTesting.censusEconomicsDeclaration([
+      item({
+        route_metadata: {
+          dex_adapters: ["uniswap-v2", "sushiswap"],
+          economics_amount_in_wei: "1000000",
+          economics_basis: { gross: "probe", net: "kernel", amount: "intent" },
+        },
+      }),
+      item({
+        route_metadata: {
+          dex_adapters: ["uniswap-v2", "sushiswap"],
+          economics_amount_in_wei: "1000000000000000000",
+          economics_basis: { gross: "probe", net: "kernel", amount: "stamped" },
+        },
+      }),
+    ]);
+    expect(census.rows_with_declared_notional).toBe(2);
+    expect(census.rows_with_declared_basis).toBe(2);
+    expect(census.declaration_rate_pct).toBe(100);
+    expect(census.declared_basis_words).toEqual({
+      probe: 2, kernel: 2, intent: 1, stamped: 1,
+    });
+    // gross + net + amount are all declared ⇒ nothing counts against the rate.
+    expect(census.present_but_undeclared).toEqual({});
+  });
+
+  it("counts roi_pct / risk_score as undeclared when present — no vocabulary exists", async () => {
+    const { __forTesting } = await import("./opportunities-live.js");
+    const census = __forTesting.censusEconomicsDeclaration([
+      item({ roi_pct: 0.12, risk_score: 0.34 }),
+    ]);
+    // These two have no basis word on the wire at all (0/33 live) — the census
+    // must report the gap rather than treat their presence as declared.
+    expect(census.present_but_undeclared["roi_pct"]).toBe(1);
+    expect(census.present_but_undeclared["risk_score"]).toBe(1);
+    expect(census.economic_figures_present["roi_pct"]).toBe(1);
+  });
+
+  it("a malformed declaration is NOT counted as declared (no repair)", async () => {
+    const { __forTesting } = await import("./opportunities-live.js");
+    const census = __forTesting.censusEconomicsDeclaration([
+      item({
+        route_metadata: {
+          dex_adapters: ["uniswap-v2"],
+          economics_amount_in_wei: "not-a-number",
+          economics_basis: { gross: "  " },
+        },
+      }),
+    ]);
+    expect(census.rows_with_declared_notional).toBe(0);
+    expect(census.rows_with_declared_basis).toBe(0);
+    expect(census.declaration_rate_pct).toBe(0);
+  });
+
+  it("R8: an empty batch reports 0, never null and never a fabricated rate", async () => {
+    const { __forTesting } = await import("./opportunities-live.js");
+    const census = __forTesting.censusEconomicsDeclaration([]);
+    expect(census.rows).toBe(0);
+    expect(census.declaration_rate_pct).toBe(0);
+    expect(census.declared_basis_words).toEqual({});
+    expect(census.present_but_undeclared).toEqual({});
+  });
+
+  it("counts a row with no route_metadata without inventing one", async () => {
+    const { __forTesting } = await import("./opportunities-live.js");
+    const census = __forTesting.censusEconomicsDeclaration([
+      item({ route_metadata: null }),
+    ]);
+    expect(census.rows_with_route_metadata).toBe(0);
+    expect(census.rows_with_declared_notional).toBe(0);
+    // The figure is still present and still undeclared — stated, not hidden.
+    expect(census.present_but_undeclared["expected_profit_usd"]).toBe(1);
+  });
+});
+
+// ── ALWAYS-COMPUTE (operator mandate 2026-09-27) ─────────────────────────────
+// Deliverables under test (unit level; the testcontainers file covers the SQL
+// column): (2) required_amount_in_usd can no longer vanish via JSON, (3) the
+// per-field missing_economics census, (4) numeric-string hardening at this
+// JSON boundary, (1) the economics object passes through to the wire shape.
+
+describe("ALWAYS-COMPUTE — hardenEconomics (boundary hardening)", () => {
+  it("accepts native numbers verbatim and numeric strings for USD fields", async () => {
+    const { __forTesting } = await import("./opportunities-live.js");
+    const out = __forTesting.hardenEconomics({
+      computation_status: "computed",
+      gross_profit_usd: 12.5,
+      net_profit_usd: "-50",          // drifted producer → tolerated
+      total_cost_usd: "62.5",
+      amount_in_wei: "1000000000000000000",
+      amount_out_wei: "990000000000000000",
+    });
+    expect(out).not.toBeNull();
+    expect(out!.gross_profit_usd).toBe(12.5);
+    expect(out!.net_profit_usd).toBe(-50);
+    expect(out!.total_cost_usd).toBe(62.5);
+    expect(out!.amount_in_wei).toBe("1000000000000000000");
+  });
+
+  it("degrades unparseable USD strings and non-digit wei strings to null (R8, never 0)", async () => {
+    const { __forTesting } = await import("./opportunities-live.js");
+    const out = __forTesting.hardenEconomics({
+      computation_status: "partial",
+      gross_profit_usd: "  ",          // empty-after-trim → null
+      net_profit_usd: "abc",
+      roi_pct: "1e999",                // Infinity → not finite → null
+      amount_in_wei: "0xdeadbeef",     // not /^-?\d+$/ → null
+      amount_out_wei: 12345,           // number where wei-string expected → null
+    });
+    expect(out!.gross_profit_usd).toBeNull();
+    expect(out!.net_profit_usd).toBeNull();
+    expect(out!.roi_pct).toBeNull();
+    expect(out!.amount_in_wei).toBeNull();
+    expect(out!.amount_out_wei).toBeNull();
+  });
+
+  it("returns null for absent/non-object columns (pre-migration rows)", async () => {
+    const { __forTesting } = await import("./opportunities-live.js");
+    expect(__forTesting.hardenEconomics(null)).toBeNull();
+    expect(__forTesting.hardenEconomics(undefined as never)).toBeNull();
+    expect(__forTesting.hardenEconomics("nope" as never)).toBeNull();
+  });
+});
+
+describe("ALWAYS-COMPUTE — missingEconomicsCensus (deliverable #3)", () => {
+  it("counts non-zero on TODAY's production shape (nulls everywhere) — measures the gap", async () => {
+    const { __forTesting } = await import("./opportunities-live.js");
+    // The operator's audit shape: rejected row, gross/net/roi null, no
+    // economics object, no sim context, no ledger.
+    const row = fixtureRow({
+      expected_profit_usd: null,
+      net_expected_profit_usd: null,
+      roi_pct: null,
+      route_metadata: null,
+      economics: null,
+    });
+    const census = __forTesting.missingEconomicsCensus([row as never], new Map());
+    expect(census.rows).toBe(1);
+    expect(census.fields.amount_in_usd).toBe(1);
+    expect(census.fields.gross_usd).toBe(1);
+    expect(census.fields.costs_usd).toBe(1);
+    expect(census.fields.net_usd).toBe(1);
+    expect(census.fields.roi_pct).toBe(1);
+    expect(census.fields.target_usd).toBe(1);
+    expect(census.fields.achieved_usd).toBe(1);
+    expect(census.fields.required_amount_usd).toBe(1);
+    expect(census.fields.ledger).toBe(1);
+  });
+
+  it("near-zero for a fully-computed rejected row (the post-patch expectation)", async () => {
+    const { __forTesting } = await import("./opportunities-live.js");
+    const econ = {
+      computation_status: "computed",
+      amount_in_usd: 2350,
+      gross_profit_usd: 12.5,
+      gas_usd: 0.18,
+      flash_fee_usd: 2.12,
+      bribe_usd: 0,
+      other_costs_usd: 0.01,
+      total_cost_usd: 2.31,
+      net_profit_usd: -50,
+      roi_pct: -2.13,
+      target_net_usd: 25,
+      target_delta_usd: -75,
+      meets_target: false,
+      legs: [{ token_in: "0xa", token_out: "0xb", amount_in_wei: "1", amount_out_wei: "1" }],
+    };
+    const row = fixtureRow({
+      expected_profit_usd: 12.5,
+      net_expected_profit_usd: -50,
+      roi_pct: -2.13,
+      route_metadata: { leg_amounts_in: ["1"] },
+      economics: econ,
+    });
+    const sim = new Map([
+      [row.id as string, {
+        forward: null,
+        inverse: {
+          target_net_usd: 25, target_roi_pct: null, target_source: "simulation_tab",
+          binding_floor: "net-per-usd-nonpositive",
+          required_amount_in_usd: "Infinity", required_is_infinite: true,
+          cap_amount_in_usd: 1000, suggested_amount_in_usd: 0, suggested_net_usd: -50,
+          suggested_roi_pct: 0, meets_target_at_cap: false,
+          estimation_basis: "observed-gross", notes: [],
+        },
+        simulated_at: new Date().toISOString(),
+      }],
+    ]);
+    const census = __forTesting.missingEconomicsCensus([row as never], sim as never);
+    expect(census.fields.amount_in_usd).toBe(0);
+    expect(census.fields.gross_usd).toBe(0);
+    expect(census.fields.costs_usd).toBe(0);
+    expect(census.fields.net_usd).toBe(0);
+    expect(census.fields.roi_pct).toBe(0);
+    expect(census.fields.target_usd).toBe(0);
+    expect(census.fields.achieved_usd).toBe(0);
+    // The "Infinity" sentinel is a COMPUTED verdict, not a missing field.
+    expect(census.fields.required_amount_usd).toBe(0);
+    expect(census.fields.ledger).toBe(0);
+  });
+});
+
+describe("ALWAYS-COMPUTE — rowToOpportunity economics passthrough (deliverable #1)", () => {
+  it("carries the economics object into the wire shape, hardened", async () => {
+    const { __forTesting } = await import("./opportunities-live.js");
+    const result = __forTesting.rowToOpportunity(
+      fixtureRow({
+        economics: {
+          computation_status: "computed",
+          gross_profit_usd: "12.5",
+          net_profit_usd: -50,
+          amount_in_wei: "1000",
+          not_computed_reasons: { dex_fees_usd: "included_in_amount_out_post_fee" },
+        },
+      }) as never,
+      undefined, null, new Map(), new Map(),
+    ) as Record<string, unknown>;
+    const econ = result.economics as Record<string, unknown>;
+    expect(econ).not.toBeNull();
+    expect(econ.computation_status).toBe("computed");
+    expect(econ.gross_profit_usd).toBe(12.5); // numeric string hardened → number
+    expect(econ.net_profit_usd).toBe(-50);
+  });
+
+  it("emits economics:null on legacy rows (absence is a state, R8)", async () => {
+    const { __forTesting } = await import("./opportunities-live.js");
+    const result = __forTesting.rowToOpportunity(
+      fixtureRow({ economics: null }) as never,
+      undefined, null, new Map(), new Map(),
+    ) as Record<string, unknown>;
+    expect(result.economics).toBeNull();
+  });
+});
+
+// A8-CONF-01 (2026-10-03). The home card's "conf" read
+// `opp.confidence_score_bps` off a payload that never carried it: the card was
+// permanently "— conf (unscored)" while the Gate-C scorer was in fact writing
+// ~10M rows into scored_opportunities. These tests pin the three facts that
+// keep that from silently regressing:
+//   (i)   LIVE_QUERY actually joins the sink (dropping the join while the
+//         fixture keeps injecting scored_* columns = silent dead wire again);
+//   (ii)  the bps mapping + R8 None/Some(0.0) distinction;
+//   (iii) the declared reason on the not-computed path (R10).
+describe("A8-CONF-01 — confidence scoring wire end-to-end", () => {
+  it("(i) LIVE_QUERY joins scored_opportunities with the indexed key and a single-row LATERAL", async () => {
+    const pool = fakePool({ rows: [] });
+    const app = await buildApp(pool);
+    await request(app).get("/api/v1/opportunities/live?limit=50");
+    const text = liveSqlOf(pool);
+    // The join key MUST cast the uuid: opportunities.id is uuid, the sink's
+    // opportunity_id is TEXT (migration 097).
+    expect(text).toContain("s.opportunity_id = o.id::text");
+    expect(text).toContain("FROM scored_opportunities s");
+    // LATERAL + LIMIT 1: the emitter scores on BOTH the accept and the reject
+    // path, so a plain LEFT JOIN would duplicate the card.
+    expect(text).toContain("LEFT JOIN LATERAL (");
+    expect(text).toContain("ORDER BY s.created_at DESC, s.id DESC");
+    expect(text).toContain("LIMIT 1");
+    expect(text).toContain("sc.posterior_prob       AS scored_posterior_prob");
+  });
+
+  it("maps the scored posterior to integer basis points, keeping the un-rounded value", async () => {
+    const { __forTesting } = await import("./opportunities-live.js");
+    const result = __forTesting.rowToOpportunity(
+      fixtureRow({
+        scored_posterior_prob: 0.87,
+        scored_kelly_fraction: 0.125,
+        scored_bayesian_accepted: true,
+        scored_emission_outcome: "accepted",
+        scored_rejection_reason: null,
+      }) as never,
+      undefined, null, new Map(), new Map(),
+    );
+    expect(result.confidence_score_bps).toBe(8700);
+    expect(result.posterior_probability_bps).toBe(8700);
+    expect(result.posterior_prob).toBe(0.87);
+    expect(result.kelly_fraction_bps).toBe(1250);
+    expect(result.scoring_decision).toBe("accepted");
+    expect(result.scoring_reason).toBeNull();
+    expect(result.confidence_state).toBe("computed");
+    expect(result.confidence_source).toBe("scored_opportunities.posterior_prob");
+    expect(result.confidence_reason).toBeNull();
+  });
+
+  it("a sub-basis-point posterior is COMPUTED 0 bps, not NOT COMPUTED — the raw float rides along", async () => {
+    const { __forTesting } = await import("./opportunities-live.js");
+    // Real prod value (scored_opportunities, 2026-10-03): 2.600356865160073e-05.
+    const result = __forTesting.rowToOpportunity(
+      fixtureRow({
+        scored_posterior_prob: 2.600356865160073e-5,
+        scored_kelly_fraction: 0,
+        scored_bayesian_accepted: false,
+        scored_emission_outcome: "rejected",
+        scored_rejection_reason: "non_positive_profit",
+      }) as never,
+      undefined, null, new Map(), new Map(),
+    );
+    expect(result.confidence_score_bps).toBe(0);
+    expect(result.confidence_state).toBe("computed");
+    expect(result.confidence_reason).toBeNull();
+    // The distinction the card needs to avoid dressing this as a hard zero.
+    expect(result.posterior_prob).toBeCloseTo(2.600356865160073e-5, 12);
+    expect(result.scoring_decision).toBe("rejected");
+    expect(result.scoring_reason).toBe("non_positive_profit");
+  });
+
+  it("no scored row for the opportunity => NO COMPUTADO with an explicit reason, never 0 (R8/R10)", async () => {
+    const { __forTesting } = await import("./opportunities-live.js");
+    const result = __forTesting.rowToOpportunity(
+      fixtureRow({ scored_posterior_prob: null }) as never,
+      undefined, null, new Map(), new Map(),
+    );
+    expect(result.confidence_score_bps).toBeNull();
+    expect(result.confidence_state).toBe("not_computed");
+    expect(result.confidence_reason).toBe("no_scored_row_for_opportunity");
+    expect(result.confidence_source).toBeNull();
+  });
+
+  it("a non-finite posterior degrades to NOT COMPUTADO instead of laundering NaN onto the wire", async () => {
+    const { __forTesting } = await import("./opportunities-live.js");
+    const result = __forTesting.rowToOpportunity(
+      fixtureRow({ scored_posterior_prob: Number.NaN }) as never,
+      undefined, null, new Map(), new Map(),
+    );
+    expect(result.confidence_score_bps).toBeNull();
+    expect(result.posterior_prob).toBeNull();
+    expect(result.confidence_state).toBe("not_computed");
+  });
+
+  // CI-GATE-01 (2026-10-04): on a database where `scored_opportunities` is not
+  // migrated, naming it made the WHOLE live window fail ("relation does not
+  // exist" => 503 query_failed) — one optional enrichment taking down every
+  // card. Measured on integration-tests run 37171302087 (5 happy-path GETs in
+  // backend/api-server/test/opportunities-live.test.ts returned 503), a defect
+  // of the same family the testcontainer migration list already documents four
+  // times (099 route_metadata, 102 cartridge_id, 121 detector_id, 126
+  // economics). The route now probes the catalog and degrades ONLY that field.
+  it("sink absent => 200 with an explicit not-computed reason, never a 503 feed outage", async () => {
+    const pool = fakePool({ rows: [fixtureRow()], sinkPresent: false });
+    const app = await buildApp(pool);
+    const r = await request(app).get("/api/v1/opportunities/live?limit=50");
+    expect(r.status).toBe(200);
+    const item = r.body.items[0];
+    expect(item.confidence_score_bps).toBeNull();
+    expect(item.confidence_state).toBe("not_computed");
+    expect(item.confidence_reason).toBe("scored_opportunities_sink_absent");
+    // The rest of the feed is untouched: the row still carries its own fields.
+    expect(item.id).toBe("00000000-0000-4000-8000-000000000001");
+    expect(item.status).toBe("detected");
+    // And the SQL must not reference the absent relation AT ALL — no FROM, no
+    // LATERAL. (Comments may still name it; Postgres parses only the code.)
+    const liveSql = liveSqlOf(pool);
+    expect(liveSql).not.toContain("FROM scored_opportunities s");
+    expect(liveSql).not.toContain("LEFT JOIN LATERAL (");
+    expect(liveSql).toContain("NULL::double precision AS scored_posterior_prob");
+  });
+
+  it("sink present => the production query keeps the indexed LATERAL join", async () => {
+    const pool = fakePool({ rows: [fixtureRow({ scored_posterior_prob: 0.9 })], sinkPresent: true });
+    const app = await buildApp(pool);
+    const r = await request(app).get("/api/v1/opportunities/live?limit=50");
+    expect(r.status).toBe(200);
+    expect(r.body.items[0].confidence_score_bps).toBe(9000);
+    const liveSql = liveSqlOf(pool);
+    expect(liveSql).toContain("LEFT JOIN LATERAL (");
+    expect(liveSql).toContain("s.opportunity_id = o.id::text");
   });
 });

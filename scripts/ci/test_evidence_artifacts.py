@@ -1,7 +1,7 @@
 import copy
 import unittest
 
-from evidence_artifacts import select_run, validate_payload
+from evidence_artifacts import publication_verdict, select_run, validate_payload
 
 
 class EvidenceTests(unittest.TestCase):
@@ -44,6 +44,24 @@ class EvidenceTests(unittest.TestCase):
             changed[key] = value
             with self.subTest(key=key, value=value), self.assertRaises(ValueError):
                 validate_payload(changed, "unit_tests", self.sha, self.repo, 10)
+
+    # DEPLOY-VERAZ-01: this step runs AFTER the deployment, so a superseded main
+    # must skip the publication instead of reddening a delivery that already
+    # happened — while the step one hop from POSTing stays a hard refusal.
+    def test_superseded_main_skips_the_publication_instead_of_failing_the_delivery(self):
+        other = "b" * 40
+        self.assertEqual(publication_verdict(self.sha, self.sha, False), "publish")
+        self.assertEqual(publication_verdict(other, self.sha, False), "skip-superseded")
+        self.assertEqual(publication_verdict(self.sha, self.sha, True), "publish")
+        self.assertEqual(publication_verdict(other, self.sha, True), "refuse")
+
+    def test_only_a_superseded_sha_may_skip_and_only_while_selecting(self):
+        # The skip is narrow: any other mismatch still refuses, in both phases.
+        for main_sha in ("", "c" * 40, "a" * 39):
+            for validating in (False, True):
+                with self.subTest(main_sha=main_sha, validating=validating):
+                    self.assertNotEqual(publication_verdict(main_sha, self.sha, validating), "publish")
+        self.assertEqual(publication_verdict("c" * 40, self.sha, True), "refuse")
 
 
 if __name__ == "__main__":

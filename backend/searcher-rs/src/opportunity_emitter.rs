@@ -90,11 +90,9 @@ pub enum EmitOutcome {
     /// Successfully written to PG only (Redis publish was not reached yet).
     /// NOTE: in normal operation this variant is never returned — we always
     /// attempt both. It is reserved for future partial-emit modes.
-    #[allow(dead_code)]
     Persisted,
     /// Successfully published to Redis only (PG pool is `None`).
     /// Superseded by `NoDbConfigured` in the current implementation.
-    #[allow(dead_code)]
     Published,
     /// Successfully written to PG and published to Redis.
     PersistedAndPublished,
@@ -390,6 +388,10 @@ impl OpportunityEmitter {
         // construction by the engine/cartridge that built the row.
         admission.opportunity.pipeline_latency_ms =
             pipeline_latency_ms_now(admission.opportunity.detected_at);
+        // ALWAYS-COMPUTE (2026-09-27): the single publish gate guarantees the
+        // economics object exists on the accepted row too — producers that
+        // attached one keep it verbatim (only quote_block backfills).
+        crate::economics::stamp_on_emit(&mut admission.opportunity);
         let opportunity = &admission.opportunity;
         // WO-FUNNEL-01 (2026-09-17): chain bucket of the opportunity, not legacy chain 0.
         chain_counters(opportunity.chain_id)
@@ -426,11 +428,23 @@ impl OpportunityEmitter {
         // Thread the multi-hop route topology (when the caller has it) so the
         // route_metadata JSONB column is populated for sim-ctl A1 enrichment and
         // the exchange dashboard's multi-leg A→B view.
-        let pg_ok = self.try_insert_pg_with_route(opportunity, route).await;
+        //
+        // ECON-DECLARE-01 (2026-09-27): the SAME clone carries the notional-basis
+        // declaration, so every accepted row states which producer computed its
+        // figures and at which size — the declaration a card needs in order to
+        // SHOW a figure instead of hiding it (operator: "no están declarados").
+        let declared_route = route_with_economics_declaration(opportunity, route, None);
+        let pg_ok = self
+            .try_insert_pg_with_route(opportunity, declared_route.as_ref())
+            .await;
 
         // ── Redis publish ─────────────────────────────────────────────────
         let mut redis = self.redis.clone();
         publisher::publish(&mut redis, opportunity).await?;
+        // ALWAYS-COMPUTE: per-field census at the emit boundary + the R9
+        // one-line-per-window summary flush (both branches, both honest).
+        crate::economics::observe_missing(opportunity);
+        crate::economics::maybe_flush_window(&mut redis).await;
         // WO-10 (2026-09-06): two cuts of the same completed emission:
         // (a) monotonic emit-boundary span (real-I/O entry → XADD complete);
         // (b) wall-clock construction→publish span from the `detected_at`
@@ -537,12 +551,27 @@ impl OpportunityEmitter {
         // emit-boundary `pipeline_latency_ms` is stamped — rejected rows carry
         // the same two wire fields as accepted ones.
         let rejected = stamped_for_emit(opportunity, Some(rejection_reason));
+        // ALWAYS-COMPUTE (2026-09-27): census at the emit boundary (rejected
+        // branch). `stamped_for_emit` already guaranteed the object exists.
+        crate::economics::observe_missing(&rejected);
 
-        let pg_ok = self.try_insert_pg_with_route(&rejected, route).await;
+        // ECON-DECLARE-01 (2026-09-27): a REJECTED row is exactly the row the
+        // operator could not read — `roi_pct`/`risk_score` are wiped and the
+        // economics were the only figures left, with no statement of what size
+        // they belonged to. The declaration rides the same PG write so the card
+        // can show the computed figures WITH their basis on the FAIL branch too
+        // (operator's rule: "FAIL tiene que mostrarme qué hizo y cuánto da").
+        let stamped_probe = cards_numbers_probe_stamp(opportunity);
+        let declared_route =
+            route_with_economics_declaration(&rejected, route, stamped_probe.as_deref());
+        let pg_ok = self
+            .try_insert_pg_with_route(&rejected, declared_route.as_ref())
+            .await;
 
         // ── Redis publish ─────────────────────────────────────────────────
         let mut redis = self.redis.clone();
         publisher::publish(&mut redis, &rejected).await?;
+        crate::economics::maybe_flush_window(&mut redis).await;
         // WO-10 (2026-09-06): same two cuts as the accepted path. The rejected
         // clone preserves `detected_at` verbatim — the construction→publish
         // wall-clock span reflects the FULL evaluation this row survived
@@ -794,6 +823,147 @@ fn pipeline_latency_ms_now(detected_at: chrono::DateTime<chrono::Utc>) -> Option
     }
 }
 
+/// ECON-DECLARE-01 (2026-09-27) — the emit-boundary CARDS-NUMBERS-01 probe stamp.
+///
+/// Returns `Some(probe)` (decimal wei) when this row carries computed economics
+/// but a lost (`"0"`) `amount_in_wei` — the case the stamp exists for — else
+/// `None`. Pure: the caller applies it. Extracted from `stamped_for_emit` so the
+/// declaration below can name the SAME probe the stamp applied instead of
+/// recomputing a possibly different one.
+fn cards_numbers_probe_stamp(opp: &Opportunity) -> Option<String> {
+    if !(opp.expected_profit_usd.is_some() || opp.net_expected_profit_usd.is_some())
+        || opp.amount_in_wei != "0"
+    {
+        return None;
+    }
+    let decimals = crate::engines::dex_engine::canonical_token_decimals_str(&opp.token_in);
+    let probe = ethers::types::U256::from(10u8).pow(ethers::types::U256::from(decimals));
+    Some(probe.to_string())
+}
+
+/// ECON-DECLARE-01 — the engine PROBE notional for a row: one native unit of
+/// `token_in` (`10^decimals`), the size the engines' fast-filter figures are
+/// computed at (B1 / HOPS-UNITS-01: `probe ONE native unit (10^decimals)`).
+/// Uses the same canonical decimals table as the engines, so an unknown token
+/// takes the documented default rather than a per-token guess.
+fn engine_probe_notional(token_in: &str) -> String {
+    let decimals = crate::engines::dex_engine::canonical_token_decimals_str(token_in);
+    ethers::types::U256::from(10u8)
+        .pow(ethers::types::U256::from(decimals))
+        .to_string()
+}
+
+/// ECON-DECLARE-01 — WHAT this producer may honestly declare about the NOTIONAL
+/// BASIS of a row's economics.
+///
+/// The operator's complaint: *"hay muchos valores que no se ven, no están
+/// declarados."* Three producers write economic figures onto one `Opportunity`
+/// row, each at its own size, and the wire said nothing about which was which —
+/// so a renderer could not show a gross beside a principal without risking the
+/// `IN $0.00 / GROSS $1.47M` contradiction, and hid both behind a dash.
+///
+/// This function reads only artifacts the row ALREADY carries and declares what
+/// they prove. It never guesses:
+///
+///   · `amount`  — `stamped_probe` when the CARDS-NUMBERS-01 stamp fired (we
+///                 applied it, so we know); `kernel` when the route carries the
+///                 sizing kernel's per-leg ledger (HOPS-LEDGER-04 is written
+///                 only by the kernel); else `intent`, the decoder's observed
+///                 amount, which is what `amount_in_wei` carries by default.
+///   · `gross`   — `probe` when `expected_profit_usd` is present: an
+///                 engine-phase figure, computed by the engine fast-filter /
+///                 cycle probe before the spine ever ran.
+///   · `net`     — `kernel` when `net_expected_profit_usd` is present: the
+///                 prioritization spine / sizing kernel is its only producer.
+///
+/// The NOTIONAL (`economics_amount_in_wei`) is declared only when an artifact
+/// PINS it: the kernel's `leg_amounts_in[0]` when the ledger exists (the exact
+/// size the kernel computed the chain at), else the engine probe. A row with no
+/// economics declares no notional — absence is a state (R8), never a guess.
+///
+/// Returns `(notional_wei, basis)`, or `None` when there is nothing to declare.
+pub(crate) fn economics_declaration(
+    opp: &Opportunity,
+    route: Option<&shared_rs::candidates::RouteMetadata>,
+    stamped_probe: Option<&str>,
+) -> Option<(String, shared_rs::candidates::EconomicsBasis)> {
+    use shared_rs::candidates::{economics_basis as B, EconomicsBasis};
+
+    let has_economics = opp.expected_profit_usd.is_some() || opp.net_expected_profit_usd.is_some();
+    let kernel_sized_at = route
+        .and_then(|rm| rm.leg_amounts_in.as_ref())
+        .and_then(|v| v.first())
+        .cloned();
+
+    // clippy::field_reassign_with_default (CI bloqueante, `-D warnings`): el struct
+    // se construye ENTERO en el inicializador — `EconomicsBasis` tiene exactamente
+    // estos tres campos (`gross`/`net`/`amount`), así que no lleva
+    // `..Default::default()` (`clippy::needless_update` también está denegado) — en
+    // vez de nacer de `Default::default()` y recibir asignaciones campo a campo.
+    // Mismo contenido, misma semántica.
+    let basis = EconomicsBasis {
+        // amount_in_wei's own provenance is always knowable.
+        amount: Some(
+            match (stamped_probe, kernel_sized_at.is_some()) {
+                (Some(_), _) => B::STAMPED_PROBE,
+                (None, true) => B::KERNEL,
+                (None, false) => B::INTENT,
+            }
+            .to_string(),
+        ),
+        gross: opp.expected_profit_usd.map(|_| B::PROBE.to_string()),
+        net: opp.net_expected_profit_usd.map(|_| B::KERNEL.to_string()),
+    };
+
+    // The size the ECONOMICS belong to. Proven, never assumed.
+    let notional = if !has_economics {
+        // Nothing economic was computed ⇒ there is no basis to declare. The
+        // `amount` word above still rides along (a renderer may show the row's
+        // own amount with its provenance) but no notional is claimed.
+        None
+    } else if let Some(k) = kernel_sized_at {
+        Some(k)
+    } else if let Some(p) = stamped_probe {
+        Some(p.to_string())
+    } else {
+        // No kernel ledger and no stamp: the figures are engine-phase, computed
+        // at the engine probe. Declaring the ROW's amount here would re-create
+        // the very contradiction this closes (a decoder amount presented as the
+        // gross's notional).
+        Some(engine_probe_notional(&opp.token_in))
+    };
+
+    if notional.is_none() && basis.is_undeclared() {
+        return None;
+    }
+    Some((notional.unwrap_or_default(), basis))
+}
+
+/// ECON-DECLARE-01 — the route carrying the declaration, ready to persist.
+///
+/// `None` when the caller passed no route: without a `route_metadata` JSONB
+/// carrier there is nowhere honest to put the declaration, and inventing an
+/// empty topology just to hold it would change `hop_count` semantics. Such a row
+/// stays `@undeclared` on the wire — the true state (R8).
+fn route_with_economics_declaration(
+    opp: &Opportunity,
+    route: Option<&shared_rs::candidates::RouteMetadata>,
+    stamped_probe: Option<&str>,
+) -> Option<shared_rs::candidates::RouteMetadata> {
+    let mut declared = route?.clone();
+    if let Some((notional, basis)) = economics_declaration(opp, route, stamped_probe) {
+        declared.declare_economics(
+            if notional.is_empty() {
+                None
+            } else {
+                Some(notional)
+            },
+            basis,
+        );
+    }
+    Some(declared)
+}
+
 /// WO-CARDS-COMPLETE-01 (2026-09-17): build the emit-boundary clone of an
 /// opportunity — `rejection_reason` (rejected path) and `pipeline_latency_ms`
 /// stamped, every other field (including `detector_id`, set at construction)
@@ -825,23 +995,23 @@ fn stamped_for_emit(opportunity: &Opportunity, rejection_reason: Option<&str>) -
     // same canonical one the engines' probe uses (`canonical_token_decimals_str`:
     // USDC/USDT=6, WBTC=8, dominant ERC-20 default 18 — an unparseable/unknown
     // token is NEVER guessed a per-token value, it takes the documented default).
-    if (o.expected_profit_usd.is_some() || o.net_expected_profit_usd.is_some())
-        && o.amount_in_wei == "0"
-    {
-        let decimals = crate::engines::dex_engine::canonical_token_decimals_str(&o.token_in);
-        let probe = ethers::types::U256::from(10u8).pow(ethers::types::U256::from(decimals));
+    if let Some(probe) = cards_numbers_probe_stamp(opportunity) {
         tracing::warn!(
             opportunity_id = %o.id,
             gross_usd = ?o.expected_profit_usd,
             net_usd = ?o.net_expected_profit_usd,
             token_in = %o.token_in,
-            decimals,
             probe = %probe,
             "CARDS-NUMBERS-01/HOPS-UNITS-01: economics present with amount_in_wei=0 — stamping one native unit of token_in (decoder lost the source amount)"
         );
-        o.amount_in_wei = probe.to_string();
+        o.amount_in_wei = probe;
     }
     o.pipeline_latency_ms = pipeline_latency_ms_now(opportunity.detected_at);
+    // ALWAYS-COMPUTE (2026-09-27): the publish gate's final guarantee — every
+    // row that reaches the wire carries the computation object (partial when
+    // only probe figures exist, error with the reason when nothing was
+    // computed). Idempotent: a producer-attached object wins verbatim.
+    crate::economics::stamp_on_emit(&mut o);
     o
 }
 
@@ -958,6 +1128,7 @@ fn camel_to_snake(s: &str) -> String {
 mod tests {
     use super::*;
     use chrono::Utc;
+    use shared_rs::candidates::RouteMetadata;
     use shared_rs::contracts::{Opportunity, StrategyKind};
     use uuid::Uuid;
 
@@ -984,6 +1155,7 @@ mod tests {
             // WO-CARDS-COMPLETE-01: construction-site field (the detector).
             detector_id: Some("dex_engine".to_owned()),
             pipeline_latency_ms: None, // stamped at emit entry, not construction
+            economics: None,           // ALWAYS-COMPUTE: stamped at the emit boundary
             detected_at: Utc::now(),
             trace_id: Uuid::new_v4(),
         }
@@ -1168,6 +1340,155 @@ mod tests {
             "1000000000000000000",
             "unknown token takes the documented default, not a fabricated one"
         );
+    }
+
+    // ── ECON-DECLARE-01 ──────────────────────────────────────────────────────
+    // The DECLARATION is what closes the operator's gap: a figure can only be
+    // shown WITH its notional if the producer says which producer computed it and
+    // at which size. These tests pin the declaration for every row shape the live
+    // feed actually carries (measured 2026-09-27T02:06Z, 33 rows).
+
+    /// A route carrying the sizing kernel's per-leg ledger (HOPS-LEDGER-04) is
+    /// PROOF the kernel computed the chain — so the net is the kernel's and the
+    /// declared notional is the kernel's own first-leg input, never the row's
+    /// (possibly unrelated) decoder amount.
+    #[test]
+    fn econ_declare_kernel_ledger_pins_notional_and_net_basis() {
+        let mut opp = make_opp(Uuid::new_v4(), Some(12.5), None);
+        opp.amount_in_wei = "5000".to_owned(); // decoder's observed intent
+        opp.net_expected_profit_usd = Some(-50.0); // the FAIL row the operator must read
+        let mut route = shared_rs::candidates::RouteMetadata::empty();
+        // The kernel sized the chain at 1e18 (NOT the row's 5000).
+        route.leg_amounts_in = Some(vec!["1000000000000000000".to_string()]);
+
+        let (notional, basis) =
+            economics_declaration(&opp, Some(&route), None).expect("declaration");
+        assert_eq!(
+            notional, "1000000000000000000",
+            "the declared notional is the size the KERNEL computed at"
+        );
+        assert_eq!(basis.gross.as_deref(), Some("probe"));
+        assert_eq!(basis.net.as_deref(), Some("kernel"));
+        assert_eq!(basis.amount.as_deref(), Some("kernel"));
+
+        // And it is serialized onto the route for the wire.
+        let declared = route_with_economics_declaration(&opp, Some(&route), None)
+            .expect("route carried the declaration");
+        let json = serde_json::to_value(&declared).expect("serialize");
+        assert_eq!(
+            json["economics_amount_in_wei"], "1000000000000000000",
+            "the declaration must ride route_metadata (the wire carrier)"
+        );
+        assert_eq!(json["economics_basis"]["net"], "kernel");
+        assert_eq!(json["economics_basis"]["gross"], "probe");
+    }
+
+    /// The CARDS-NUMBERS-01 stamp is a probe we APPLIED, so we may declare
+    /// `stamped_probe` and the probe as the notional — that is precisely why the
+    /// stamp fired (the economics were computed against the engines' probe).
+    #[test]
+    fn econ_declare_applied_probe_is_declared_as_stamped_probe() {
+        let mut opp = make_opp(
+            Uuid::new_v4(),
+            Some(1.5),
+            Some("non_positive_profit".into()),
+        );
+        opp.token_in = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48".to_owned(); // USDC (6)
+        opp.amount_in_wei = "0".to_owned();
+
+        let stamped = stamped_for_emit(&opp, Some("non_positive_profit"));
+        assert_eq!(stamped.amount_in_wei, "1000000");
+        let probe = cards_numbers_probe_stamp(&opp).expect("the stamp fired");
+        assert_eq!(probe, "1000000");
+
+        let (_notional, basis) = economics_declaration(&stamped, None, Some(&probe)).unwrap();
+        assert_eq!(
+            basis.amount.as_deref(),
+            Some("stamped_probe"),
+            "an amount WE stamped is declared as the stamp, never as the real intent"
+        );
+        assert_eq!(basis.gross.as_deref(), Some("probe"));
+    }
+
+    /// No kernel ledger, no stamp ⇒ the figures are engine-phase and the notional
+    /// is the engine PROBE. Declaring the row's `amount_in_wei` here would
+    /// re-create the very contradiction this change closes (`IN $0.00` beside
+    /// `GROSS $1.47M`), so it must NOT be declared.
+    #[test]
+    fn econ_declare_engine_phase_declares_the_probe_not_the_row_amount() {
+        let mut opp = make_opp(Uuid::new_v4(), Some(1313772.3818), None);
+        opp.token_in = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2".to_owned(); // WETH (18)
+        opp.amount_in_wei = "4353".to_owned(); // the live row's unrelated decoder amount
+
+        let (notional, basis) = economics_declaration(&opp, None, None).expect("declaration");
+        assert_eq!(
+            notional, "1000000000000000000",
+            "the engine probe, not 4353"
+        );
+        assert_ne!(
+            notional, opp.amount_in_wei,
+            "never the decoder amount as notional"
+        );
+        assert_eq!(basis.gross.as_deref(), Some("probe"));
+        assert_eq!(basis.amount.as_deref(), Some("intent"));
+        assert!(
+            basis.net.is_none(),
+            "no net on the row ⇒ no basis claimed for it (R8: absent is a state)"
+        );
+    }
+
+    /// A row with NO economics is the `v3_quote_unavailable` shape (12/33 on the
+    /// live feed). There is no figure to attribute, so NO notional is declared —
+    /// absence is a state, never a guess. The amount's own provenance still rides.
+    #[test]
+    fn econ_declare_no_economics_declares_no_notional() {
+        let opp = make_opp(Uuid::new_v4(), None, Some("v3_quote_unavailable".into()));
+        let (notional, basis) = economics_declaration(&opp, None, None).expect("declaration");
+        assert!(
+            notional.is_empty(),
+            "no economics ⇒ no notional claimed (was {notional:?})"
+        );
+        assert!(basis.gross.is_none());
+        assert!(basis.net.is_none());
+        assert_eq!(basis.amount.as_deref(), Some("intent"));
+
+        // And the route carries ONLY the amount provenance — no notional key.
+        let declared = route_with_economics_declaration(&opp, Some(&RouteMetadata::empty()), None)
+            .expect("route");
+        assert!(declared.economics_amount_in_wei.is_none());
+        assert!(!declared.has_declared_notional());
+    }
+
+    /// Without a `route_metadata` carrier there is nowhere honest to put the
+    /// declaration, and inventing an empty topology just to hold it would move
+    /// `hop_count` semantics. The row stays undeclared — the true state (R8).
+    #[test]
+    fn econ_declare_requires_the_route_carrier() {
+        let opp = make_opp(Uuid::new_v4(), Some(9.0), None);
+        assert!(
+            route_with_economics_declaration(&opp, None, None).is_none(),
+            "no route ⇒ no carrier ⇒ the row stays @undeclared, never a fabricated basis"
+        );
+    }
+
+    /// The declaration is ADDITIVE: a row whose route predates the field (or a
+    /// consumer that ignores it) must serialize exactly as before — the two keys
+    /// appear only when a producer declared something.
+    #[test]
+    fn econ_declare_is_additive_and_never_a_null_placeholder() {
+        let opp = make_opp(Uuid::new_v4(), None, Some("spread_zero_equilibrium".into()));
+        let declared = route_with_economics_declaration(&opp, Some(&RouteMetadata::empty()), None)
+            .expect("route");
+        let json = serde_json::to_value(&declared).expect("serialize");
+        assert!(
+            json.get("economics_amount_in_wei").is_none(),
+            "an undeclared notional must be ABSENT, never a null placeholder: {json}"
+        );
+        assert!(
+            json["economics_basis"]["gross"].is_null(),
+            "an undeclared gross basis must not serialize a placeholder"
+        );
+        assert_eq!(json["economics_basis"]["amount"], "intent");
     }
 
     /// Rows with a real non-zero amount are never touched by the stamp.
@@ -1417,5 +1738,64 @@ mod tests {
         let json_legacy = serde_json::to_value(&opp).unwrap();
         assert_eq!(json_legacy["pipeline_latency_ms"], serde_json::Value::Null);
         assert_eq!(json_legacy["detector_id"], "dex_engine");
+    }
+
+    // ── ALWAYS-COMPUTE (operator mandate 2026-09-27): the wire contract ────
+    // "FAIL debe significar 'se hizo el cálculo y no cumple el criterio', no
+    // 'no tengo números'. Si el resultado da -$50, la card debe decir -$50."
+
+    /// Gate 1 (rejected-with-quote): a rejected row that carries computed
+    /// figures keeps them AND gains the economics object at the publish gate —
+    /// serialized with its status so the card can render the full arithmetic.
+    #[test]
+    fn always_compute_rejected_row_with_figures_carries_economics() {
+        let mut opp = make_opp(
+            Uuid::new_v4(),
+            Some(12.5),
+            Some("non_positive_profit".to_string()),
+        );
+        opp.net_expected_profit_usd = Some(-50.0);
+        let stamped = stamped_for_emit(&opp, Some("non_positive_profit"));
+        let json = serde_json::to_value(&stamped).unwrap();
+        // The figures survive verbatim — gross AND net.
+        assert_eq!(json["expected_profit_usd"], 12.5);
+        assert_eq!(json["net_expected_profit_usd"], -50.0);
+        // The computation object is present with the honest status.
+        assert_eq!(json["economics"]["computation_status"], "partial");
+        assert_eq!(json["economics"]["gross_profit_usd"], 12.5);
+        assert_eq!(json["economics"]["net_profit_usd"], -50.0);
+        // Absent components carry reasons, never fabricated zeros (R8).
+        let reasons = json["economics"]["not_computed_reasons"]
+            .as_object()
+            .unwrap();
+        assert!(reasons.contains_key("total_cost_usd"));
+    }
+
+    /// Gate 2 (quote genuinely failed): NO numbers, the verbatim reason, and
+    /// computation_status:"error" — the only honest absence.
+    #[test]
+    fn always_compute_no_quote_row_is_error_with_reason() {
+        let mut opp = make_opp(Uuid::new_v4(), None, None);
+        opp.amount_in_wei = "0".to_owned();
+        let stamped = stamped_for_emit(&opp, Some("missing_reserves_pool_b"));
+        let json = serde_json::to_value(&stamped).unwrap();
+        assert_eq!(json["economics"]["computation_status"], "error");
+        assert_eq!(json["economics"]["error_reason"], "missing_reserves_pool_b");
+        assert!(json["economics"]["gross_profit_usd"].is_null());
+        assert!(json["economics"]["net_profit_usd"].is_null());
+        assert!(json["economics"]["total_cost_usd"].is_null());
+    }
+
+    /// A producer-attached object wins verbatim at the gate (idempotence) —
+    /// the emitter only backfills `quote_block` from the row's own evidence.
+    #[test]
+    fn always_compute_producer_object_wins_verbatim() {
+        let mut opp = make_opp(Uuid::new_v4(), Some(1.5), None);
+        opp.economics = Some(crate::economics::economics_error("producer_reason"));
+        let stamped = stamped_for_emit(&opp, None);
+        let e = stamped.economics.as_ref().unwrap();
+        assert_eq!(e.computation_status, "error");
+        assert_eq!(e.error_reason.as_deref(), Some("producer_reason"));
+        assert_eq!(e.quote_block, Some(12_345_678), "quote_block backfilled");
     }
 }

@@ -21,7 +21,6 @@ use uuid::Uuid;
 pub struct TxContext {
     pub chain_id: u64,
     pub block_number: Option<u64>,
-    #[allow(dead_code)]
     pub tx_from: [u8; 20],
     pub tx_value: ethers::types::U256,
 }
@@ -62,6 +61,7 @@ pub fn build_dex_arb_candidate(ctx: &TxContext, swap: &DecodedSwap) -> Opportuni
         pipeline_latency_ms: None,
         detected_at: Utc::now(),
         trace_id: Uuid::new_v4(),
+        economics: None,
     }
 }
 

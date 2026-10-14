@@ -37,6 +37,9 @@ mod chain_client;
 mod chain_supervisor;
 mod counters;
 mod dedup;
+// ALWAYS-COMPUTE (2026-09-27): one economics computation object on BOTH
+// branches + the missing_economics census (operator mandate).
+mod economics;
 // Phase A.3.a: OpportunityCandidate → RoundTripContext encoder. Pure bridge
 // from the abstract candidate to the typed simulator input. NO REVM dispatch
 // here (that lands with execute_round_trip); only validation + payload pre-shaping.
@@ -62,11 +65,9 @@ mod sim_orchestrator;
 pub(crate) use sim_core::sim_prefund;
 // Phase OMEGA: Kelly Criterion + V3 concentrated liquidity math. Pure
 // position-sizing primitives consumed by the size_optimizer hot path.
-#[allow(dead_code)]
 mod kelly_sizing;
 // Phase OMEGA 3.2: Bayesian inference + VPIN/PIN adverse-selection
 // filters. Pure math primitives for the candidate-selection layer.
-#[allow(dead_code)]
 mod bayesian_filter;
 // Phase A.3.c.2: Multi-step REVM orchestrator skeleton + plan builder.
 // Combines sim_prefund storage overrides with RoundTripContext to build
@@ -98,18 +99,14 @@ mod reserves;
 mod dirty_signal;
 // XLS-QB-05b/05c / ARBX-0003: consumer drain + pair→cycles inverted index
 // (drain lives in route_discovery_worker; declared here for the dual-tree).
-#[allow(dead_code)]
 mod cycle_index;
-#[allow(dead_code)]
 mod dirty_consumer;
 // XLS-QB / ARBX-0008: N-bucket amount sweep (pure surface; the motor side
 // lives in size_optimizer — declared here for the dual-tree).
-#[allow(dead_code)]
 mod amount_buckets;
 mod batch_quote;
 // XLS-QB-06b / ARBX-0024: F_e normalization + QuoteState — consumed by the
 // route-discovery prefilter (declared here for the dual-tree).
-#[allow(dead_code)]
 mod fe_normalization;
 // ARBX-0007: financing-mode route dimension (fees, per-mode eval, selection).
 mod financing;
@@ -117,31 +114,21 @@ mod financing;
 mod live_risk_ranker;
 mod net_bps_ranking;
 // FE-MASTER EMIT-06b: pair alpha publish (dual-tree — the lib declares it for tests).
-#[allow(dead_code)]
 mod pair_alpha_runtime;
 // Gate completion 2026-08-24: shared source files (cycle_index, graph_builder,
 // route_discovery_worker, opportunity_emitter…) reference these via `crate::`
 // — the bin root must declare them too or the bin target fails E0432/E0433
 // while the lib stays green.
-#[allow(dead_code)]
 mod dirty_pairs;
-#[allow(dead_code)]
 mod hot_seed_mask;
-#[allow(dead_code)]
 mod latency_budget;
-#[allow(dead_code)]
 mod pair_index;
 mod price_bus_global;
-#[allow(dead_code)]
 mod quote_anchor_runtime;
-#[allow(dead_code)]
 mod quote_anchor_signal;
-#[allow(dead_code)]
 mod quote_score;
-#[allow(dead_code)]
 mod required_data_gate;
 mod scanner;
-#[allow(dead_code)]
 mod signal_tier;
 // ARBX-0018: address-keyed token identity (bin crate compiles the same tree).
 mod token_identity;
@@ -150,12 +137,18 @@ mod token_identity;
 mod token_resolve_signal;
 // FASE OMEGA — cartridge runtime (Rhai). `cartridge` + `cartridge_loader` are API-heavy
 // and mostly exercised via lib/integration tests; the binary only drives them through
-// `cartridge_boot` (called from the scanner boot path), so allow dead_code on the two.
+// the scanner boot path (lib `cartridge_boot`), so allow dead_code on the two.
 #[allow(dead_code, unused_imports, unused_variables)]
 mod cartridge;
 mod cartridge_boot;
-#[allow(dead_code)]
 mod cartridge_loader;
+// BASKET-WORKER-01 (2026-10-03): `cartridge_boot` — compilado en AMBOS crates
+// (lib + bin) — lee el estado on-chain de los baskets ERC-4626 desde aquí, así
+// que el módulo debe existir también en el árbol del bin o `crate::basket_reader`
+// no resuelve al compilar el binario (el fallo exacto de la fase 2). Mismo
+// patrón que `snapshot_services` / `strategy_hop_mask`. Sin allow local: el
+// crate raíz de este binario ya permite `dead_code` (`#![allow(...)]` arriba).
+mod basket_reader;
 // FASE OMEGA — Block/log backrunning scanner (ARBX_MEMPOOL_MODE=block).
 mod block_scanner;
 // Observer telemetry — real-node head divergence (reorg) PUBLISH to arbx:telemetry:observability.
@@ -164,7 +157,6 @@ mod telemetry_observability;
 // `impact_index` still has Phase-15 functions (from_registry, add_pool,
 // seed_cycles_from_mvp) that are public API but not yet called by the binary.
 // Allow dead_code for those; the binary uses ImpactIndex::empty() and resolve().
-#[allow(dead_code)]
 mod impact_index;
 mod opportunity_emitter;
 mod pool_candidate;
@@ -177,7 +169,6 @@ mod source_supervisor;
 // Phase 1 radar — declared in the bin crate so `scanner::run_chain` can spawn
 // the worker. The lib crate also declares it (`pub mod route_discovery`) so the
 // pure submodules are unit-tested under `cargo test --lib`.
-#[allow(dead_code)]
 mod route_discovery;
 mod route_intent;
 // ── Agent cartridge v4 runtime (integration/agent-cartridges-v4, 2026-09-24):
@@ -186,7 +177,6 @@ mod route_intent;
 // See lib.rs declaration block for the full rationale.
 mod agent_graph;
 mod context_router;
-#[allow(dead_code)]
 mod native_operator_adapter;
 mod proposal_contract;
 mod rhai_agent_bridge;
@@ -201,25 +191,20 @@ mod runtime_knobs;
 // `crate::strategy_hop_mask` (XLS-QB-03 hop-mask dispatch), which resolves
 // against each target's own module tree. The bin uses only
 // `admissible_hop_bounds`; the lookup helpers are exercised in lib tests.
-#[allow(dead_code)]
 mod strategy_hop_mask;
 // ARBX-0021: same dual-crate declaration as strategy_hop_mask —
 // route_discovery_worker references `crate::strategy_dispatch_status`
 // (Status dispatch) against each target's own module tree.
-#[allow(dead_code)]
 mod strategy_dispatch_status;
 // ARBX-TW-005: col Execution_Class annotation (29 classes).
-#[allow(dead_code)]
 mod strategy_execution_class;
 // ARBX-0026: sheet 13_DETECTOR_POLICY (60 detectors) — graph family, family
 // hop envelope, Do_Not_Do guard, hot-seed admission.
-#[allow(dead_code)]
 mod detector_policy;
 mod strategy_label;
 // Phase 7-8: orchestrator + engines — fully wired in Phase 14.
 // `engines` still has Phase-15 hooks (insert, from_mvp_cycles, etc.) unused
 // by the binary yet. Allow dead_code on the module; they ARE used in lib tests.
-#[allow(dead_code)]
 mod engines;
 // Fix B — math evidence (observe-only): builds MarketState from reserves and
 // evaluates RegimeRouter-recommended operators. Called from orchestrator.
@@ -236,19 +221,14 @@ mod shared;
 // Phase 11: LendingPositionIndexer — Redis-backed watchlist + position cache.
 // Dead-code allowed: the indexer is Arc-constructed and passed to the
 // LiquidationEngine; individual methods are called through the engine.
-#[allow(dead_code)]
 mod lending_position_indexer;
 mod workers;
 // Phase 12-13: StateProjector + SizeOptimizer — wired in Phase 14.
 // Individual methods (project_v2_post_swap, project_triangular_cycle) are
 // Phase-15 hooks not yet called from the binary; allow dead_code.
-#[allow(dead_code)]
 mod size_optimizer;
-#[allow(dead_code)]
 mod state_projector;
-#[allow(dead_code)]
 mod v3_fee_catalog;
-#[allow(dead_code)]
 mod v3_quote_provider;
 
 use shared_rs::{
