@@ -71,8 +71,7 @@ const CONNECT_OPTS = { reconnectionAttempts: 5, timeout: 2000 } as const;
 export function createOpportunitySocket(
   opts: OpportunitySocketOptions,
 ): OpportunitySocketHandle {
-  const { url, ioFactory, onStatus, onOpportunity, authToken, onPriceTick, onPricesSnapshot } = opts;
-  const { url, ioFactory, onStatus, onOpportunity, onStreamEvent, authToken } = opts;
+  const { url, ioFactory, onStatus, onOpportunity, onStreamEvent, authToken, onPriceTick, onPricesSnapshot } = opts;
 
   // C4: assemble the auth payload the backend `extractHandshakeToken` expects.
   // Use ALL three transport channels for compatibility (auth + query + header).

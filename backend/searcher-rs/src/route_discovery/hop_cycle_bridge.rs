@@ -253,7 +253,6 @@ impl KernelCapability {
     /// The budget lane this capability competes for.
     pub fn lane(self) -> EmitLane {
         match self {
-            Self::V2CycleSizeable => EmitLane::Sizeable,
             Self::V2CycleSizeable | Self::V3CycleSizeable => EmitLane::Sizeable,
             Self::V3MultilegUnsupported => EmitLane::Unpriceable,
         }
