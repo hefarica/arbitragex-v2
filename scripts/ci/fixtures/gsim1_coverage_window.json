@@ -1,0 +1,861 @@
+{
+  "provenance": {
+    "captured_at_utc": "2026-10-08 13:24:46.406955",
+    "captured_from": "arbitragex-v2-postgres-1 (docker exec, read-only psql -t -A -F'|')",
+    "base_commit": "901eb947ff3bec359a3021a8db5b074e7080b79f",
+    "window": "2 hours rolling",
+    "chain_id": 1,
+    "sql": "scripts/ci/fixtures/gsim1_ceiling_snapshot.sql (one statement, one now())",
+    "raw_repr_sha256": "c3a62b767861554f8317ecc597f6521d665cb274ecde5859d46406537f9afac1",
+    "row_buckets": 70,
+    "note": "REAL production rows. Not synthetic, not imputed. Adapter labels are VERBATIM as production spells them (dex_arb rows use UniswapV3/PancakeSwap V3; triangular rows use lowercase uniswap-v3) - normalising them in the instrument would hide the spelling gap the instrument exists to expose."
+  },
+  "rows": [
+    {
+      "legs": 4,
+      "kind": "triangular",
+      "adapters": [
+        "uniswap-v3",
+        "uniswap-v3",
+        "uniswap-v3",
+        "uniswap-v3"
+      ],
+      "amount_nonzero": false,
+      "n": 172
+    },
+    {
+      "legs": 3,
+      "kind": "triangular",
+      "adapters": [
+        "uniswap-v3",
+        "uniswap-v3",
+        "uniswap-v3"
+      ],
+      "amount_nonzero": false,
+      "n": 149
+    },
+    {
+      "legs": 4,
+      "kind": "triangular",
+      "adapters": [
+        "uniswap-v3",
+        "uniswap-v3",
+        "uniswap-v3",
+        "uniswap-v2"
+      ],
+      "amount_nonzero": false,
+      "n": 50
+    },
+    {
+      "legs": 5,
+      "kind": "triangular",
+      "adapters": [
+        "uniswap-v3",
+        "uniswap-v3",
+        "uniswap-v3",
+        "uniswap-v3",
+        "uniswap-v3"
+      ],
+      "amount_nonzero": false,
+      "n": 48
+    },
+    {
+      "legs": 2,
+      "kind": "dex_arb",
+      "adapters": [
+        "UniswapV3",
+        "UniswapV3"
+      ],
+      "amount_nonzero": true,
+      "n": 46
+    },
+    {
+      "legs": 2,
+      "kind": "dex_arb",
+      "adapters": [
+        "UniswapV2",
+        "UniswapV3"
+      ],
+      "amount_nonzero": true,
+      "n": 43
+    },
+    {
+      "legs": 4,
+      "kind": "triangular",
+      "adapters": [
+        "uniswap-v2",
+        "uniswap-v3",
+        "uniswap-v3",
+        "uniswap-v3"
+      ],
+      "amount_nonzero": false,
+      "n": 41
+    },
+    {
+      "legs": 3,
+      "kind": "triangular",
+      "adapters": [
+        "uniswap-v2",
+        "uniswap-v3",
+        "uniswap-v3"
+      ],
+      "amount_nonzero": false,
+      "n": 31
+    },
+    {
+      "legs": 3,
+      "kind": "triangular",
+      "adapters": [
+        "uniswap-v3",
+        "uniswap-v3",
+        "uniswap-v2"
+      ],
+      "amount_nonzero": false,
+      "n": 30
+    },
+    {
+      "legs": 3,
+      "kind": "triangular",
+      "adapters": [
+        "uniswap-v3",
+        "uniswap-v2",
+        "uniswap-v3"
+      ],
+      "amount_nonzero": false,
+      "n": 24
+    },
+    {
+      "legs": 4,
+      "kind": "triangular",
+      "adapters": [
+        "uniswap-v3",
+        "uniswap-v2",
+        "uniswap-v3",
+        "uniswap-v3"
+      ],
+      "amount_nonzero": false,
+      "n": 23
+    },
+    {
+      "legs": 4,
+      "kind": "triangular",
+      "adapters": [
+        "uniswap-v3",
+        "uniswap-v2",
+        "uniswap-v2",
+        "uniswap-v3"
+      ],
+      "amount_nonzero": false,
+      "n": 22
+    },
+    {
+      "legs": 2,
+      "kind": "dex_arb",
+      "adapters": [
+        "UniswapV3",
+        "PancakeSwap V3"
+      ],
+      "amount_nonzero": true,
+      "n": 20
+    },
+    {
+      "legs": 2,
+      "kind": "dex_arb",
+      "adapters": [
+        "SushiSwap",
+        "UniswapV3"
+      ],
+      "amount_nonzero": true,
+      "n": 20
+    },
+    {
+      "legs": 4,
+      "kind": "triangular",
+      "adapters": [
+        "uniswap-v2",
+        "uniswap-v3",
+        "uniswap-v3",
+        "uniswap-v2"
+      ],
+      "amount_nonzero": false,
+      "n": 20
+    },
+    {
+      "legs": 4,
+      "kind": "triangular",
+      "adapters": [
+        "uniswap-v3",
+        "uniswap-v3",
+        "uniswap-v2",
+        "uniswap-v3"
+      ],
+      "amount_nonzero": false,
+      "n": 19
+    },
+    {
+      "legs": 5,
+      "kind": "triangular",
+      "adapters": [
+        "uniswap-v3",
+        "uniswap-v2",
+        "uniswap-v3",
+        "uniswap-v3",
+        "uniswap-v3"
+      ],
+      "amount_nonzero": false,
+      "n": 18
+    },
+    {
+      "legs": 5,
+      "kind": "triangular",
+      "adapters": [
+        "uniswap-v3",
+        "uniswap-v3",
+        "uniswap-v2",
+        "uniswap-v3",
+        "uniswap-v3"
+      ],
+      "amount_nonzero": false,
+      "n": 17
+    },
+    {
+      "legs": 5,
+      "kind": "triangular",
+      "adapters": [
+        "uniswap-v2",
+        "uniswap-v3",
+        "uniswap-v3",
+        "uniswap-v3",
+        "uniswap-v3"
+      ],
+      "amount_nonzero": false,
+      "n": 16
+    },
+    {
+      "legs": 5,
+      "kind": "triangular",
+      "adapters": [
+        "uniswap-v2",
+        "uniswap-v3",
+        "uniswap-v3",
+        "uniswap-v3",
+        "uniswap-v2"
+      ],
+      "amount_nonzero": false,
+      "n": 13
+    },
+    {
+      "legs": 5,
+      "kind": "triangular",
+      "adapters": [
+        "uniswap-v3",
+        "uniswap-v2",
+        "uniswap-v2",
+        "uniswap-v3",
+        "uniswap-v3"
+      ],
+      "amount_nonzero": false,
+      "n": 13
+    },
+    {
+      "legs": 2,
+      "kind": "dex_arb",
+      "adapters": [
+        "UniswapV3",
+        "UniswapV2"
+      ],
+      "amount_nonzero": true,
+      "n": 11
+    },
+    {
+      "legs": 2,
+      "kind": "dex_arb",
+      "adapters": [
+        "UniswapV2",
+        "PancakeSwap V3"
+      ],
+      "amount_nonzero": true,
+      "n": 10
+    },
+    {
+      "legs": 5,
+      "kind": "triangular",
+      "adapters": [
+        "uniswap-v3",
+        "uniswap-v3",
+        "uniswap-v2",
+        "uniswap-v2",
+        "uniswap-v3"
+      ],
+      "amount_nonzero": false,
+      "n": 10
+    },
+    {
+      "legs": 2,
+      "kind": "dex_arb",
+      "adapters": [
+        "UniswapV2",
+        "SushiSwap"
+      ],
+      "amount_nonzero": true,
+      "n": 7
+    },
+    {
+      "legs": 2,
+      "kind": "dex_arb",
+      "adapters": [
+        "PancakeSwap V3",
+        "UniswapV3"
+      ],
+      "amount_nonzero": true,
+      "n": 7
+    },
+    {
+      "legs": 5,
+      "kind": "triangular",
+      "adapters": [
+        "uniswap-v3",
+        "uniswap-v3",
+        "uniswap-v3",
+        "uniswap-v2",
+        "uniswap-v3"
+      ],
+      "amount_nonzero": false,
+      "n": 7
+    },
+    {
+      "legs": 3,
+      "kind": "triangular",
+      "adapters": [
+        "uniswap-v2",
+        "uniswap-v2",
+        "uniswap-v3"
+      ],
+      "amount_nonzero": false,
+      "n": 6
+    },
+    {
+      "legs": 2,
+      "kind": "dex_arb",
+      "adapters": [
+        "PancakeSwap V3",
+        "PancakeSwap V3"
+      ],
+      "amount_nonzero": true,
+      "n": 5
+    },
+    {
+      "legs": 3,
+      "kind": "triangular",
+      "adapters": [
+        "uniswap-v2",
+        "uniswap-v3",
+        "uniswap-v2"
+      ],
+      "amount_nonzero": false,
+      "n": 5
+    },
+    {
+      "legs": 5,
+      "kind": "triangular",
+      "adapters": [
+        "uniswap-v2",
+        "uniswap-v3",
+        "uniswap-v2",
+        "uniswap-v3",
+        "uniswap-v3"
+      ],
+      "amount_nonzero": false,
+      "n": 5
+    },
+    {
+      "legs": 5,
+      "kind": "triangular",
+      "adapters": [
+        "uniswap-v2",
+        "uniswap-v2",
+        "uniswap-v3",
+        "uniswap-v3",
+        "uniswap-v3"
+      ],
+      "amount_nonzero": false,
+      "n": 5
+    },
+    {
+      "legs": 2,
+      "kind": "dex_arb",
+      "adapters": [
+        "SushiSwap",
+        "PancakeSwap V3"
+      ],
+      "amount_nonzero": true,
+      "n": 4
+    },
+    {
+      "legs": 2,
+      "kind": "dex_arb",
+      "adapters": [
+        "UniswapV2",
+        "UniswapV2"
+      ],
+      "amount_nonzero": true,
+      "n": 4
+    },
+    {
+      "legs": 2,
+      "kind": "dex_arb",
+      "adapters": [
+        "UniswapV3",
+        "SushiSwap"
+      ],
+      "amount_nonzero": true,
+      "n": 3
+    },
+    {
+      "legs": 3,
+      "kind": "triangular",
+      "adapters": [
+        "uniswap-v3",
+        "uniswap-v2",
+        "uniswap-v2"
+      ],
+      "amount_nonzero": false,
+      "n": 3
+    },
+    {
+      "legs": 4,
+      "kind": "triangular",
+      "adapters": [
+        "uniswap-v2",
+        "uniswap-v2",
+        "uniswap-v3",
+        "uniswap-v3"
+      ],
+      "amount_nonzero": false,
+      "n": 3
+    },
+    {
+      "legs": 5,
+      "kind": "triangular",
+      "adapters": [
+        "uniswap-v3",
+        "uniswap-v3",
+        "uniswap-v3",
+        "uniswap-v3",
+        "uniswap-v2"
+      ],
+      "amount_nonzero": false,
+      "n": 3
+    },
+    {
+      "legs": 5,
+      "kind": "triangular",
+      "adapters": [
+        "UniswapV3",
+        "UniswapV3",
+        "UniswapV2",
+        "UniswapV2",
+        "UniswapV3"
+      ],
+      "amount_nonzero": false,
+      "n": 3
+    },
+    {
+      "legs": 5,
+      "kind": "triangular",
+      "adapters": [
+        "uniswap-v3",
+        "uniswap-v2",
+        "uniswap-v2",
+        "uniswap-v3",
+        "uniswap-v2"
+      ],
+      "amount_nonzero": false,
+      "n": 2
+    },
+    {
+      "legs": 5,
+      "kind": "triangular",
+      "adapters": [
+        "UniswapV2",
+        "UniswapV3",
+        "UniswapV2",
+        "UniswapV2",
+        "UniswapV3"
+      ],
+      "amount_nonzero": false,
+      "n": 2
+    },
+    {
+      "legs": 5,
+      "kind": "triangular",
+      "adapters": [
+        "SushiSwap",
+        "UniswapV2",
+        "UniswapV2",
+        "UniswapV2",
+        "UniswapV3"
+      ],
+      "amount_nonzero": false,
+      "n": 2
+    },
+    {
+      "legs": 5,
+      "kind": "triangular",
+      "adapters": [
+        "SushiSwap",
+        "UniswapV3",
+        "UniswapV2",
+        "UniswapV2",
+        "PancakeSwap V3"
+      ],
+      "amount_nonzero": false,
+      "n": 2
+    },
+    {
+      "legs": 5,
+      "kind": "triangular",
+      "adapters": [
+        "SushiSwap",
+        "UniswapV2",
+        "UniswapV2",
+        "UniswapV2",
+        "PancakeSwap V3"
+      ],
+      "amount_nonzero": false,
+      "n": 2
+    },
+    {
+      "legs": 5,
+      "kind": "triangular",
+      "adapters": [
+        "UniswapV2",
+        "UniswapV3",
+        "UniswapV2",
+        "UniswapV2",
+        "PancakeSwap V3"
+      ],
+      "amount_nonzero": false,
+      "n": 2
+    },
+    {
+      "legs": 5,
+      "kind": "triangular",
+      "adapters": [
+        "UniswapV3",
+        "UniswapV3",
+        "UniswapV2",
+        "UniswapV2",
+        "PancakeSwap V3"
+      ],
+      "amount_nonzero": false,
+      "n": 2
+    },
+    {
+      "legs": 5,
+      "kind": "triangular",
+      "adapters": [
+        "SushiSwap",
+        "UniswapV3",
+        "UniswapV2",
+        "UniswapV2",
+        "UniswapV3"
+      ],
+      "amount_nonzero": false,
+      "n": 2
+    },
+    {
+      "legs": 5,
+      "kind": "triangular",
+      "adapters": [
+        "uniswap-v2",
+        "uniswap-v2",
+        "uniswap-v2",
+        "uniswap-v3",
+        "uniswap-v3"
+      ],
+      "amount_nonzero": false,
+      "n": 2
+    },
+    {
+      "legs": 6,
+      "kind": "triangular",
+      "adapters": [
+        "uniswap-v3",
+        "uniswap-v3",
+        "uniswap-v3",
+        "uniswap-v3",
+        "uniswap-v3",
+        "uniswap-v3"
+      ],
+      "amount_nonzero": false,
+      "n": 2
+    },
+    {
+      "legs": 2,
+      "kind": "dex_arb",
+      "adapters": [
+        "SushiSwap",
+        "SushiSwap"
+      ],
+      "amount_nonzero": true,
+      "n": 1
+    },
+    {
+      "legs": 2,
+      "kind": "dex_arb",
+      "adapters": [
+        "SushiSwap",
+        "UniswapV2"
+      ],
+      "amount_nonzero": false,
+      "n": 1
+    },
+    {
+      "legs": 2,
+      "kind": "dex_arb",
+      "adapters": [
+        "SushiSwap",
+        "UniswapV2"
+      ],
+      "amount_nonzero": true,
+      "n": 1
+    },
+    {
+      "legs": 2,
+      "kind": "dex_arb",
+      "adapters": [
+        "UniswapV2",
+        "SushiSwap"
+      ],
+      "amount_nonzero": false,
+      "n": 1
+    },
+    {
+      "legs": 4,
+      "kind": "triangular",
+      "adapters": [
+        "uniswap-v2",
+        "uniswap-v2",
+        "uniswap-v2",
+        "uniswap-v3"
+      ],
+      "amount_nonzero": false,
+      "n": 1
+    },
+    {
+      "legs": 4,
+      "kind": "triangular",
+      "adapters": [
+        "uniswap-v3",
+        "uniswap-v2",
+        "uniswap-v2",
+        "uniswap-v2"
+      ],
+      "amount_nonzero": false,
+      "n": 1
+    },
+    {
+      "legs": 5,
+      "kind": "triangular",
+      "adapters": [
+        "UniswapV3",
+        "UniswapV2",
+        "UniswapV2",
+        "UniswapV2",
+        "PancakeSwap V3"
+      ],
+      "amount_nonzero": false,
+      "n": 1
+    },
+    {
+      "legs": 5,
+      "kind": "triangular",
+      "adapters": [
+        "uniswap-v3",
+        "uniswap-v2",
+        "uniswap-v3",
+        "uniswap-v2",
+        "uniswap-v3"
+      ],
+      "amount_nonzero": false,
+      "n": 1
+    },
+    {
+      "legs": 5,
+      "kind": "triangular",
+      "adapters": [
+        "UniswapV3",
+        "UniswapV3",
+        "UniswapV2",
+        "UniswapV2",
+        "SushiSwap"
+      ],
+      "amount_nonzero": false,
+      "n": 1
+    },
+    {
+      "legs": 5,
+      "kind": "triangular",
+      "adapters": [
+        "SushiSwap",
+        "UniswapV3",
+        "UniswapV2",
+        "UniswapV2",
+        "SushiSwap"
+      ],
+      "amount_nonzero": false,
+      "n": 1
+    },
+    {
+      "legs": 5,
+      "kind": "triangular",
+      "adapters": [
+        "UniswapV3",
+        "UniswapV2",
+        "UniswapV2",
+        "UniswapV2",
+        "SushiSwap"
+      ],
+      "amount_nonzero": false,
+      "n": 1
+    },
+    {
+      "legs": 5,
+      "kind": "triangular",
+      "adapters": [
+        "uniswap-v3",
+        "uniswap-v3",
+        "uniswap-v2",
+        "uniswap-v2",
+        "uniswap-v2"
+      ],
+      "amount_nonzero": false,
+      "n": 1
+    },
+    {
+      "legs": 5,
+      "kind": "triangular",
+      "adapters": [
+        "UniswapV3",
+        "UniswapV2",
+        "UniswapV2",
+        "UniswapV2",
+        "UniswapV3"
+      ],
+      "amount_nonzero": false,
+      "n": 1
+    },
+    {
+      "legs": 5,
+      "kind": "triangular",
+      "adapters": [
+        "UniswapV3",
+        "UniswapV3",
+        "UniswapV2",
+        "UniswapV2",
+        "UniswapV2"
+      ],
+      "amount_nonzero": false,
+      "n": 1
+    },
+    {
+      "legs": 6,
+      "kind": "triangular",
+      "adapters": [
+        "uniswap-v3",
+        "uniswap-v3",
+        "uniswap-v2",
+        "uniswap-v3",
+        "uniswap-v3",
+        "uniswap-v3"
+      ],
+      "amount_nonzero": false,
+      "n": 1
+    },
+    {
+      "legs": 6,
+      "kind": "triangular",
+      "adapters": [
+        "uniswap-v3",
+        "uniswap-v3",
+        "uniswap-v3",
+        "uniswap-v2",
+        "uniswap-v2",
+        "uniswap-v3"
+      ],
+      "amount_nonzero": false,
+      "n": 1
+    },
+    {
+      "legs": 6,
+      "kind": "triangular",
+      "adapters": [
+        "uniswap-v2",
+        "uniswap-v3",
+        "uniswap-v2",
+        "uniswap-v3",
+        "uniswap-v3",
+        "uniswap-v3"
+      ],
+      "amount_nonzero": false,
+      "n": 1
+    },
+    {
+      "legs": 6,
+      "kind": "triangular",
+      "adapters": [
+        "uniswap-v3",
+        "uniswap-v3",
+        "uniswap-v3",
+        "uniswap-v3",
+        "uniswap-v2",
+        "uniswap-v3"
+      ],
+      "amount_nonzero": false,
+      "n": 1
+    },
+    {
+      "legs": 6,
+      "kind": "triangular",
+      "adapters": [
+        "uniswap-v2",
+        "uniswap-v3",
+        "uniswap-v3",
+        "uniswap-v2",
+        "uniswap-v2",
+        "uniswap-v2"
+      ],
+      "amount_nonzero": false,
+      "n": 1
+    },
+    {
+      "legs": 6,
+      "kind": "triangular",
+      "adapters": [
+        "uniswap-v2",
+        "uniswap-v3",
+        "uniswap-v3",
+        "uniswap-v3",
+        "uniswap-v3",
+        "uniswap-v2"
+      ],
+      "amount_nonzero": false,
+      "n": 1
+    },
+    {
+      "legs": 6,
+      "kind": "triangular",
+      "adapters": [
+        "uniswap-v3",
+        "uniswap-v2",
+        "uniswap-v2",
+        "uniswap-v3",
+        "uniswap-v3",
+        "uniswap-v3"
+      ],
+      "amount_nonzero": false,
+      "n": 1
+    }
+  ]
+}

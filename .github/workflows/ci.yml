@@ -154,6 +154,68 @@ jobs:
           done
           exit "$missing"
 
+  gsim1-coverage-ceiling-regression:
+    # GSIM-COVERAGE-CEILING-01 (2026-10-08). Guards the two properties the G-SIM-1
+    # coverage instrument must keep:
+    #   1. a discarded topology is a NAMED reason with its own count, never an
+    #      aggregate without a reason (the defect measured on main 901eb947: 964 of
+    #      977 window topologies discarded by the benchmark's encoder, unattributed);
+    #   2. the coverage verdict DEGRADES to NO_COMPUTADO where the encoder does not
+    #      reach, so `coverage` cannot be published as a result of the market.
+    # Hermetic: no database, no network, no Docker. It reads the REAL production
+    # snapshot committed under scripts/ci/fixtures/ (provenance + sha256 inside).
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+      - name: The discard is NAMED per reason, and the verdict degrades (hermetic)
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s scripts/ci -p 'test_gsim1_coverage_ceiling.py' -v
+      - name: The instrument still emits its markers on the real fixture
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/gsim1_coverage_ceiling.py \
+            --from-fixture scripts/ci/fixtures/gsim1_coverage_window.json \
+            --job-summary /dev/null --out-json /tmp/coverage-ceiling.json \
+            > /tmp/coverage-ceiling.log
+          grep -q '^COVERAGE_VERDICT=NO_COMPUTADO reason=encoder_scope' /tmp/coverage-ceiling.log
+          grep -q '^COVERAGE_DEGRADED_FIELD field=coverage reads_as=market_result' /tmp/coverage-ceiling.log
+          grep -q 'code=unsupported_adapter:PancakeSwap V3' /tmp/coverage-ceiling.log
+          echo "markers OK:"
+          grep -E '^COVERAGE_(VERDICT|CEILING |DEGRADED_FIELD)' /tmp/coverage-ceiling.log
+      - name: The benchmark's observational step cannot redden the gate (contract)
+        run: |
+          set -euo pipefail
+          # The coverage-ceiling step in the benchmark workflow must stay advisory:
+          # `continue-on-error: true` PLUS an explicit `exit 0`. Those two properties
+          # are what make it structurally unable to redden the benchmark gate.
+          # (The read-only property of the SQL is asserted where it belongs, over the
+          # instrument's own source: test_gsim1_coverage_ceiling.OnlySelectIsEmitted.)
+          python3 - <<'PY'
+          import re
+
+          src = open('.github/workflows/gsim1-variance-benchmark.yml', encoding='utf-8').read()
+          marker = 'Count and NAME the coverage ceiling'
+          i = src.find(marker)
+          assert i != -1, 'the coverage-ceiling step is gone from the benchmark workflow'
+          block = src[i:i + 6000]
+          problems = []
+          if 'continue-on-error: true' not in block:
+              problems.append('the step lost continue-on-error: true')
+          if not re.search(r'^ {10}exit 0\s*$', block, re.M):
+              problems.append('the step no longer ends with an explicit `exit 0`')
+          if 'scripts/ci/gsim1_coverage_ceiling.py' not in block:
+              problems.append('the step no longer invokes the coverage-ceiling instrument')
+          if problems:
+              raise SystemExit('::error:: coverage-ceiling step contract broken: ' + '; '.join(problems))
+          print('coverage-ceiling step is advisory-only: continue-on-error + explicit exit 0')
+          PY
+
   liquidity-catalog-contract:
     permissions:
       contents: read
@@ -162,7 +224,7 @@ jobs:
   ci-gate:
     if: always()
     runs-on: ubuntu-latest
-    needs: [lint-and-test-node, lint-and-test-rust, lint-and-test-frontend, lint-and-test-contracts, retention-vacuum-regression, liquidity-catalog-contract]
+    needs: [lint-and-test-node, lint-and-test-rust, lint-and-test-frontend, lint-and-test-contracts, retention-vacuum-regression, gsim1-coverage-ceiling-regression, liquidity-catalog-contract]
     steps:
       - name: All checks must actually succeed, including the catalog
         env:
@@ -172,7 +234,8 @@ jobs:
           import json, os
           results = json.loads(os.environ['REQUIRED_RESULTS'])
           required = {'lint-and-test-node', 'lint-and-test-rust', 'lint-and-test-frontend',
-                      'lint-and-test-contracts', 'retention-vacuum-regression', 'liquidity-catalog-contract'}
+                      'lint-and-test-contracts', 'retention-vacuum-regression',
+                      'gsim1-coverage-ceiling-regression', 'liquidity-catalog-contract'}
           if set(results) != required or any(v.get('result') != 'success' for v in results.values()):
               raise SystemExit('CI gate failed: missing, skipped, cancelled or failed required job')
           print('CI gate passed: every required job succeeded')
