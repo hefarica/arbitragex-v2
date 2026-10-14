@@ -1,0 +1,13 @@
+=== T18 DRILL v2 ===
+ Container arbx-drill-probe-1 Starting 
+ Container arbx-drill-probe-1 Started 
+ Container arbx-drill-probe-1 Starting 
+ Container arbx-drill-probe-1 Started 
+ Container arbx-drill-probe-1 Starting 
+ Container arbx-drill-probe-1 Started 
+t_swap1_s=0.53 t_rollback_s=10.66 t_swap2_s=10.60
+up_tras_swap1=1 img_tras_rollback=arbx:R-DRILL-PREV img_final=arbx:R-DRILL-NEW
+=== limpieza ===
+ Network arbx-drill_default Removed 
+Untagged: arbx:R-DRILL-PREV
+restantes=0

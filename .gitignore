@@ -162,3 +162,10 @@ ci-artifacts/
 .next-*/
 /exchange-settled.yml
 .worktrees/
+
+# t30 (§3): artefactos >5MB viajan como sha+nota; t27 OUT del release
+docs/integration-v4/A8_final.xlsx
+docs/integration-v4/t26-evidence/searcher_full.log
+docs/integration-v4/t27-evidence/
+__pycache__/
+docs/integration-v4/releases/R-20261014T001014Z/

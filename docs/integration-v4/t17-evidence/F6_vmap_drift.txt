@@ -1,0 +1,12 @@
+V-MAP-DELTA (per-strategy mask diff frozen-theta vs clone): 3 drifted strategies DETECTED:
+  DRIFT MEV-02-001 [G02]: theta=2/3/4/6/7 -> clone=2/3/4/6/5
+  DRIFT MEV-04-001 [G04]: theta=2/3/4/5/7 -> clone=2/3/4/5/6
+  DRIFT MEV-06-001 [G06]: theta=2/3/4/5/6 -> clone=3/4/5/6/7
+drift by group: {'G02': 1, 'G04': 1, 'G06': 1}
+sha256 theta  = 7fb529c607071a210a0b3bc627dd27b475008f2031445e9acccf317884861122
+sha256 clone  = cf94dc0a9baaf103c09b86b2d71f2f8ba6854ec3761802dfdbfc51583eaaefe2
+sha256 differ : True (hash-layer detection also fires)
+G13 probe: GRUPO universe = G01..G11 (11 groups, measured this session from SSOT csv);
+  G13 does NOT exist in the hop map -> contract reference G13 is NOT GROUNDED (same pattern as cond7 errata);
+  V-MAP-DELTA over G13 is a no-op (0 strategies), reported, not silently passed.
+VERDICT_F6: NO_REFUTADO - drift in G2/G4/G6 DETECTED by per-strategy V-MAP-DELTA (3/3) and by sha256 layer

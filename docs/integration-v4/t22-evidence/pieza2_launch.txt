@@ -1,0 +1,9 @@
+=== rm pieza-1 VPS (tractionada+verificada) ===
+heartbeat.txt
+piece_resto.dump
+piece_resto.err
+piece_resto.status
+=== LAUNCH pieza-2 (opportunities 31G logico) ===
+pieza2_pid=704935
+-rw-r--r-- 1 root root 71245824 Oct 13 17:18 /opt/arbx-pieces/piece_opportunities.dump
+status pendiente

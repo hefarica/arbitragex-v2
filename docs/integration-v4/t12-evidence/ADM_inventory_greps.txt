@@ -1,0 +1,61 @@
+# ADM inventory — comandos y salidas extracto (t12, 2026-10-13, sesión edge-dev)
+
+> Extracto verificable de los 7 comandos de inventario. Salidas completas en transcripción de sesión t12.
+> grep N.M = "Found N of M matches" (cap de presentación del harness).
+
+## C1 — flashloan/callbacks (D)
+grep "flashLoan|flash_loan|flashloan|executeOperation|onFlashLoan|flashLoanSimple" backend
+→ Found 250 of 602 matches. Hitos:
+- backend/shared-rs/src/flashloan_math.rs:19 "flashloan_invalid_aave_premium"; :33 "flashloan_invalid_balancer_premium"; :133 flashLoanProvider(); :215 "flashloan_insufficient_capacity"
+- backend/prioritization-spine/src/execute_arbitrage_encoder.rs:238 build_request_flash_loan_calldata; :448 selector test; :570 flash_funded_broadcast
+- backend/searcher-rs/src/workers/mod.rs:11 pub mod flashloan_arb_worker
+- backend/sim-core/src/paper_executors.rs:347 paper_deploy_flashloan_executor; :385 grantRole(EXECUTOR_ROLE)
+- backend/searcher-rs/src/cartridge_boot.rs:489 "flashloan_atomic / flashmint_atomic arms"
+- backend/api-server/src/lib/registry-engine.ts:546 "flashloan_aave","flashloan_balancer","flashloan_dydx" (+uniswap_v3)
+- backend/shared-rs/src/trading_config.rs:766 flashloan_fee_pct: 0.0009
+
+## C2 — 4337/1153 reales (D)
+grep "UserOperation|EntryPoint|account_abstraction|erc4337|TSTORE|TLOAD|transient_storage" backend
+→ No matches found.
+(nota: un grep previo con patrón suelto "4337|7702" dio 43 matches NUMÉRICOS espurios — substrings de sqrtPriceX96=79228162514264337593543950336 y checksums; el patrón estricto arriba = 0.)
+
+## C3 — relays/bundles (E)
+grep "flashbots|mev-share|mevshare|mev_share|mev-boost|mevboost|jito|bloxroute|beaverbuild|titan" backend
+→ Found 147 matches. Hitos:
+- backend/relays-client/src/relay_flashbots.rs (cliente); relay_bloxroute.rs; relay_titan.rs; relay_no_submit_sim.rs:181 validate_flashbots; relay_catalog.rs:92 find_flashbots
+- backend/relays-client/src/signer.rs:38 flashbots_auth_header
+- backend/sed-core/src/connectors/flashbots_simulator.rs:8 "Dry-run via eth_callBundle (NO signing)"
+- backend/searcher-rs/tests/cartridge_wave_de_test.rs:2145 "mev_09_018_mev_share_backrun_arbitrage"; :972 origin "mev_share"
+- jito: 0 matches reales (los hits eran "jito" dentro de ninguna palabra real — 0 líneas con Jito el producto)
+- mev-boost/mevboost: 0 matches
+
+## C4 — nonce/priority fee (D)
+grep "nonce|priority|gas_price|max_fee" backend/relays-client/src
+→ Found 92 matches. Hitos:
+- backend/relays-client/src/nonce_manager.rs:2 "(chain_id, address) → next_nonce with a Semaphore"; :54 next+increment; :62 force-refresh RPC
+- backend/relays-client/src/bundle_builder.rs:131 "invalid_priority_fee"; :180-183 .nonce(nonce).max_priority_fee_per_gas(priority_fee).max_fee_per_gas(max_fee)
+- backend/relays-client/src/submit_engine.rs:1016-1038 resync_nonce ("never fabricates a nonce"); :495 priority_fee_gwei (WO-04)
+
+## C5 — backrun/sandwich/mempool (E)
+grep "sandwich|backrun|frontrun_detect|mempool_listener|pending_tx" backend/searcher-rs/src
+→ Found 61 matches. Hitos:
+- backend/searcher-rs/src/engines/backrun_engine.rs:1 "Non-extractive backrunning strategy (Zero Victim)"
+- backend/searcher-rs/src/workers/backrun_worker.rs:1
+- backend/searcher-rs/src/block_scanner.rs:1 "Block/log backrunning scanner (ARBX_MEMPOOL_MODE=block)"; :528 "Uniswap V3 swap decoded into a backrun route intent"
+- backend/searcher-rs/src/connectors/mempool_listener.rs:33-44 "OBSERVER-ONLY: subscribe_pending_txs + get_transaction"
+- backend/searcher-rs/src/scanner.rs:1665 process_pending_tx
+- backend/searcher-rs/src/cartridge_boot.rs:837 notes ["shadow_only","no_sandwich","no_frontrun",...]
+
+## C6 — mev-blocker (E)
+grep "mev_blocker|mevblocker|MEV_BLOCKER" backend/relays-client/src
+→ Found 23 matches. Hitos: relay_no_submit_sim.rs:15 (docs.mevblocker.io), :116 pub mev_blocker: RelayVerdict, :259 validate_mev_blocker; submit_engine.rs:1491 "verdict order: flashbots, mev_blocker, titan".
+
+## C7 — contratos (D)
+Get-ChildItem contracts\src -Recurse -Filter *.sol → 27 archivos. Hitos:
+- contracts/src/FlashLoanExecutor.sol; contracts/src/ArbitrageExecutor.sol
+- contracts/src/flashloans/{AaveV3FlashAdapter,BalancerFlashAdapter,DyDxFlashAdapter,UniV3FlashAdapter}.sol  ← sin Morpho/Euler
+- contracts/src/core/DeterministicFactory.sol
+- contracts/src/adapters/{AaveV3CrossChainAdapter,BalancerVaultAdapter,CurveStableSwapAdapter,MakerDssAdapter,UniswapV2Adapter,UniswapV3Adapter}.sol + dexes/{Curve,GMX,PancakeV3,Synthetix}Adapter.sol
+
+## Extra — solver/intents (E)
+backend/searcher-rs/src/route_discovery/strategy_applicability.rs:1009 "intents_solver_engine: { enabled: true, shadow_only: true, ... gates: [relay_intent_feed] }" (vista en grep C5 contexto y en lectura previa de sesión).

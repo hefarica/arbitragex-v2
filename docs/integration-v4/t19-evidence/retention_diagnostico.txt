@@ -1,0 +1,27 @@
+=== log retention (ultimas 12) ===
+2026-10-13T04:17:04Z rdo.zero_fill inserted_rows=0 out=INSERT 0 0
+2026-10-13T04:23:43Z retention.table table=opportunities deleted=4812043 elapsed=344s complete
+2026-10-13T04:23:44Z retention.vacuum table=opportunities failed (non-fatal)
+2026-10-13T04:23:45Z retention.table table=pool_reserves deleted=114236 elapsed=1s complete
+2026-10-13T04:23:46Z retention.vacuum table=pool_reserves failed (non-fatal)
+2026-10-13T04:23:46Z retention.table table=risk_events deleted=0 elapsed=0s complete
+2026-10-13T04:25:37Z retention.table table=scored_opportunities deleted=4826021 elapsed=111s complete
+2026-10-13T04:25:38Z retention.vacuum table=scored_opportunities failed (non-fatal)
+2026-10-13T04:25:38Z retention.table table=simulations deleted=0 elapsed=0s complete
+2026-10-13T04:25:38Z retention.table table=opportunity_observations deleted=888 elapsed=0s complete
+2026-10-13T04:25:39Z retention.table table=paper_trade_runs deleted=0 elapsed=0s complete
+2026-10-13T04:25:39Z retention.summary dry_run=0 deleted_total=9753188 elapsed_total=460s opportunities:deleted=4812043:complete pool_reserves:deleted=114236:complete risk_events:deleted=0:complete scored_opportunities:deleted=4826021:complete simulations:deleted=0:complete opportunity_observations:deleted=888:complete paper_trade_runs:deleted=0:complete
+=== cron arbx ===
+17 4 * * * bash /opt/arbitragex-v2/scripts/pg_retention.sh >> /var/log/arbx-pg-retention.log 2>&1
+23 5 * * 0 docker builder prune -f >> /var/log/arbx-builder-prune.log 2>&1
+13 * * * * bash /opt/arbitragex-v2/scripts/disk_guard.sh >> /var/log/arbx-disk-guard.log 2>&1
+*/2 * * * * /bin/bash /opt/arbitragex-v2/scripts/price_seeder.sh >> /var/log/arbx-price-seeder.log 2>&1
+0 * * * * /opt/arbitragex-v2/scripts/deploy_watch.sh >> /var/log/arbx-deploy-watch.log 2>&1
+=== script existe ===
+-rwxr-xr-x 1 root root 26439 Oct  1 22:34 /opt/arbitragex-v2/scripts/pg_retention.sh
+=== rollup_5m cobertura ===
+ERROR:  column "ts_ms" does not exist
+LINE 1: SELECT min(ts_ms)::text||' -> '||max(ts_ms)::text||' filas='...
+=== p20261012 rango ===
+head: invalid trailing option -- 
+Try 'head --help' for more information.

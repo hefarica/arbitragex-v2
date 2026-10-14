@@ -1,0 +1,9 @@
+--- cleanbase: cargo build --release -p searcher-rs (CARGO_TARGET_DIR shared, start 2026-10-13T08:30:33.8168464-05:00) ---
+   Compiling math-engine v0.1.0 (C:\Users\HFRC\AppData\Local\Temp\arbx-t9-v3base\backend\math-engine)
+   Compiling shared-rs v0.1.0 (C:\Users\HFRC\AppData\Local\Temp\arbx-t9-v3base\backend\shared-rs)
+   Compiling simulator-v2 v0.1.0 (C:\Users\HFRC\AppData\Local\Temp\arbx-t9-v3base\backend\simulator-v2)
+   Compiling prioritization-spine v0.1.0 (C:\Users\HFRC\AppData\Local\Temp\arbx-t9-v3base\backend\prioritization-spine)
+   Compiling sim-core v0.1.0 (C:\Users\HFRC\AppData\Local\Temp\arbx-t9-v3base\backend\sim-core)
+   Compiling searcher-rs v0.1.0 (C:\Users\HFRC\AppData\Local\Temp\arbx-t9-v3base\backend\searcher-rs)
+    Finished `release` profile [optimized] target(s) in 20m 45s
+cleanbase build exit=0

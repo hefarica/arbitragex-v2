@@ -1,0 +1,14 @@
+artefacto	productor	sha256	verificador
+backend/api-server/src/prices-stream.ts (seam: +6 t5 guard @:104-110, luego +2 keywords export t4)	t4-edge [cambio aditivo export buildSnapshot/nextSeq; estado intermedio post-t5 = 3C26994AEDBC80C9E28DFEC2E6F40916872D8118AAE96659D2A01683E408A8B5]	D019391608D8AC7DC363A8CE69454190D54EC674B33ED20E2C0690E026A665F1	t17/t7
+backend/api-server/src/routes/prices-stream-sse.ts (NUEVO, G-PRICE-2 upstream SSE)	t4-edge	12DC8204E3FED08FB239148D60E00184ABDF537DB49BF1508A9E96CA6F1A0573	t17/t7
+backend/api-server/src/routes/prices-stream-sse.test.ts (NUEVO, 8 tests)	t4-edge	3E705E6982D5271C1D2E26A6C8BB6B4CC86311F8683AFDADC3FD34B1BCD08F79	t17/t7
+backend/api-server/src/index.ts (M: import + mount SSE route + startSsePriceBridge)	t4-edge	D2776933C85AC8044D54033312B4C0C7EA0C45B2065A5B07700099BAEDF85CD2	t17/t7
+edge/worker/src/index.ts (M: +GET /api/prices/stream via proxyPassThrough tras :702)	t4-edge	FE2A4DF661302D7EA6CC1527769F680C7C2271CC27663837047B640BD1426602	t17/t7
+edge/worker/src/index.test.ts (M: +describe G-PRICE-2, 2 tests streaming incremental + 404 honesto)	t4-edge	3C8BCC0DCE8467E2F767100E82B593C7827598F33E97753B729853F6311DCD48	t17/t7
+edge/dev-local/src/proxy-stream.ts (NUEVO, streaming pass-through SSE para Express)	t4-edge	5AB2E24C7EB2191715C7127370C3360C4517ECA0792044347ABAE411A7217F32	t17/t7
+edge/dev-local/src/proxy-stream.test.ts (NUEVO, 4 tests anti-buffering/abort/502)	t4-edge	0B0F7A7F148DD6B90AD05919F6C02CC370AE85F0B74B4E87BC9068B2E2DBBB6D	t17/t7
+edge/dev-local/src/index.ts (M: import proxyStream + ruta inline /api/prices/stream)	t4-edge	391B157528FEC6CDB2B858990ED304D4B582125A57AF42F9FEC9DF3727D294C1	t17/t7
+docs/integration-v4/t4-evidence/measure_mu.ts (harness medición μ local staging)	t4-edge	D994339A16013714CF631DE0AA5C8FCADDE87BB268533A81DB24E121DA15FD80	t17/t7
+docs/integration-v4/t4-evidence/measure_mu_output.json (m1=0.257ms n=20, m2=1.188ms, μ_worst=337.543ms ≥ δ=12.832)	t4-edge	C2280DB364FF881E537C5F13BB64B9261F759055C578EA5038A77E713280B876	t17/t7
+docs/integration-v4/t4-evidence/ADM_G4_multicall_grep.txt (evidencia G-4 ya presente)	t4-edge	(ver file)	t17/t7
+docs/integration-v4/t4-evidence/ADM_registry.md (registro ADM-1..4 + seam chain-of-custody)	t4-edge	(ver file final)	t17/t7

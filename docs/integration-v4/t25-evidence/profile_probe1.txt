@@ -1,0 +1,10 @@
+=== estado actual stack ===
+arbitragex-v2-searcher-rs-1 arbitragex-v2-searcher-rs Up 2 minutes (healthy)
+error: no such object:  --format
+error: no such object: {{.HostConfig.LogConfig.Config}} | StartedAt={{.State.StartedAt}}
+Error response from daemon: multiple IDs found with provided prefix: 2
+=== log retention searcher ===
+map[max-file:5 max-size:10m]
+[]
+=== primera linea de log retenida ===
+=== active_eval_summary muestras recientes ===

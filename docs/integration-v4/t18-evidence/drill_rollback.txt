@@ -1,0 +1,31 @@
+=== T18 DRILL DE ROLLBACK (mecanica swap->rollback->swap, espejo retag dfd71012e1dc) ===
+libre_antes=10957M
+docker: 'docker inspect' requires at least 1 argument
+
+Usage:  docker inspect [OPTIONS] NAME|ID [NAME|ID...]
+
+See 'docker inspect --help' for more information
+docker: 'docker inspect' requires at least 1 argument
+
+Usage:  docker inspect [OPTIONS] NAME|ID [NAME|ID...]
+
+See 'docker inspect --help' for more information
+bash: line 19: '
+set -e
+T0=1791908425.914357708
+PROBE_TAG=arbx:R-DRILL-NEW docker compose -p arbx-drill up -d >/dev/null 2>&1
+T1=1791908425.915592023
+UP1=0
+PROBE_TAG=arbx:R-DRILL-PREV docker compose -p arbx-drill up -d >/dev/null 2>&1
+T2=1791908425.937991880
+IMG_RUNNING=
+PROBE_TAG=arbx:R-DRILL-NEW docker compose -p arbx-drill up -d >/dev/null 2>&1
+T3=1791908425.975780878
+IMG_FINAL=
+echo t_swap1_s=0.00
+echo up_tras_swap1=
+echo t_rollback_s=0.00
+echo img_tras_rollback=
+echo t_swap2_s=0.00
+echo img_final=
+': No such file or directory

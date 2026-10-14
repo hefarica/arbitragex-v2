@@ -1,0 +1,23 @@
+=== log colofon ===
+
+#31 exporting to image
+#31 exporting layers
+#31 exporting layers 1.8s done
+#31 exporting manifest sha256:c99f9a4d368561b66910c051a8792b1106f7c3ad4b3933fa28f83b1bdd13e975 0.0s done
+#31 exporting config sha256:c7ba55d0408b202135b488a7029b9697070a75b8dd64505c0bc2ee110ee54bdc 0.0s done
+#31 exporting attestation manifest sha256:f77b99c0ac3fddddb26ff183685628fa310ae6eb654667a9ea83cbf9c3b6cb27 0.0s done
+#31 exporting manifest list sha256:a9b3ef50a8b326cddcacb1d2b630e3968c57a936e7d7f5fbb254a537e6a773f1 0.0s done
+#31 naming to docker.io/library/arbx:R-20261013T1545Z done
+#31 unpacking to docker.io/library/arbx:R-20261013T1545Z
+#31 unpacking to docker.io/library/arbx:R-20261013T1545Z 0.5s done
+#31 DONE 2.5s
+=== df DESPUES ===
+/dev/sda1       150G  131G   14G  91% /
+=== inspect Id ===
+sha256:a9b3ef50a8b326cddcacb1d2b630e3968c57a936e7d7f5fbb254a537e6a773f1
+=== imagen ===
+IMAGE                   ID             DISK USAGE   CONTENT SIZE   EXTRA
+arbx:R-20261013T1545Z   a9b3ef50a8b3        185MB         46.1MB        
+WARNING: This output is designed for human readability. For machine-readable output, please use --format.
+=== entrypoint/runtime ===
+Entrypoint=[/usr/bin/tini --] Cmd=[/usr/local/bin/searcher-rs] User=arbx

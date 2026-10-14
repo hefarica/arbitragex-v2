@@ -1,0 +1,1 @@
+ssh exit=255 stderr_bytes=0 stdout_bytes=0

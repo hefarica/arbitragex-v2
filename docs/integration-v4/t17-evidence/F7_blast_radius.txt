@@ -1,0 +1,10 @@
+applier exit=2 (2 = ABORT blast-radius)
+ABORT [A0d blast radius]: destinations outside BLAST_RADIUS: ['backend/api-server/src/index.ts']
+BLAST_RADIUS = ['backend/searcher-rs/src/detector_policy.rs', 'docs/integration-v4/releases/', 'docs/integration-v4/t9-evidence/']
+NOTHING WRITTEN (transactional abort before first write)
+
+index.ts       pre=120c221183a7835b… post=120c221183a7835b… INTACT=True
+detector_policy pre=fed8cfcc3d6ccb22… post=fed8cfcc3d6ccb22… INTACT=True (abort happened BEFORE any legal write too)
+releases/ created in target: False (must be False)
+t9-evidence/ created in target: False (must be False)
+VERDICT_F7: NO_REFUTADO — applier ABORTS on out-of-blast-radius destination with ZERO bytes written (transactional pre-write guard A0d)

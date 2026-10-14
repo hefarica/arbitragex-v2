@@ -1,0 +1,132 @@
+{
+  "pairs": 549,
+  "bulk_n": 530,
+  "bulk_time_s": 1350.8803770000002,
+  "outliers_n": 19,
+  "outliers_time_s": 2904.133493,
+  "outliers_pct_time": 68.25203352392361,
+  "attrib": {
+    "applicable_data_or_constraint_gap": {
+      "beta_ms": -86.91985901461177,
+      "n": 28881,
+      "sum_s": 0.0,
+      "pct_total": 0.0
+    },
+    "dispatch_needs_route_data": {
+      "beta_ms": 45.689095376866376,
+      "n": 92220,
+      "sum_s": 4213.448375654617,
+      "pct_total": 99.02314080246741
+    },
+    "dispatch_no_compatible_route": {
+      "beta_ms": -4328289168195085.5,
+      "n": 1590,
+      "sum_s": 0.0,
+      "pct_total": 0.0
+    },
+    "dispatch_observe_only": {
+      "beta_ms": 2.5969735009173304e+16,
+      "n": 4240,
+      "sum_s": 1.101116764388948e+17,
+      "pct_total": 2587810047230111.5
+    },
+    "incomplete_triangle": {
+      "beta_ms": 635.5758930204415,
+      "n": 312,
+      "sum_s": 198.29967862237774,
+      "pct_total": 4.660376785619684
+    },
+    "insufficient_pools": {
+      "beta_ms": 65.81313024475487,
+      "n": 52,
+      "sum_s": 3.4222827727272533,
+      "pct_total": 0.08042941520957377
+    },
+    "insufficient_price_history": {
+      "beta_ms": 0.0,
+      "n": 530,
+      "sum_s": 0.0,
+      "pct_total": 0.0
+    },
+    "multi_hop_missing_leg_count": {
+      "beta_ms": 0.0,
+      "n": 312,
+      "sum_s": 0.0,
+      "pct_total": 0.0
+    },
+    "native_domain_solver_required": {
+      "beta_ms": 0.0,
+      "n": 6360,
+      "sum_s": 0.0,
+      "pct_total": 0.0
+    },
+    "native_size_schedule_missing": {
+      "beta_ms": -104.58982978469781,
+      "n": 4355,
+      "sum_s": 0.0,
+      "pct_total": 0.0
+    },
+    "no_computable_roundtrip": {
+      "beta_ms": -871.5163727272753,
+      "n": 105,
+      "sum_s": 0.0,
+      "pct_total": 0.0
+    },
+    "no_funding_rates_data": {
+      "beta_ms": 0.0,
+      "n": 530,
+      "sum_s": 0.0,
+      "pct_total": 0.0
+    },
+    "not_confirmed_zero_victim_guard": {
+      "beta_ms": 0.0,
+      "n": 530,
+      "sum_s": 0.0,
+      "pct_total": 0.0
+    },
+    "search_completed_within_declared_scope": {
+      "beta_ms": 0.0,
+      "n": 2274,
+      "sum_s": 0.0,
+      "pct_total": 0.0
+    },
+    "spatial_missing_quotes": {
+      "beta_ms": 0.0,
+      "n": 209,
+      "sum_s": 0.0,
+      "pct_total": 0.0
+    },
+    "token_meta_unavailable": {
+      "beta_ms": -2319.8613333333333,
+      "n": 3,
+      "sum_s": 0.0,
+      "pct_total": 0.0
+    },
+    "unsupported_strategy_kind": {
+      "beta_ms": 0.0,
+      "n": 8,
+      "sum_s": 0.0,
+      "pct_total": 0.0
+    },
+    "v3_fee_tier_requires_same_pair": {
+      "beta_ms": 0.0,
+      "n": 1,
+      "sum_s": 0.0,
+      "pct_total": 0.0
+    },
+    "v3_single_tick_degenerate": {
+      "beta_ms": 0.0,
+      "n": 53,
+      "sum_s": 0.0,
+      "pct_total": 0.0
+    },
+    "v3_slot0_unavailable": {
+      "beta_ms": 0.0,
+      "n": 5,
+      "sum_s": 0.0,
+      "pct_total": 0.0
+    }
+  },
+  "data_gap_pct_total": 99.02314080246741,
+  "data_gap_wide_pct_total": 99.02314080246741
+}

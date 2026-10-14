@@ -1,0 +1,51 @@
+R.tsv total lines=45 data=44
+well-formed+hash-verified: 19
+HASH FAILURES (20):
+  line 8: C_THETA_verdict.json -> NOT FOUND
+  line 15: V2_static.txt -> MISMATCH decl=a270517e61 act=7c8a4e4611
+  line 16: V4_dryrun.md -> NOT FOUND
+  line 17: Q1_Q8.md -> MISMATCH decl=115374db80 act=3291f3342a
+  line 20: V3_build/cargo_build_release.txt -> NOT FOUND
+  line 21: V3_build/cargo_build_release_cleanbase.txt -> NOT FOUND
+  line 22: V3_build/cargo_test.txt -> NOT FOUND
+  line 23: V3_build/cargo_test_cleanbase.txt -> NOT FOUND
+  line 24: V3_build/cleanbase_restore_proof.txt -> NOT FOUND
+  line 25: V3_build/exoneration_pure_head.txt -> NOT FOUND
+  line 26: V3_build/restore_proof.txt -> NOT FOUND
+  line 27: V3_build/v4_tests_result.txt -> NOT FOUND
+  line 28: ASSEMBLY.md -> NOT FOUND
+  line 34: R-20261013T1545Z-t6/V1_hashes.txt (A9 = sello del release, 3 -> NOT FOUND
+  line 35: R-20261013T1545Z-t6/V0_baseline.md (snapshot V0 + condición  -> NOT FOUND
+  line 36: R-20261013T1545Z-t6/V5_shadow.md (Φ(shadow)=1, x(θ) toleranc -> NOT FOUND
+  line 37: R-20261013T1545Z-t6/tools/vmap_delta.py (V-MAP-Δ EJECUTABLE  -> NOT FOUND
+  line 38: R-20261013T1545Z-t6/tools/c_evaluator.py (𝒞 EJECUTABLE persi -> NOT FOUND
+  line 39: R-20261013T1545Z-t6/tools/phi_static.py (Φ g1-g6 gate, exit= -> NOT FOUND
+  line 40: R-20261013T1545Z-t6/ci/phi-t7.yml (CI t₇ SIN filtros de path -> NOT FOUND
+MALFORMED rows (4):
+  line 42: 7c8a4e461137acabeca550735fd80932f827b9ea7cef7685419ba65d92230e93	qa/t6 R-2026101
+  line 43: 57cb51a1169d39d32129847b3ec0ee90b5a7d0d71093a259154c21cf840f145e	qa/t6 R-2026101
+  line 44: f00c0921ff7fc19545ce90d659913f7471cb7e5baf94e89e7298d058d71be25c	qa/t6 R-2026101
+  line 45: 8c830f40284dc3363ba95f9532241cc4fe3ccaf9d568cc2c829a3fad4a293953	qa/t6 ESCALERA_
+C2 violations - sha256 field not 64-hex (1):
+  line 41: t6-evidence/vmap_delta_p{1,2,3}.txt + hashes_maest sha_field=(ver p1=fc8e71e0… p2=f1d5baa2… p3=d6e029
+C3 violations - verifier missing/equal/degenerate (0):
+
+A1_MANIFEST table re-hash:
+  A0: MATCH  (vps-map/VPS_MAP.json)
+  A0doc: MATCH  (vps-map/VPS_MAP.md)
+  A1seed: MATCH  (.tmp-inbox/integrado-supremo/MANIFEST.txt)
+  A2: MATCH  (.tmp-inbox/integrado-supremo/06_CLASIFICACION/clasificacion_264.csv)
+  A3: MATCH  (docs/integration-v4/CRITERIOS_T6.md)
+  A4: MATCH  (docs/integration-v4/PLAN_T1_T8.md)
+  A5: MATCH  (.tmp-inbox/integrado-supremo/03_FORMULAS/FORMULAS_TARJETAS.md)
+  A6: MATCH  (.tmp-inbox/integrado-supremo/03_FORMULAS/FIELD_REGISTRY.md)
+  A7: MATCH  (docs/integration-v4/REGISTRO_INCLUSIONES.md)
+  A8: MATCH  (docs/integration-v4/A8_final.xlsx)
+  A9: MATCH  (docs/integration-v4/releases/R-20261013T1545Z-t6/V1_hashes.txt)
+  xref: MATCH  (docs/integration-v4/releases/R-20261013T1545Z-t6/x_ref.json)
+  A4f0: MATCH  (docs/integration-v4/integration-manifest.md)
+  alpha7: MATCH  (docs/integration-v4/FALSATION_REPORT.md)
+  xrefraw_md: MATCH  (XREF_BASELINE.md)
+  xrefraw_json: MATCH  (XREF_BASELINE.json)
+
+delta_abs literal '0.005' in A1_MANIFEST.md: False

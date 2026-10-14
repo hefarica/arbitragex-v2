@@ -1,0 +1,49 @@
+{
+  "fuente": "t26-evidence/searcher_full.log (123.568 líneas, contenedor VIEJO dfd71012e1dc post-rollback, vida completa 20:11Z→~23:5xZ)",
+  "pares_enter_summary": 549,
+  "enters_por_tx": {
+    "min": 1,
+    "max": 124,
+    "media": 3.8
+  },
+  "H3_poblaciones": {
+    "bulk": {
+      "n": 530,
+      "pct_tx": 96.5,
+      "tiempo_s": 1350.9,
+      "pct_tiempo": 31.7,
+      "p50_ms": 2891,
+      "p90_ms": 3207
+    },
+    "outliers_mayor_10s": {
+      "n": 19,
+      "pct_tx": 3.46,
+      "tiempo_s": 2904.1,
+      "pct_tiempo": 68.3,
+      "rango_s": [
+        15.7,
+        290.9
+      ],
+      "p99_ms": 242724,
+      "max_ms": 290917,
+      "correlatos": "bursts de instante (clústeres 23:20:39 x6, 23:23:28 x3, gaps 0.0s); re-entrada masiva (hasta 124 enters/tx); MISMA mezcla de reasons que el bulk; pertinent=269 en todos"
+    },
+    "conclusion": "el p99 lo maneja la población outlier (bloqueo/colgada con re-entrada), NO el mix semántico del bulk"
+  },
+  "H1_costo_por_causa": {
+    "metodo": "OLS ecológico tiempo_tx ~ reasons(tx) sobre bulk",
+    "resultado": "NO-IDENTIFICABLE: colinealidad perfecta (composición de reasons casi constante: pertinent=269 fijo; X'X singular, β absurdos 1e16, Σ>100%)",
+    "acotas_pct_del_total": {
+      "inferior_0": 0.0,
+      "superior_todo_el_bulk": 31.7
+    },
+    "estimacion_uniforme": "si cada eval de cartucho cuesta ~igual (~10.7ms = 2891/269), Σtiempo(DATA_GAP-family, 65-66% de pertinentes) ≈ 21% del TOTAL — SUPUESTO declarado, no medición",
+    "umbral_30pct": "NO CERTIFICABLE (mejor estimación ~21% < 30%; banda [0%, 31.7%])",
+    "instrumento_faltante": "timing por cartucho/causa en el runner (evento con ms por evaluate_opportunity)"
+  },
+  "H4_reconciliacion": {
+    "gobierna": "2.94x (t24: p99 3680→10819, simétrica n-grande 13min/lado, n=214/247, dedup, misma fuente pipeline_latency_ms)",
+    "desacreditada": "2.38x (t21 w180: ventanas n=25-49 anecdóticas; t24 capa 1 lo declaró ruido con baseline atípicamente limpio)"
+  },
+  "PASO4_veredicto_diseno": "Σtiempo(DATA_GAP)≥30% NO certificado ⇒ por la letra del orden: prefilter marginal alcanza y KNW-001 SE REABRE para rediseñar ANTES de implementar. El rediseño OBLIGADO por H3: control de outliers (cap de re-entrada por tx + timeout por eval) porque concentra 68.3% del tiempo y es el driver del p99 — optimizar sólo el bulk = optimizar el 32% y declarar victoria sobre el 68% (advertencia literal del operador)"
+}

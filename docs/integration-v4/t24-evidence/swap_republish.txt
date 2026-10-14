@@ -1,0 +1,20 @@
+ Container arbitragex-v2-searcher-rs-1 Starting 
+ Container arbitragex-v2-searcher-rs-1 Started 
+swap_dur_s=2.61
+=== contenedor tras swap ===
+/arbitragex-v2-searcher-rs-1 image=sha256:a9b3ef50a8b326cddcacb1d2b630e3968c57a936e7d7f5fbb254a537e6a773f1 status=running restarts=0 started=2026-10-13T20:02:17.047360609Z
+=== logs searcher (tail 12) ===
+{"timestamp":"2026-10-13T20:02:24.728655Z","level":"WARN","fields":{"event":"pool_sync.v3_sqrt_overflow","pool":"0x286eb8405231a2201fcb75b6e33098a546216c86","value":"1461446703485210103287273052203988822378723970341"},"target":"searcher_rs::workers::pool_sync_worker"}
+{"timestamp":"2026-10-13T20:02:24.732263Z","level":"WARN","fields":{"event":"pool_sync.v3_uninitialized_pool","pool":"0x9178ea3eb764c0e8728ae5ab0823101a975a0a12"},"target":"searcher_rs::workers::pool_sync_worker"}
+{"timestamp":"2026-10-13T20:02:24.732893Z","level":"WARN","fields":{"event":"pool_sync.v3_sqrt_overflow","pool":"0xfbda50228753833f97d9a42df7e34089dccd2973","value":"1461446703485210103287273052203988822378723970341"},"target":"searcher_rs::workers::pool_sync_worker"}
+{"timestamp":"2026-10-13T20:02:24.734868Z","level":"WARN","fields":{"event":"pool_sync.v3_sqrt_overflow","pool":"0xe2373abf8c81ac76fa7846cda0de14d1255a3ac7","value":"1461446703485210103287273052203988822378723970341"},"target":"searcher_rs::workers::pool_sync_worker"}
+{"timestamp":"2026-10-13T20:02:24.736279Z","level":"WARN","fields":{"event":"pool_sync.v3_sqrt_overflow","pool":"0xf6a42a1963b34ad95bc82c8afe1cadf27b0abf2d","value":"1461446703485210103287273052203988822378723970341"},"target":"searcher_rs::workers::pool_sync_worker"}
+{"timestamp":"2026-10-13T20:02:24.739466Z","level":"WARN","fields":{"event":"pool_sync.v3_sqrt_overflow","pool":"0x89eeba49e12d06a26a25f83719914f173256ce72","value":"1461446703485210103287273052203988822378723970341"},"target":"searcher_rs::workers::pool_sync_worker"}
+{"timestamp":"2026-10-13T20:02:24.744908Z","level":"WARN","fields":{"event":"pool_sync.v3_sqrt_overflow","pool":"0x1d6db07fa413c6d06b448e1129450872e832d73e","value":"1461446703485210103287273052203988822378723970341"},"target":"searcher_rs::workers::pool_sync_worker"}
+{"timestamp":"2026-10-13T20:02:24.746930Z","level":"WARN","fields":{"message":"dropping provider — boot eth_chainid failed after retries","event":"rpc_pool.boot_check_failed","chain_id":1,"name":"onelpc","attempts":3,"error":"HTTP error 403 with body: forbidden"},"target":"shared_rs::rpc_failover"}
+{"timestamp":"2026-10-13T20:02:24.749471Z","level":"WARN","fields":{"event":"pool_sync.v3_sqrt_overflow","pool":"0x482eb5c0e969bddce69c1be4508e6a2223e2028b","value":"1461446703485210103287273052203988822378723970341"},"target":"searcher_rs::workers::pool_sync_worker"}
+{"timestamp":"2026-10-13T20:02:24.750659Z","level":"WARN","fields":{"event":"pool_sync.v3_sqrt_overflow","pool":"0x162cec59dfac80086d7370f11dcd8705a45c9333","value":"1461446703485210103287273052203988822378723970341"},"target":"searcher_rs::workers::pool_sync_worker"}
+{"timestamp":"2026-10-13T20:02:24.757534Z","level":"WARN","fields":{"event":"pool_sync.v3_sqrt_overflow","pool":"0x50fe1432a9127b25d81ba12d739b744f84111134","value":"1461446703485210103287273052203988822378723970341"},"target":"searcher_rs::workers::pool_sync_worker"}
+{"timestamp":"2026-10-13T20:02:24.757779Z","level":"INFO","fields":{"event":"pool_sync.v3_tick","chain_id":1,"pools":540,"ok":517,"failed":23,"dirty_marked":517,"dirty_unchanged":0,"dirty_sadd_fail":0,"latency_ms":440},"target":"searcher_rs::workers::pool_sync_worker"}
+=== latest apunta a ===
+sha256:a9b3ef50a8b326cddcacb1d2b630e3968c57a936e7d7f5fbb254a537e6a773f1

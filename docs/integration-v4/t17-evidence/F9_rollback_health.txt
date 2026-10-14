@@ -1,0 +1,41 @@
+F9 — rollback en staging y servicio sano
+=========================================
+Entorno: worktree limpio $env:TEMP\arbx-t17-stage @ 21feefb32 (montado como t9/ASSEMBLY.md,
+porcelain=0, detector_policy.rs pre-release sha256 FED8CFCC3D6CCB22FD8059127F6E0D05EF18AF1C50D7D3C09BB11D72F1E1E589
+== ASSEMBLY.md:31 insumo verificado por t9).
+
+SECUENCIA (comandos literales de esta sesión):
+1. Aplicación del release (F8 dejó el worktree con el release aplicado):
+   porcelain tras apply = M detector_policy.rs + ?? releases/ + ?? t9-evidence/ (3 líneas).
+2. ROLLBACK:
+   git -C $wt checkout -- backend/searcher-rs/src/detector_policy.rs
+   Remove-Item -Recurse -Force docs\integration-v4\releases, docs\integration-v4\t9-evidence
+   SALIDA: "porcelain after rollback: [] lines=0"
+           "detector_policy post-rollback hash: FED8CFCC…E1E1E589 (== pre-release)"
+   ⇒ rollback BYTE-EXACTO a la línea base limpia.
+3. SALUD post-rollback (staging, sin tocar producción):
+   $env:CARGO_TARGET_DIR = backend\target (compartido)
+   cargo test --manifest-path $wt\backend\searcher-rs\Cargo.toml --lib detector_policy
+   SALIDA LITERAL (últimas líneas):
+     test detector_policy::tests::policy_census_matches_workbook ... ok
+     test detector_policy::tests::do_not_rules_uniform ... ok
+     test detector_policy::tests::execution_contracts_match_workbook ... ok
+     test detector_policy::tests::surface_vocabulary_closed ... ok
+     test detector_policy::tests::family_envelope_respected ... ok
+     test route_discovery::route_discovery_worker::tests::evaluate_tick_applies_detector_policy ... ok
+     test detector_policy::tests::observe_detector_coherence ... ok
+     test detector_policy::tests::execution_class_family_uniform ... ok
+     test detector_policy::tests::strategy_counts_cover_all_264 ... ok
+     test detector_policy::tests::table_matches_workbook_fixture_exactly ... ok
+     test detector_policy::tests::envelope_intersection_semantics ... ok
+     test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 1425 filtered out; finished in 0.01s
+     EXIT=0
+   (primer intento en foreground: timeout 600s por compilación fría del worktree —
+    interrupción, no fallo; re-ejecutado en background job pwsh-6 → EXIT=0)
+
+NOTA: los tests v4 (ssot_v4_detector_table_matches_ssot, dfac_fix_is_materialized) NO
+corren tras rollback porque el rollback elimina el diff +134 — correcto: son parte del
+release, no de la base. La base pura está verde en detector_policy (12/12).
+
+VERDICT_F9: NO_REFUTADO — rollback restaura byte-exacto la línea base y el módulo
+afectado queda sano (12/12 tests EXIT=0) sin contacto con producción.

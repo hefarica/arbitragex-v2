@@ -1,0 +1,18 @@
+########## PASADA 4 — 16:48:29Z ##########
+--- G2 ---
+0
+--- G4 ---
+0.0.0.0:22
+0.0.0.0:80
+0.0.0.0:8787
+[::]:22
+[::]:80
+[::]:8787
+--- G6 ---
+NO_OPT_ARBX
+5f8ea3d67c964d152ae8fda89883952de8282dfb
+?? archives/
+?? scripts/gsim1_variance_export.sql.bak
+?? scripts/price_seeder.sh.pre-pull-20260930T104945Z
+--- releases-equiv ---
+tail: option used in invalid context -- 1

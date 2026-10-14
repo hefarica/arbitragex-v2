@@ -50,6 +50,15 @@ export interface OpportunitySocketOptions {
    * stay unprivileged — the server enforces the real authorization).
    */
   authToken?: string;
+  /**
+   * G-PRICE-1 (v4 t5): patada opcional del feed de precios. Mismo criterio
+   * que onStreamEvent en el parche v4: si el llamador no lo pasa, no se
+   * registra listener y el socket observado es idéntico al de antes
+   * (0 listeners extra). NOTA: el diff v4 citaba un `onStreamEvent` previo
+   * que NO existe en esta base — solo se agregan las líneas marcadas `+`.
+   */
+  onPriceTick?: (tick: unknown) => void;
+  onPricesSnapshot?: (payload: unknown) => void;
 }
 
 export interface OpportunitySocketHandle {
@@ -62,7 +71,7 @@ const CONNECT_OPTS = { reconnectionAttempts: 5, timeout: 2000 } as const;
 export function createOpportunitySocket(
   opts: OpportunitySocketOptions,
 ): OpportunitySocketHandle {
-  const { url, ioFactory, onStatus, onOpportunity, onStreamEvent, authToken } = opts;
+  const { url, ioFactory, onStatus, onOpportunity, onStreamEvent, authToken, onPriceTick, onPricesSnapshot } = opts;
 
   // C4: assemble the auth payload the backend `extractHandshakeToken` expects.
   // Use ALL three transport channels for compatibility (auth + query + header).
@@ -82,10 +91,16 @@ export function createOpportunitySocket(
   const onConnect = () => {
     onStatus("LIVE");
     socket.emit("subscribe:opportunities");
+    // G-PRICE-1 (v4 t5): sala pública de precios — subscribe SIN payload.
+    // El dispatcher α11 del servidor lo rutea al brazo v4 (websocket.ts);
+    // el brazo legacy per-chain (prices-stream.ts) hace yield de payloads null.
+    socket.emit("subscribe:prices");
   };
   const onDisconnect = () => onStatus("STALE");
   const onConnectError = () => onStatus("STALE");
   const onNewOpportunity = (opp: unknown) => onOpportunity(opp as Opportunity);
+  const onPrice = (tick: unknown) => onPriceTick?.(tick);
+  const onSnapshot = (payload: unknown) => onPricesSnapshot?.(payload);
   // STREAM-SEQ-01: the ordered leg. Registered ONLY when the caller asked for
   // it, so a consumer on the raw path observes exactly the same socket it
   // always did (no new listener, no new teardown obligation).
@@ -95,6 +110,8 @@ export function createOpportunitySocket(
   socket.on("disconnect", onDisconnect);
   socket.on("connect_error", onConnectError);
   socket.on("new_opportunity", onNewOpportunity);
+  if (onPriceTick) socket.on("prices:tick", onPrice);
+  if (onPricesSnapshot) socket.on("prices:snapshot", onSnapshot);
   if (onStreamEvent) socket.on("opportunity_stream_event", onStream);
 
   return {
@@ -105,6 +122,8 @@ export function createOpportunitySocket(
       socket.off("disconnect", onDisconnect);
       socket.off("connect_error", onConnectError);
       socket.off("new_opportunity", onNewOpportunity);
+      if (onPriceTick) socket.off("prices:tick", onPrice);
+      if (onPricesSnapshot) socket.off("prices:snapshot", onSnapshot);
       if (onStreamEvent) socket.off("opportunity_stream_event", onStream);
       socket.disconnect();
     },

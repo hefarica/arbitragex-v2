@@ -1,0 +1,3 @@
+id=92ca3292-c190-4ab7-9f30-9b6ec092efb3
+POST pg_metadata -> 501 :: {"source":"sim-ctl","route_source":"pg_metadata","opportunity_id":"92ca3292-c190-4ab7-9f30-9b6ec092efb3","result":{"detail":"Route source 'pg_metadata (A1)' should be enriched by api-server before reaching sim-ctl; no candidate provided","error":"not
+POST searcher_api -> 503 :: {"error":"searcher_route_unavailable","opportunity_id":"92ca3292-c190-4ab7-9f30-9b6ec092efb3","detail":"searcher-rs /route endpoint unreachable or returned 404; try route_source=pg_metadata or simctl_lookup"}

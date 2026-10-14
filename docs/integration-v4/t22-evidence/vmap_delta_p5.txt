@@ -1,0 +1,25 @@
+########## PASADA 5 — 17:18:45Z ##########
+--- G2 ---
+0
+--- G4 ---
+0.0.0.0:22
+0.0.0.0:80
+0.0.0.0:8787
+[::]:22
+[::]:80
+[::]:8787
+--- G6 ---
+NO_OPT_ARBX
+5f8ea3d67c964d152ae8fda89883952de8282dfb
+?? archives/
+?? docs/integration-v4/
+?? scripts/gsim1_variance_export.sql.bak
+?? scripts/price_seeder.sh.pre-pull-20260930T104945Z
+--- releases-equiv ---
+NAME                STATUS              CONFIG FILES
+arbitragex-v2       running(25)         /opt/arbitragex-v2/docker/compose.prod.yml
+--- pieza-2 ---
+GENERANDO
+-rw-r--r-- 1 root root 213053440 Oct 13 17:18 /opt/arbx-pieces/piece_opportunities.dump
+--- heartbeat (ultimas 2) ---
+tail: cannot open '/opt/arbx-pieces/heartbeat.txt'$'\r' for reading: No such file or directory

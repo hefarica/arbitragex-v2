@@ -1,0 +1,50 @@
+{
+  "task": "t8 t6-datos ingesta/validacion A2+A8+SSOT",
+  "producer": "data-ingest (prices-v4-integration)",
+  "generated_at": "2026-10-13T15:4xZ",
+  "inputs": {
+    "a2_csv": {"sha256": "38f038a82b5d16979e17d002c406d249d9979d164166e2cdaac063d0b80a7786", "bytes": 16355, "source": "arbitragex-prompt-supremo-INTEGRADO.zip!/06_CLASIFICACION/clasificacion_264.csv"},
+    "a8_xlsx": {"sha256": "eb5b803cb66d0dcbb5c17c9885e9a3dc041e01e94c5bc22a37ef0482e4e09cc3", "bytes": 40000139, "source": "arbitragex-prompt-supremo-INTEGRADO.zip!/ArbitrageX_v4_264_60hojas.xlsx"},
+    "ssot_json": {"sha256": "7fb529c607071a210a0b3bc627dd27b475008f2031445e9acccf317884861122", "bytes": 23778, "source": "zip member == docs/integration-v4/releases/R-20261013T085048Z/SSOT/strategy_hop_map.json (R.tsv row 4)"}
+  },
+  "a2_csv": {"header_ok": true, "rows": 264, "cols": 9, "no_index_column": true, "mev_ids_unique": true, "delta_order": "non_increasing (78.0->8.0), NOT strictly decreasing", "distinct_detectors": 58, "distinct_surfaces": 10, "verdict": "OK"},
+  "a8_xlsx": {
+    "n_sheets": 59, "sheets_match_expected": true, "registro_inclusiones_present": false, "sheets_ge_60": false,
+    "tests_atomicos": {"header_ok": true, "rows": 264000, "mev_ids": 264, "per_mev": 1000, "assert_base_le_imp": 264000, "base_pos_sum": 19744.0, "imp_pos_sum": 31744.0, "delta_pct": 60.778, "delta_gt0_total": 12000, "delta_values_binary": true, "test_kinds": {"cycle": 26400, "roundtrip": 26400, "pair": 26400, "multileg": 26400, "negcyc": 26400, "spfa": 26400, "marginal": 26400, "dirty_subgraph": 26400, "multicall3": 26400, "chained_identity": 26400}},
+    "clasificacion_sheet_equals_a2_csv": {"header": true, "mev_set": true, "row_order": true},
+    "agregados_superficie": {"rows": 10, "counts_match_a2_csv": true},
+    "agregados_detector": {"rows": 60, "estrategias_sum": 264, "real_detectors_match_a2": true, "exception": ["OBSERVE01 (0 estrategias)", "OBSERVE02 (0 estrategias)"]},
+    "invariantes_sheet": "6/6 OK pero DERIV_POS OBSERVADO=1982 contradice MANIFEST deriv_pos=3560",
+    "verdict": "OK con divergencias declaradas"
+  },
+  "asserts_vs_ssot": {
+    "strategies_264": {"a2": 264, "ssot_json": 264, "xlsx_sheet": 264, "verdict": "OK"},
+    "detectors_60": {"a2_measured": 58, "ssot_json_measured": 58, "agregados_rows": 60, "verdict": "OK solo bajo definicion AGREGADOS (58 reales + OBSERVE01/02); divergencia de definicion DECLARADA"},
+    "combos_1436": {"ssot_json_sum_masks": 1436, "a2_hops_sum": 1436, "verdict": "OK"},
+    "zero_mevid_divergences": {"a2_minus_ssot": 0, "ssot_minus_a2": 0, "verdict": "OK"},
+    "hop_dist": {"expected": "245/262/260/233/233/203", "ssot_json": {"2": 245, "3": 262, "4": 260, "5": 233, "6": 233, "7": 203}, "a2_csv": {"2": 245, "3": 262, "4": 260, "5": 233, "6": 233, "7": 203}, "verdict": "OK doble fuente"}
+  },
+  "a1_figures": {
+    "base_pos": {"claim": 19744, "measured": 19744.0, "verdict": "MEDIDO OK"},
+    "imp_pos": {"claim": 31744, "measured": 31744.0, "verdict": "MEDIDO OK"},
+    "delta_pct": {"claim": "+60.8%", "measured": "+60.778%", "verdict": "MEDIDO OK"},
+    "hop_dist": {"verdict": "MEDIDO OK"},
+    "deriv_pos": {"claim": 3560, "invariantes_sheet_claims": 1982, "measured_delta_gt0": 12000, "verdict": "CLAIM sin M reproducible; contradiccion interna 3560<->1982<->12000 DECLARADA; '>0' se sostiene"},
+    "monotonic": {"a2_delta_order_non_increasing": true, "per_series_mev_x_kind": false, "assert_base_le_imp_holds": 264000, "verdict": "MEDIDO OK como orden A2; serie=FALSE declarado"},
+    "prohibited_0_636": {"hits_in_792528_scanned_values": 0, "verdict": "OK"}
+  },
+  "declared_divergences": [
+    "detectores: 60 (MANIFEST/AGREGADOS) vs 58 reales (A2/SSOT) - diferencia de definicion",
+    "deriv_pos: 3560 (MANIFEST) vs 1982 (INVARIANTES) vs 12000 (medido DELTA>0) - contradiccion interna del paquete",
+    "monotonic: true solo como orden DELTA del A2; false por serie MEV x TEST_KIND",
+    "hojas=59 < 60: pendiente REGISTRO_INCLUSIONES (t4/t5)"
+  ],
+  "evidence": {
+    "script_r1": "docs/integration-v4/t8-evidence/t8_validate.py",
+    "script_r2": "docs/integration-v4/t8-evidence/t8_validate_r2.py",
+    "output_r1": "docs/integration-v4/t8-evidence/T8_output_full.json",
+    "output_r2": "docs/integration-v4/t8-evidence/T8_output_r2.json",
+    "note": "output_r2:ssot.hop_dist_matches es un bug str/int del script; los valores impresos hop_dist vs expected son identicos entrada por entrada"
+  },
+  "verdict": "OK"
+}

@@ -1,0 +1,34 @@
+# V1_hashes — R-20261013T1545Z-t6 (t6, cierre 2026-10-13T15:58:47Z)
+# Instrumento: Get-FileHash -Algorithm SHA256 (PowerShell). Excluye V1_hashes (auto) y ℛ.tsv (cierre posterior).
+984bfe69ae8b6b508b6909c18ac07bac4056d0808593aa7afb30055f268c3824  docs\integration-v4\releases\R-20261013T1545Z-t6\ASSEMBLY_T6.md
+9e8dbb9038a260b2e506dfa4745cc77293597c7a23834926a46884a7f7b30dfd  docs\integration-v4\releases\R-20261013T1545Z-t6\C_THETA_verdict.md
+3291f3342ad76f8ee3f22430963c73247b7dcb8310ca44126613605662064a6b  docs\integration-v4\releases\R-20261013T1545Z-t6\Q1_Q8.md
+deb55e5984bd9c7b6fa5de34d9580b30b763663c41ef9ffe7695face1d27815b  docs\integration-v4\releases\R-20261013T1545Z-t6\V0_baseline.md
+8d423e2f7e779d0b15a1a9105c29390db12e5ebf49efac2308db0697e20fc516  docs\integration-v4\releases\R-20261013T1545Z-t6\V5_shadow.md
+a6d521ea13fc475ff4f3a6f4b3acf98e5018ded5d816430b5a0f882bb4c26539  docs\integration-v4\releases\R-20261013T1545Z-t6\x_ref.json
+7a0b5233a4fc9ec538f3955a508a222f70aaef00b897cfd57663c49aef9b28c5  docs\integration-v4\releases\R-20261013T1545Z-t6\adm\econ_sizing.py
+d71aae67f9c94f89f09d270ed4327743bd7153b596258cf4fd9c449c8553b7ef  docs\integration-v4\releases\R-20261013T1545Z-t6\adm\nonatomic_gate.py
+9052767de892a0580a25cb21f3716c71f85c09de5cb571979203c6bd8469710e  docs\integration-v4\releases\R-20261013T1545Z-t6\adm\staleness_gate.py
+757e78d551814b228b3fec1e9ec57801c3da40f504a8e0745d60243b8ae812f1  docs\integration-v4\releases\R-20261013T1545Z-t6\adm\test_adm.py
+dd0554fdac068218eccfde4ead0f8a173a34c04c2b0fe9527bd8e1c770ca7426  docs\integration-v4\releases\R-20261013T1545Z-t6\ci\phi-t7.yml
+5698976fd2573be720795e5e8357093e826c6f52dfa16fd27fa27b9002df2aeb  docs\integration-v4\releases\R-20261013T1545Z-t6\gen\detector_policy.rs
+92e5758332e0360e06b6358afb3efc7b01107a4ce38000a32a7c0f30258ce812  docs\integration-v4\releases\R-20261013T1545Z-t6\gen\detector_policy.rs.diff
+fb4891a9ca6d7e6f2fa628c8466ce92cf43ea8e6bda6bd94ed85f70933478ba8  docs\integration-v4\releases\R-20261013T1545Z-t6\gen\gen_ssot_v4_rs.py
+0bb74479a1d3847d14ae3d413639db852ee6c48fa1e27b01c2e4ead978e5398c  docs\integration-v4\releases\R-20261013T1545Z-t6\gen\hop_cycle_bridge.verify.txt
+c623c019ffca3995bd624db2cea63daa1a09c6518554e7657b4d8a5f8118f547  docs\integration-v4\releases\R-20261013T1545Z-t6\gen\strategy_hop_map.v4.fixture.json
+91ef3ccb650dcf852dd1fa742419de365773682fa69059571f531ab9b4ca4aa5  docs\integration-v4\releases\R-20261013T1545Z-t6\SSOT\detector_policy.csv
+b25d4c892c0b98734ff3eb2a91442e4f6d105a4cacef991a31e7eefd87420773  docs\integration-v4\releases\R-20261013T1545Z-t6\SSOT\strategy_hop_map.csv
+7fb529c607071a210a0b3bc627dd27b475008f2031445e9acccf317884861122  docs\integration-v4\releases\R-20261013T1545Z-t6\SSOT\strategy_hop_map.json
+66e591d04337f8f797b0405d992947c868bd36d68665a25998f1563cd4ce9ad2  docs\integration-v4\releases\R-20261013T1545Z-t6\tools\c_evaluator.py
+ca4fbb9de554d124d06fe8f11deb17cd0de25a3dd74c9b7284a0e1be21708aa0  docs\integration-v4\releases\R-20261013T1545Z-t6\tools\phi_static.py
+97615fce45a5ccba0ab65a5924512da0deaa2d040a16255ac8f755b213faa5be  docs\integration-v4\releases\R-20261013T1545Z-t6\tools\vmap_delta.py
+771f19e311e631082ddedb85692516314515d9c8e918f23d6bc12f316f81acd6  docs\integration-v4\t6-evidence\cargo_test_t6.txt
+2cb71ce420fae6e1ef00ca6098133620690301336aced29f00d8c7527c385bbb  docs\integration-v4\t6-evidence\hashes_maestro_t6.txt
+c1ed8d8e498d843e544a267bdb2e12058d45b517954f0654b2e03780f079f3c9  docs\integration-v4\t6-evidence\v0_health.json
+55fb295149e0337bb94cdb8881a6176d340b704efa656efd1e09247521888bfb  docs\integration-v4\t6-evidence\v0_live.json
+8ca46d7295ef2d0e6bc5f0f99fb2bb47a9333365ba771da43c710f4d42033aab  docs\integration-v4\t6-evidence\v0_runtime.json
+5abfbb4c684baf6eec3fd9119c0ba819b09e22fc5c838215f09238b0732366bf  docs\integration-v4\t6-evidence\v0_status.json
+fc8e71e04932d97d8c44b12147c023bffc7e8f94f7d44bdd04ef25e5f8825c27  docs\integration-v4\t6-evidence\vmap_delta_p1.txt
+f1d5baa25541843daa7a28a21299bd1cb155bdf4ddcb2705100047c21e4e08d5  docs\integration-v4\t6-evidence\vmap_delta_p2.txt
+d6e0297a3b8ac3925faf906aedc8d6f908f35d0940ca92a05d67e8666ea98b68  docs\integration-v4\t6-evidence\vmap_delta_p3.txt
+# total=31

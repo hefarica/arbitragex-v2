@@ -1,0 +1,12 @@
+artefacto	productor	edit/sha256	verificador	estado
+docs/integration-v4/ADM-t11-quote-aggregation.md	t11-backend	5fc4f759c3456038…13b1803a2	V1_hashes.txt	t17-FALSATOR/t7	Pendiente
+docs/integration-v4/t11-evidence/RPC_soberano_probe.txt	t11-backend	624c3725dc9e2f32…71ad04acc48	V1_hashes.txt	t17-FALSATOR	Pendiente
+docs/integration-v4/t11-evidence/C1_multicall_grep.txt	t11-backend	92ff0517089254fc…b95af876634a	V1_hashes.txt	t17-FALSATOR	Pendiente
+docs/integration-v4/t11-evidence/C2_jsonrpc_batch_grep.txt	t11-backend	dbb65e1e6513221d…93d6d6e826fba	V1_hashes.txt	t17-FALSATOR	Pendiente
+docs/integration-v4/t11-evidence/C3_trace_callMany_probe.txt	t11-backend	51e59ac9aa6e9fbc…93b50ca0c31	V1_hashes.txt	t17-FALSATOR	Pendiente
+docs/integration-v4/t11-evidence/C6_staticcall_grep.txt	t11-backend	4643f8f26d098ba5…4a0472e5d7e46	V1_hashes.txt	t17-FALSATOR	Pendiente
+docs/integration-v4/t11-evidence/C7a_revm_ya_presente.txt	t11-backend	dffb048d5d65cf8e…a21bffeb59f4	V1_hashes.txt	t17-FALSATOR	Pendiente
+docs/integration-v4/t11-evidence/C7b_anvil_appcontrol.txt	t11-backend	37ce4618aca886c3…ec571919f9f	V1_hashes.txt	t17-FALSATOR	Pendiente
+docs/integration-v4/releases/R-20261013T15-TC/V2_static.txt	t11-backend	2034308aa54d6869…cd91ec9fd507c	V1_hashes.txt	t7-reviewer	Pendiente
+docs/integration-v4/releases/R-20261013T15-TC/V3_build.txt	t11-backend	ec9f62ee72f2a96c…216294fe6bf7	V1_hashes.txt	t7-reviewer	Pendiente
+docs/integration-v4/releases/R-20261013T15-TC/V4_dryrun.md	t11-backend	da77c0b3fd0e0602…30307b620e6f	V1_hashes.txt	t7-reviewer	Pendiente

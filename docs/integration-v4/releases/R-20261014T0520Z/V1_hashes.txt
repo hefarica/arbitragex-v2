@@ -1,0 +1,16 @@
+# V1_hashes — R-20261014T0520Z (post-normalización EOL, blobs LF)
+# Instrumento: Get-FileHash sobre archivos extraídos de blobs git (LF canónico)
+# C7a=d74f3fedb C7b=4ed4626a9 — R-<ts2> generado desde el árbol NORMALIZADO
+7a0b5233a4fc9ec538f3955a508a222f70aaef00b897cfd57663c49aef9b28c5  docs/integration-v4/releases/R-20261014T0520Z/adm/econ_sizing.py
+d71aae67f9c94f89f09d270ed4327743bd7153b596258cf4fd9c449c8553b7ef  docs/integration-v4/releases/R-20261014T0520Z/adm/nonatomic_gate.py
+9052767de892a0580a25cb21f3716c71f85c09de5cb571979203c6bd8469710e  docs/integration-v4/releases/R-20261014T0520Z/adm/staleness_gate.py
+757e78d551814b228b3fec1e9ec57801c3da40f504a8e0745d60243b8ae812f1  docs/integration-v4/releases/R-20261014T0520Z/adm/test_adm.py
+dd0554fdac068218eccfde4ead0f8a173a34c04c2b0fe9527bd8e1c770ca7426  docs/integration-v4/releases/R-20261014T0520Z/ci/phi-t7.yml
+2057cfd989da77049ddb7ef047d0fa8929c161beeda08f78c5e5224ad9c68669  docs/integration-v4/releases/R-20261014T0520Z/gen_detector_policy.rs
+cbb36d513abed22e555dfa6056cabb8d5be56072f895e1b6ba5b0302c6acb866  docs/integration-v4/releases/R-20261014T0520Z/prices-contracts.ts
+91ef3ccb650dcf852dd1fa742419de365773682fa69059571f531ab9b4ca4aa5  docs/integration-v4/releases/R-20261014T0520Z/SSOT/detector_policy.csv
+b25d4c892c0b98734ff3eb2a91442e4f6d105a4cacef991a31e7eefd87420773  docs/integration-v4/releases/R-20261014T0520Z/SSOT/strategy_hop_map.csv
+7fb529c607071a210a0b3bc627dd27b475008f2031445e9acccf317884861122  docs/integration-v4/releases/R-20261014T0520Z/SSOT/strategy_hop_map.json
+66e591d04337f8f797b0405d992947c868bd36d68665a25998f1563cd4ce9ad2  docs/integration-v4/releases/R-20261014T0520Z/tools/c_evaluator.py
+ca4fbb9de554d124d06fe8f11deb17cd0de25a3dd74c9b7284a0e1be21708aa0  docs/integration-v4/releases/R-20261014T0520Z/tools/phi_static.py
+97615fce45a5ccba0ab65a5924512da0deaa2d040a16255ac8f755b213faa5be  docs/integration-v4/releases/R-20261014T0520Z/tools/vmap_delta.py

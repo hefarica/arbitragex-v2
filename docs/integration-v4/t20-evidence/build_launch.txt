@@ -1,0 +1,19 @@
+=== PRE-BUILD ===
+--- df ANTES:
+/dev/sda1       150G  126G   18G  88% /
+--- dumps concurrentes (debe ser 0):
+0
+--- aplicar release (gen/detector_policy.rs -> arbol):
+5698976fd2573be7
+ M backend/searcher-rs/src/detector_policy.rs
+--- LANZAR build (flock + nohup):
+BUILD_PID=$!
+--- log head:
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 6.08kB done
+#1 DONE 0.0s
+--- proceso vivo:
+784539
+784587

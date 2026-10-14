@@ -1,0 +1,168 @@
+{
+ "agregados_detector_fixed": {
+  "header": [
+   "DETECTOR",
+   "FAMILIA",
+   "ESTRATEGIAS",
+   "BASE_POS",
+   "IMP_POS",
+   "DELTA"
+  ],
+  "n_rows": 60,
+  "estrategias_sum": 264,
+  "counts_match_a2_csv": false,
+  "mismatches": {
+   "OBSERVE01": {
+    "xlsx_estrategias": "0",
+    "a2_csv": null
+   },
+   "OBSERVE02": {
+    "xlsx_estrategias": "0",
+    "a2_csv": null
+   }
+  },
+  "observe_rows": {
+   "OBSERVE01": "0",
+   "OBSERVE02": "0"
+  },
+  "non_observe_rows": 58
+ },
+ "test_kind_counts": {
+  "cycle": 26400,
+  "roundtrip": 26400,
+  "pair": 26400,
+  "multileg": 26400,
+  "negcyc": 26400,
+  "spfa": 26400,
+  "marginal": 26400,
+  "dirty_subgraph": 26400,
+  "multicall3": 26400,
+  "chained_identity": 26400
+ },
+ "delta_gt0_by_kind": {
+  "cycle": 1197,
+  "spfa": 1138,
+  "negcyc": 1209,
+  "marginal": 1270,
+  "dirty_subgraph": 1291,
+  "multileg": 1161,
+  "multicall3": 1156,
+  "chained_identity": 1197,
+  "roundtrip": 1171,
+  "pair": 1210
+ },
+ "delta_sum_by_kind": {
+  "cycle": 1197.0,
+  "roundtrip": 1171.0,
+  "pair": 1210.0,
+  "multileg": 1161.0,
+  "negcyc": 1209.0,
+  "spfa": 1138.0,
+  "marginal": 1270.0,
+  "dirty_subgraph": 1291.0,
+  "multicall3": 1156.0,
+  "chained_identity": 1197.0
+ },
+ "base_sum_by_kind": {
+  "cycle": 1995.0,
+  "roundtrip": 1974.0,
+  "pair": 1940.0,
+  "multileg": 2029.0,
+  "negcyc": 1946.0,
+  "spfa": 1976.0,
+  "marginal": 2008.0,
+  "dirty_subgraph": 1976.0,
+  "multicall3": 1963.0,
+  "chained_identity": 1937.0
+ },
+ "imp_sum_by_kind": {
+  "cycle": 3192.0,
+  "roundtrip": 3145.0,
+  "pair": 3150.0,
+  "multileg": 3190.0,
+  "negcyc": 3155.0,
+  "spfa": 3114.0,
+  "marginal": 3278.0,
+  "dirty_subgraph": 3267.0,
+  "multicall3": 3119.0,
+  "chained_identity": 3134.0
+ },
+ "deriv_candidates": {
+  "delta_gt0_total": 12000,
+  "delta_gt0_3560?": false,
+  "delta_gt0_1982?": false,
+  "delta_sum_total": 12000.0,
+  "delta_sum_round_3560?": false
+ },
+ "monotonic_by_series": {
+  "n_series": 2640,
+  "series_with_violation": 2556,
+  "example": {
+   "series": [
+    "MEV-01-001",
+    "cycle"
+   ],
+   "at": 15,
+   "prev": 0.0,
+   "next": 1.0
+  },
+  "monotonic_ok": false
+ },
+ "ssot": {
+  "n_strategies": 264,
+  "distinct_detectors": 58,
+  "combos_total": 1436,
+  "hop_dist": {
+   "2": 245,
+   "3": 262,
+   "4": 260,
+   "5": 233,
+   "6": 233,
+   "7": 203
+  },
+  "hop_dist_expected": {
+   "2": 245,
+   "3": 262,
+   "4": 260,
+   "5": 233,
+   "6": 233,
+   "7": 203
+  },
+  "hop_dist_matches": {
+   "2": false,
+   "3": false,
+   "4": false,
+   "5": false,
+   "6": false,
+   "7": false
+  },
+  "masks_distinct": 7
+ },
+ "mev_diff": {
+  "a2_only": [],
+  "n_a2_only": 0,
+  "ssot_only": [],
+  "n_ssot_only": 0,
+  "sets_equal": true
+ },
+ "detector_diff": {
+  "a2_csv": 58,
+  "ssot_json": 58,
+  "a2_minus_ssot": [],
+  "ssot_minus_a2": [],
+  "agregados_rows": 60,
+  "agregados_minus_a2": [
+   "OBSERVE01",
+   "OBSERVE02"
+  ],
+  "a2_minus_agregados": []
+ },
+ "a2_hop_dist": {
+  "2": 245,
+  "3": 262,
+  "4": 260,
+  "5": 233,
+  "6": 233,
+  "7": 203
+ }
+}

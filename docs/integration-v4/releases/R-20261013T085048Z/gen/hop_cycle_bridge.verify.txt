@@ -1,0 +1,5 @@
+hop_cycle_bridge verify (t9 alpha2, stub v4 'ciclos 3-7 hops')
+MIN_BRIDGE_HOPS == 3 (expect 3): OK
+MAX_BRIDGE_HOPS == 7 (expect 7): OK
+SSOT v4 hop universe: [2, 3, 4, 5, 6, 7] (bridge owns 3..=7; hop 2 stays dex_engine-exclusive)
+stub 04_DIFFS/hop_cycle_bridge.rs.diff ('+ // ciclos 3-7 hops') SATISFIED by existing code (constants MIN/MAX_BRIDGE_HOPS). No patch needed.

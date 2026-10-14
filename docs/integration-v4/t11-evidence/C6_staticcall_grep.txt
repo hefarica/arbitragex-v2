@@ -1,0 +1,16 @@
+# t11 evidencia — C-6 quoters staticcall YA es línea base
+# Comando: Select-String -Path (Get-ChildItem -Recurse -Filter '*.rs') -Pattern 'staticcall|static_call|QuoterV2|quoteExactInput'
+# cwd: backend/searcher-rs/src — Salida literal (primeros 8):
+
+agent_graph.rs:233: /// call is rejected with an explicit reason — a real QuoterV2 (tick-crossing)
+amm_math.rs:6: //! - Uniswap V3 QuoterV2 (mainnet 0x61fFE014bA17989E743c5F6cB21bF9697530B21e):
+amm_math.rs:7: //!   https://docs.uniswap.org/contracts/v3/reference/periphery/lens/QuoterV2
+amm_math.rs:154: /// chosen size on-chain via `v3_quote_exact_in_multicall` (QuoterV2).
+amm_math.rs:232: /// the QuoterV2 / `v3_amount_out_single_tick` path, not this one.
+amm_math.rs:260: /// (`v3_amount_out_single_tick` / QuoterV2); this is scoring only (RULE 00).
+amm_math.rs:364: /// Decoded class of ONE failed QuoterV2 sub-call, from the `returnData` that
+amm_math.rs:538: /// the output token was **910 wei**, so `quoteExactInputSingle` reverted
+
+# Lectura: la vía de cotización del sistema YA es QuoterV2 vía staticcall/eth_call
+# (view-only, sin gas) — doctrina §38 ("QuoterV2 aggregate3" citada expresamente).
+# π(C-6) ∈ θ YA ⇒ μ incremental = 0. No re-implementar.

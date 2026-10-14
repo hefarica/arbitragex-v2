@@ -1,0 +1,19 @@
+{
+  "measured_at_utc": "2026-10-13T14:51:31.628Z",
+  "harness": "docs/integration-v4/t4-evidence/measure_mu.ts (tsx, node local staging, npx tsx from backend/api-server)",
+  "chain": "broadcastPriceUpdate -> api-server SSE route -> dev-local proxyStream -> client reader",
+  "declared_exclusion": "Redis PUBLISH->PSUBSCRIBE hop (no live Redis locally; O(1) in-memory Redis op, sub-ms on VPS docker net)",
+  "m1_sse_delivery": { "n": 20, "mean_ms": 0.257, "p50_ms": 0.227, "max_ms": 0.668, "min_ms": 0.107 },
+  "m2_rest_loopback_sanity": { "n": 20, "mean_ms": 1.188, "p50_ms": 0.656, "max_ms": 8.138, "min_ms": 0.498 },
+  "node": "v24.12.0",
+  "mu_computation": {
+    "J_theta_ms_per_update": 641.6,
+    "J_source": "x_ref.json x2_latencia_http_borde.valor.mean_ms (frozen t9 release, sha a6d521ea...)",
+    "m1_mean_ms": 0.257,
+    "w_bound_ms": { "low": 0, "high": 303.8, "derivation": "(x2max 997.6 - handshake 390)/2, one-way response transfer on persistent connection" },
+    "mu_worst_ms": 337.543,
+    "delta_ms": 12.832,
+    "margin_x": 26.3,
+    "verdict": "ADMITTED (mu_worst >= delta with 26x margin)"
+  }
+}

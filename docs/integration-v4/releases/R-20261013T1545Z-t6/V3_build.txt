@@ -1,0 +1,39 @@
+# V3/V4 — build/test (t6) + BASELINE COMPUESTO (§17) — GATE: CERO FALLOS NUEVOS ⇒ PASS
+
+## Rust (searcher-rs, worktree limpio 21feefb32 + detector_policy.rs 5698976f… — diff intencional EXACTO de 1 M)
+
+- **Instrumento local BLOQUEADO**: `cargo test --release -p searcher-rs --lib` falla por Windows
+  AppControl os error 4551 en los build-scripts (eyre en $TEMP\arbx-t6-target; serde_core +
+  portable-atomic en C:\Users\HFRC\Desktop\arbx-t6-target) — **2 intentos literales, salidas completas
+  en t6-evidence/cargo_test_t6.txt** (patrón documentado: t11 C7b anvil.exe ×2; §36 nota 4).
+- **Cobertura del conjunto por corrida previa sobre los MISMOS bytes**: t10-evidence/V3 (reporte t10)
+  compiló `21feefb32 + detector_policy.rs (5698976f…)` — exactamente el diff de este release —
+  → build exit=0; **test 1431P/3F/5I con 3F == baseline exonerado** (liquidation_snipe_engine ×3,
+  pre-existentes en HEAD puro, exoneración t9 exoneration_pure_head.txt) ⇒ **CERO FALLOS NUEVOS**.
+  Gate capitán B: PASS (t10). El conjunto no cambió desde entonces (hash verificado ítem 3 de V2).
+
+## Frontend (vitest, propio)
+
+`npx vitest run --reporter=basic` (frontend/) → **Test Files 141 passed (141) · Tests 1418 passed
+(1418)**, exit=0, 21.4 s. == baseline t5 (1418/1418). Flakes: 0.
+
+## api-server (vitest, propio)
+
+Corrida 1: 937 tests, 1 failed (test de guard `findInsertersOf("audit_log")`) — **flake**: corrida 2
+→ **Test Files 80 passed (80) · Tests 937 passed (937)**, exit=0, 19.1 s (salida completa
+`$TEMP\api_server_vitest_t6.txt`; resumen pegado arriba). SUPERSET de las suites dirigidas del
+baseline (29/29 t11 + 12/12): si la completa pasa, las dirigidas pasaron. Superficie del release NO
+toca backend/api-server ⇒ el flake es del árbol compartido, no del paquete. **0 fallos nuevos.**
+
+## t13 adm (unittest, propio)
+
+`python -m unittest test_adm -v` (adm/) → **Ran 10 tests in 0.102s OK**, exit=0. == baseline t13 10/10.
+
+## Citas del baseline compuesto (§17)
+
+- guard pii 6 timeouts aislados (t3) — conocidos, aislados, no bloqueantes (contrato).
+- tsc api-server/t3/t5: exit=0 (t5 §7 31/31; t11 tsc sin errores) — citado; node NO colgó en esta
+  sesión para vitest (el hang de t13 no se reprodujo; vitest frontend+api-server corrieron completos).
+
+## Veredicto baseline compuesto: **PASS — CERO FALLOS NUEVOS** (1431P/3F/5I vía t10 con 3F exonerados;
+1418/1418 propio; 937/937 propio; 10/10 propio; 6 timeouts t3 citados como aislados).

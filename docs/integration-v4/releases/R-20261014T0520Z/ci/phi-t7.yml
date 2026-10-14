@@ -1,0 +1,27 @@
+# CI t₇ — workflow de Φ SIN FILTROS DE PATHS (corre en cada push/PR, sin `paths:`)
+# Fuente: PLAN_T1_T8.md t₇ "CI: workflow de Φ sin filtros de paths; ≥5 PRs en observación
+# antes de marcarlo required". Staging local (P1: 0 commits) — montar en
+# .github/workflows/phi-t7.yml al publicar el release (V6+).
+name: phi-t7
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+jobs:
+  phi:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: "Φ g1..g6 (MANIFEST origen, anti-circularidad §7)"
+        run: python docs/integration-v4/releases/R-20261013T1545Z-t6/tools/phi_static.py .tmp-inbox/integrado-supremo/MANIFEST.txt
+      - name: "𝒞 canónica sobre SSOT congelado (enmienda cond7)"
+        run: python docs/integration-v4/releases/R-20261013T1545Z-t6/tools/c_evaluator.py docs/integration-v4/releases/R-20261013T1545Z-t6/SSOT --canonical
+      - name: "V-MAP-Δ vs A0 (artefactos congelados de la escalera)"
+        run: python docs/integration-v4/releases/R-20261013T1545Z-t6/tools/vmap_delta.py --check-artifacts docs/integration-v4/t6-evidence/vmap_delta_p1.txt docs/integration-v4/t6-evidence/vmap_delta_p2.txt docs/integration-v4/t6-evidence/vmap_delta_p3.txt
+      - name: "Batería adm (cap nuevas, g7-evidencia)"
+        working-directory: docs/integration-v4/releases/R-20261013T1545Z-t6/adm
+        run: python -m unittest test_adm -v
+      # g7 (cap nuevas +3) queda como gate de INSPECCIÓN documentado (CRITERIOS_T6.md),
+      # no automatizable por diseño del contrato supremo.

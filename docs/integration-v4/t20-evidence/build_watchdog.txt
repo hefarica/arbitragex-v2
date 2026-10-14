@@ -1,0 +1,42 @@
+=== POLL 1 (13:07:11) ===
+/dev/sda1       150G  130G   15G  91% /
+--- log tail:
+#27 104.6    Compiling ethers v2.0.14
+#27 104.7    Compiling revm-database v42.0.0
+#27 105.4    Compiling fraction v0.13.1
+--- build proc:
+1
+=== POLL 2 (13:08:58) ===
+/dev/sda1       150G  131G   13G  92% /
+--- log tail:
+#27 147.0    Compiling prioritization-spine v0.1.0 (/build/prioritization-spine)
+#27 148.9    Compiling sim-core v0.1.0 (/build/sim-core)
+#27 150.1    Compiling searcher-rs v0.1.0 (/build/searcher-rs)
+--- build proc:
+1
+=== POLL 3 (13:10:46) ===
+/dev/sda1       150G  130G   14G  91% /
+--- log tail:
+#27 147.0    Compiling prioritization-spine v0.1.0 (/build/prioritization-spine)
+#27 148.9    Compiling sim-core v0.1.0 (/build/sim-core)
+#27 150.1    Compiling searcher-rs v0.1.0 (/build/searcher-rs)
+--- build proc:
+1
+=== POLL 4 (13:12:34) ===
+/dev/sda1       150G  131G   14G  91% /
+--- log tail:
+#27 147.0    Compiling prioritization-spine v0.1.0 (/build/prioritization-spine)
+#27 148.9    Compiling sim-core v0.1.0 (/build/sim-core)
+#27 150.1    Compiling searcher-rs v0.1.0 (/build/searcher-rs)
+--- build proc:
+1
+=== POLL 5 (13:14:33) ===
+/dev/sda1       150G  131G   14G  91% /
+--- log tail:
+#31 naming to docker.io/library/arbx:R-20261013T1545Z done
+#31 unpacking to docker.io/library/arbx:R-20261013T1545Z
+#31 unpacking to docker.io/library/arbx:R-20261013T1545Z 0.5s done
+#31 DONE 2.5s
+--- build proc:
+0
+BUILD PROCESO TERMINADO

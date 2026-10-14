@@ -1,0 +1,32 @@
+artefacto	productor	sha256	verificador
+SSOT/detector_policy.csv	t9/alpha2 (frozen copy 01_SSOT integrado-supremo)	91ef3ccb650dcf852dd1fa742419de365773682fa69059571f531ab9b4ca4aa5	t17/t7
+SSOT/strategy_hop_map.csv	t9/alpha2 (frozen copy 01_SSOT integrado-supremo)	b25d4c892c0b98734ff3eb2a91442e4f6d105a4cacef991a31e7eefd87420773	t17/t7
+SSOT/strategy_hop_map.json	t9/alpha2 (frozen copy 01_SSOT integrado-supremo)	7fb529c607071a210a0b3bc627dd27b475008f2031445e9acccf317884861122	t17/t7
+XREF_BASELINE.md (source, workspace root)	t16/alpha3 (qa)	7a03e242968e8297680f6e0bbc53b95b06c26d5a0911ee08a42cac63d0131d42	t17/t7
+XREF_BASELINE.json (source, workspace root)	t16/alpha3 (qa)	089ba9115bd7b5b68ee40a956f990e5a65e820ed26117ffe5e1a8766bfdbbb6a	t17/t7
+x_ref.json	t9/alpha2 (x_ref fixation, delta_abs=0.005)	a6d521ea13fc475ff4f3a6f4b3acf98e5018ded5d816430b5a0f882bb4c26539	t17/t7
+C_THETA_verdict.json	t9/alpha2 (C(theta) evaluation)	85bc7100f70b5d9824c372839e4be78bb9bc479f5dd708326f52ec00fc914afd	t17/t7
+C_THETA_verdict.md	t9/alpha2 (C(theta) verdict narrative)	9e8dbb9038a260b2e506dfa4745cc77293597c7a23834926a46884a7f7b30dfd	t17/t7
+gen/detector_policy.rs	t9/alpha2 generator gen_ssot_v4_rs.py	5698976fd2573be720795e5e8357093e826c6f52dfa16fd27fa27b9002df2aeb	t17/t7
+gen/detector_policy.rs.diff	t9/alpha2 generator gen_ssot_v4_rs.py	92e5758332e0360e06b6358afb3efc7b01107a4ce38000a32a7c0f30258ce812	t17/t7
+gen/gen_ssot_v4_rs.py	t9/alpha2 (generator source)	fb4891a9ca6d7e6f2fa628c8466ce92cf43ea8e6bda6bd94ed85f70933478ba8	t17/t7
+gen/hop_cycle_bridge.verify.txt	t9/alpha2 generator gen_ssot_v4_rs.py	0bb74479a1d3847d14ae3d413639db852ee6c48fa1e27b01c2e4ead978e5398c	t17/t7
+gen/strategy_hop_map.v4.fixture.json	t9/alpha2 generator gen_ssot_v4_rs.py	c623c019ffca3995bd624db2cea63daa1a09c6518554e7657b4d8a5f8118f547	t17/t7
+V2_static.txt	t9/alpha2	a270517e61460329685812aecfa6324a12195a075cafa7314cf67438ea145f26	t17/t7
+V4_dryrun.md	t9/alpha2	925bd5e55473c41b6ab0de52ea81706793ddfea8e8d65006b19e2c44c5b931c4	t17/t7
+Q1_Q8.md	t9/alpha2	115374db80465c747b649fc7bb78f0f8d1ac67a4cf428f8c86c2c531112ffd48	t17/t7
+integration-manifest.md (t2, commit 21feefb32)	t2/auditor	c622a0068d3c3066aaebe41ba940d35b426e12d48fa1b9ad44158ef4a9bda034	t17/t7
+t9-evidence/ssh_probe_20261013T033640Z.txt (+stderr/stdout probes)	t9/alpha2 (R12 ssh-native exit=255 evidence)	8dd4ecdf2a6010dc0900bd61f15eff928fb3cdfcb538082abddc59ccfa6a1154	t17/t7
+V3_build/cargo_build_release.txt	t9/alpha2 (V3/assembly evidence)	483fe999c8f8b2bff29ed143cdf481a322fb5255cb77c2e2841608434328daa3	t17/t7
+V3_build/cargo_build_release_cleanbase.txt	t9/alpha2 (V3/assembly evidence)	bea1810aafbed8aebf0576f5bfc3267c25ed4c101468e055753341f827d0f387	t17/t7
+V3_build/cargo_test.txt	t9/alpha2 (V3/assembly evidence)	738b196f991fc7602d9b8e86ae9daec046cb9e69e47a97912e2d86b8f13812c5	t17/t7
+V3_build/cargo_test_cleanbase.txt	t9/alpha2 (V3/assembly evidence)	f9b0a752ef802327ee52f84cbe7dd09eb762bf9f7c9c51f9903f136d27fec689	t17/t7
+V3_build/cleanbase_restore_proof.txt	t9/alpha2 (V3/assembly evidence)	b444d5778dee519fdbeafcac614ad32c0817bd9095e49cd4e049a83b5ff618c4	t17/t7
+V3_build/exoneration_pure_head.txt	t9/alpha2 (V3/assembly evidence)	18d05a5bbd37781d964eb6ac8c4439a12821be13b0e7cb75348151549f0264d0	t17/t7
+V3_build/restore_proof.txt	t9/alpha2 (V3/assembly evidence)	677d33ee99dacf6a97772d28888a34599943735577c33093b09367b6ae839c7f	t17/t7
+V3_build/v4_tests_result.txt	t9/alpha2 (V3/assembly evidence)	1730543db5111d04cd5aacdf5799344c7831e735d0b3e5773c9924f85dea0477	t17/t7
+ASSEMBLY.md	t9/alpha2 (V3/assembly evidence)	572e12e9d23d03695a8e78be8831ffee6c04dd75359a752a15a04a9b216821ff	t17/t7
+backend/searcher-rs/src/detector_policy.rs (PROMOTED to shared tree by t10 first action, enmienda alpha11-20261013)	t10/alpha2 promotion of t9 regenerated artifact	5698976fd2573be720795e5e8357093e826c6f52dfa16fd27fa27b9002df2aeb	t17/t7
+
+fake_artifact_no_hash.txt	attacker/alpha7		verifier	(row with empty sha256)
+SSOT/strategy_hop_map.csv	attacker/alpha7	eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee	attacker

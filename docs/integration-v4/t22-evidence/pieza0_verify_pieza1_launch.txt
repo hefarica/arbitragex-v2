@@ -1,0 +1,20 @@
+=== pieza-0 status ===
+exit=0
+2026-10-13T17:07:06Z
+=== pieza-0 sha256 (VPS) ===
+aa4d4fc74b2d7f82d3e3af4a598d27b94a73d79e7aea66490bacb1edfcc58f64  /opt/arbx-pieces/piece_resto.dump
+=== pieza-0 pg_restore --list (head 2MB al contenedor) ===
+;
+; Archive created at 2026-10-13 17:07:02 UTC
+;     dbname: arbitragex
+;     TOC Entries: 688
+;     Compression: 3
+;     Dump Version: 1.14-0
+;     Format: CUSTOM
+;     Integer: 4 bytes
+... total entradas TOC:
+698
+=== LAUNCH pieza-1 (route_discovery*: madre+p13/14/15+rollup_5m) ===
+pieza1_pid=686258
+=== conteo origen simulations (para F1) ===
+294905

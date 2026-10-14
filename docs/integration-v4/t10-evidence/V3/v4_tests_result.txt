@@ -1,0 +1,2 @@
+test detector_policy::tests::dfac_fix_is_materialized ... ok
+test detector_policy::tests::ssot_v4_detector_table_matches_ssot ... ok

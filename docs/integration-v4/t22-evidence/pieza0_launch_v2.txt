@@ -1,0 +1,15 @@
+=== limpieza de lanzamientos CRLF sucios ===
+procesos sucios MUERTOS
+directorios sucios ELIMINADOS
+=== relanzamiento LIMPIO pieza-0 + canario ===
+canario_heartbeat_pid=685095
+pieza0_pid=685096
+total 46296
+drwxr-xr-x 2 root root     4096 Oct 13 17:07 .
+drwxr-xr-x 9 root root     4096 Oct 13 17:07 ..
+-rw-r--r-- 1 root root       27 Oct 13 17:07 heartbeat.txt
+-rw-r--r-- 1 root root 47387312 Oct 13 17:07 piece_resto.dump
+-rw-r--r-- 1 root root        0 Oct 13 17:07 piece_resto.err
+-rw-r--r-- 1 root root       28 Oct 13 17:07 piece_resto.status
+=== sesiones pg_dump activas ===
+NINGUNA

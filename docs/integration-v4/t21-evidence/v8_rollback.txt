@@ -1,0 +1,7 @@
+ Container arbitragex-v2-searcher-rs-1 Starting 
+ Container arbitragex-v2-searcher-rs-1 Started 
+rollback_dur_s=3.11
+=== contenedor tras rollback ===
+/arbitragex-v2-searcher-rs-1 image=sha256:dfd71012e1dc05c1ed320a3fe7113274176e7d5edb923347daa38d635eb5d720 status=running restarts=0
+=== latest apunta a ===
+sha256:dfd71012e1dc05c1ed320a3fe7113274176e7d5edb923347daa38d635eb5d720

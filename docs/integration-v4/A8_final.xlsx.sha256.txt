@@ -1,0 +1,4 @@
+# A8_final.xlsx — sample por umbral de evidencia (t30 §1: 40MB > 5MB)
+# sha256: 7573cdb70c74ed9bb651cc7902619d40d2c9910cfdc26984ffe064dc04895a34
+# 60 hojas (59 fijas + REGISTRO_INCLUSIONES); original eb5b803c… intacto; filas: ver ℛ.tsv (t14).
+# El binario NO viaja en git; su identidad ES este sha.

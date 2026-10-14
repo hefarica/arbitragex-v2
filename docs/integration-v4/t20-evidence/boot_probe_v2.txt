@@ -1,0 +1,5 @@
+=== BOOT a-v2: entrypoint directo --help ===
+Error: config file not found: /app/configs/app.toml
+EXIT=True
+=== HEALTHCHECK de la imagen ===
+null

@@ -1,0 +1,114 @@
+delta_x6 = 358.3088 USD | delta_x5 = 0.02
+{
+ "ADM-1": {
+  "familia": "H sizing-AMM-cerrada+kelly (A14/A15)",
+  "n_items": 17,
+  "sum_net_actual": -17915.4383,
+  "sum_net_optimo": 0.0,
+  "mu_usd": 17915.4383,
+  "delta": 358.3088,
+  "mu_ge_delta": true,
+  "modelo": "net(a)=a*g-a^2*s_c-fixed; s_c=slippage0/a0^2 (V2 exacto, V3 aprox declarado); calibrado por item con punto medido",
+  "lambda": "P (funcion pura control-plane, paper-safe)",
+  "nota_kelly": "kelly_fraction_bps=0/26 en la muestra (motor ya anula Kelly con edge<=0); Kelly cap = cota superior de a* (f*�bankroll) integrada al mismo termino"
+ },
+ "ADM-2": {
+  "familia": "H break-even gas<->profit",
+  "flips_viable": 0,
+  "mu_x5": 0.0,
+  "delta": 0.02,
+  "mu_ge_delta": false,
+  "nota": "con contabilidad honesta NINGUN item flips (gross<=0 o < piso) � coherente con viables=0 de x_ref"
+ },
+ "ADM-3": {
+  "familia": "I staleness-oraculo (gate cuarentena)",
+  "T_ms": 2405.0,
+  "quarantined": 2,
+  "n": 26,
+  "mu_x5_cobertura": 0.0769,
+  "delta": 0.02,
+  "mu_ge_delta": true,
+  "lambda": "P (gate puro)",
+  "eje": "x5 clases previsibles (precios viejos => riesgo adverso)"
+ },
+ "ADM-4": {
+  "familia": "I ventanas-no-atomicas (gate clase)",
+  "nonatomic_tests": 30000,
+  "total": 264000,
+  "mu_x5_cobertura": 0.113636,
+  "delta": 0.02,
+  "mu_ge_delta": true,
+  "bridge_en_muestra": 0,
+  "lambda": "P (gate de clase, no ejecuta)"
+ },
+ "ADM-5": {
+  "familia": "I reorg (gate confirmaciones)",
+  "distribucion": {
+   "470": 1,
+   "1181": 1,
+   "600": 1,
+   "125": 1,
+   "2400": 1,
+   "421": 1,
+   "2530": 1,
+   "1723": 1,
+   "1750": 1,
+   "601": 1,
+   "843": 2,
+   "786": 1,
+   "393": 2,
+   "1179": 1,
+   "109": 3,
+   "115": 1,
+   "9": 1,
+   "21": 1,
+   "6": 1,
+   "3": 1,
+   "1": 1,
+   "4": 1
+  },
+  "mu": null,
+  "mu_ge_delta": false,
+  "nota": "semantica ILEGIBLE: los valores de confirmations son variados y de magnitud block-height (1..2530), NO un conteo de confirmaciones => sin semantica verificable no hay umbral honesto; mu NO COMPUTABLE (falta de senal medible, no ausencia de riesgo)"
+ },
+ "ADM-6": {
+  "familia": "H funding-basis(A18)/paridad(A19)/LST-spreads(F07)",
+  "lambda": "R (DERIVATIVE_DATA_REQUIRED)",
+  "mu": null,
+  "mu_ge_delta": false,
+  "nota": "sin datos de funding/opciones/LST en sustratos A/B/C => mu NO COMPUTABLE; veredicto 0 DECLARADO (lambda=R admisible pero sin medicion no hay admision)"
+ },
+ "ADM-7": {
+  "familia": "H convexa-multileg",
+  "items_con_v3": 18,
+  "mu": null,
+  "mu_ge_delta": false,
+  "nota": "requiere liquidez por tick (ausente en sustratos) => mu NO COMPUTABLE; la parte V2 del sizing ya esta cubierta por ADM-1 (un termino)"
+ },
+ "ADM-8": {
+  "familia": "I leakage/adversa/cascadas",
+  "mu": null,
+  "mu_ge_delta": false,
+  "nota": "sin mempool/positions de lending en sustratos => mu NO COMPUTABLE; veredicto 0 DECLARADO"
+ },
+ "_C_theta": {
+  "nota": "los candidatos H/I son adiciones control-plane puras; SSOT intacto",
+  "n_strategies": 264,
+  "combos": 1436,
+  "hop_dist_ok": true,
+  "mev_diff_zero": true,
+  "C_canonical": 1,
+  "C_literal": 0,
+  "condicion7": "escalada [A] al capitan (t9); invariantes 6/6 OK sin condicion 7"
+ }
+}
+
+=== RESUMEN ADMISION ===
+ADM-1: familia=H sizing-AMM-cerrada+kelly (A14/A15)           mu>=delta: True
+ADM-2: familia=H break-even gas<->profit                      mu>=delta: False
+ADM-3: familia=I staleness-oraculo (gate cuarentena)          mu>=delta: True
+ADM-4: familia=I ventanas-no-atomicas (gate clase)            mu>=delta: True
+ADM-5: familia=I reorg (gate confirmaciones)                  mu>=delta: False
+ADM-6: familia=H funding-basis(A18)/paridad(A19)/LST-spread   mu>=delta: False
+ADM-7: familia=H convexa-multileg                             mu>=delta: False
+ADM-8: familia=I leakage/adversa/cascadas                     mu>=delta: False

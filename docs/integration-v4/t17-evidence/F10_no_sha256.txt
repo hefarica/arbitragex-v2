@@ -1,0 +1,10 @@
+CONTROL (ℛ.tsv, 28 data rows, current state incl. concurrent row 28 'PROMOTED'):
+  admitted=28 excluded=0
+ATTACK (+1 row WITHOUT sha256, +1 row with FAKE sha256): admitted=28 excluded=2
+  [excluded] fake_artifact_no_hash.txt: NO/invalid sha256 -> C2: does not exist for the system
+  [excluded] SSOT/strategy_hop_map.csv: HASH MISMATCH declared=eeeeeeeeeeee actual=b25d4c892c0b
+admitted set unchanged under attack: True; attack rows blocked: True
+VERDICT_F10: NO_REFUTADO — C2 holds: no-sha256 and fake-sha256 rows are EXCLUDED by default; admitted set identical to control
+
+NOTE (concurrency): ℛ.tsv grew from 27 to 28 data rows DURING this t17 session (row 28 'detector_policy.rs (PROMOTED…)')
+added by another task — the release dir is shared; F10 verdict is against the current 28-row state.

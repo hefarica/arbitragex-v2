@@ -1,0 +1,96 @@
+artefacto	productor	sha256	verificador
+SSOT/detector_policy.csv	t9/alpha2 (frozen copy 01_SSOT integrado-supremo)	91ef3ccb650dcf852dd1fa742419de365773682fa69059571f531ab9b4ca4aa5	t17/t7
+SSOT/strategy_hop_map.csv	t9/alpha2 (frozen copy 01_SSOT integrado-supremo)	b25d4c892c0b98734ff3eb2a91442e4f6d105a4cacef991a31e7eefd87420773	t17/t7
+SSOT/strategy_hop_map.json	t9/alpha2 (frozen copy 01_SSOT integrado-supremo)	7fb529c607071a210a0b3bc627dd27b475008f2031445e9acccf317884861122	t17/t7
+XREF_BASELINE.md (source, workspace root)	t16/alpha3 (qa)	7a03e242968e8297680f6e0bbc53b95b06c26d5a0911ee08a42cac63d0131d42	t17/t7
+XREF_BASELINE.json (source, workspace root)	t16/alpha3 (qa)	089ba9115bd7b5b68ee40a956f990e5a65e820ed26117ffe5e1a8766bfdbbb6a	t17/t7
+x_ref.json	t9/alpha2 (x_ref fixation, delta_abs=0.005)	a6d521ea13fc475ff4f3a6f4b3acf98e5018ded5d816430b5a0f882bb4c26539	t17/t7
+C_THETA_verdict.json	t9/alpha2 (C(theta) evaluation)	85bc7100f70b5d9824c372839e4be78bb9bc479f5dd708326f52ec00fc914afd	t17/t7
+C_THETA_verdict.md	t9/alpha2 (C(theta) verdict narrative)	9e8dbb9038a260b2e506dfa4745cc77293597c7a23834926a46884a7f7b30dfd	t17/t7
+gen/detector_policy.rs	t9/alpha2 generator gen_ssot_v4_rs.py	5698976fd2573be720795e5e8357093e826c6f52dfa16fd27fa27b9002df2aeb	t17/t7
+gen/detector_policy.rs.diff	t9/alpha2 generator gen_ssot_v4_rs.py	92e5758332e0360e06b6358afb3efc7b01107a4ce38000a32a7c0f30258ce812	t17/t7
+gen/gen_ssot_v4_rs.py	t9/alpha2 (generator source)	fb4891a9ca6d7e6f2fa628c8466ce92cf43ea8e6bda6bd94ed85f70933478ba8	t17/t7
+gen/hop_cycle_bridge.verify.txt	t9/alpha2 generator gen_ssot_v4_rs.py	0bb74479a1d3847d14ae3d413639db852ee6c48fa1e27b01c2e4ead978e5398c	t17/t7
+gen/strategy_hop_map.v4.fixture.json	t9/alpha2 generator gen_ssot_v4_rs.py	c623c019ffca3995bd624db2cea63daa1a09c6518554e7657b4d8a5f8118f547	t17/t7
+V2_static.txt	t9/alpha2	a270517e61460329685812aecfa6324a12195a075cafa7314cf67438ea145f26	t17/t7
+V4_dryrun.md	t9/alpha2	925bd5e55473c41b6ab0de52ea81706793ddfea8e8d65006b19e2c44c5b931c4	t17/t7
+Q1_Q8.md	t9/alpha2	115374db80465c747b649fc7bb78f0f8d1ac67a4cf428f8c86c2c531112ffd48	t17/t7
+integration-manifest.md (t2, commit 21feefb32)	t2/auditor	c622a0068d3c3066aaebe41ba940d35b426e12d48fa1b9ad44158ef4a9bda034	t17/t7
+t9-evidence/ssh_probe_20261013T033640Z.txt (+stderr/stdout probes)	t9/alpha2 (R12 ssh-native exit=255 evidence)	8dd4ecdf2a6010dc0900bd61f15eff928fb3cdfcb538082abddc59ccfa6a1154	t17/t7
+V3_build/cargo_build_release.txt	t9/alpha2 (V3/assembly evidence)	483fe999c8f8b2bff29ed143cdf481a322fb5255cb77c2e2841608434328daa3	t17/t7
+V3_build/cargo_build_release_cleanbase.txt	t9/alpha2 (V3/assembly evidence)	bea1810aafbed8aebf0576f5bfc3267c25ed4c101468e055753341f827d0f387	t17/t7
+V3_build/cargo_test.txt	t9/alpha2 (V3/assembly evidence)	738b196f991fc7602d9b8e86ae9daec046cb9e69e47a97912e2d86b8f13812c5	t17/t7
+V3_build/cargo_test_cleanbase.txt	t9/alpha2 (V3/assembly evidence)	f9b0a752ef802327ee52f84cbe7dd09eb762bf9f7c9c51f9903f136d27fec689	t17/t7
+V3_build/cleanbase_restore_proof.txt	t9/alpha2 (V3/assembly evidence)	b444d5778dee519fdbeafcac614ad32c0817bd9095e49cd4e049a83b5ff618c4	t17/t7
+V3_build/exoneration_pure_head.txt	t9/alpha2 (V3/assembly evidence)	18d05a5bbd37781d964eb6ac8c4439a12821be13b0e7cb75348151549f0264d0	t17/t7
+V3_build/restore_proof.txt	t9/alpha2 (V3/assembly evidence)	677d33ee99dacf6a97772d28888a34599943735577c33093b09367b6ae839c7f	t17/t7
+V3_build/v4_tests_result.txt	t9/alpha2 (V3/assembly evidence)	1730543db5111d04cd5aacdf5799344c7831e735d0b3e5773c9924f85dea0477	t17/t7
+ASSEMBLY.md	t9/alpha2 (V3/assembly evidence)	572e12e9d23d03695a8e78be8831ffee6c04dd75359a752a15a04a9b216821ff	t17/t7
+backend/searcher-rs/src/detector_policy.rs (PROMOTED to shared tree by t10 first action, enmienda alpha11-20261013)	t10/alpha2 promotion of t9 regenerated artifact	5698976fd2573be720795e5e8357093e826c6f52dfa16fd27fa27b9002df2aeb	t17/t7
+REGISTRO_INCLUSIONES.md (A7, 59 filas ADM §13; gate |A7|>0 PASS)	t14/auditor	f6f28d866e031f8983b985b3b7f290f079314cd2d1c1c070f31a2c90102c4162	t7 (re-hash t29)
+A8_final.xlsx (A8 + hoja REGISTRO_INCLUSIONES, 60 hojas; original eb5b803c… intacto)	t14/auditor	7573cdb70c74ed9bb651cc7902619d40d2c9910cfdc26984ffe064dc04895a34	t6/t7
+"CRITERIOS_T6.md (A3 montado, 7 criterios evaluados)`	qa/t6`	919faf3eaffc845104e403819301ce97d00d2567248c763fbebe76df1a228d7c`	t17/t7
+docs/integration-v4/A1_MANIFEST.md (A1: §11-bis + δ_abs + glosario + SUPERSEDE §10 delta +0.60778)	 qa/t6+t19  (re-hash V4/V1-t28)	6938d8f59b029333b90efdc3d91599f8b98906e9e4085b8661fa23c0c81fa652	t7
+"R-20261013T1545Z-t6/V1_hashes.txt (A9 = sello del release, 31 hashes)`	qa/t6`	ab9b54d427f140dbe82ca9c830d347debdaa7621fcd269fbebbd4ee347ae9f43`	t17/t7
+"R-20261013T1545Z-t6/V0_baseline.md (snapshot V0 + condición F4 registrada)`	qa/t6`	deb55e5984bd9c7b6fa5de34d9580b30b763663c41ef9ffe7695face1d27815b`	t17/t7
+"R-20261013T1545Z-t6/V5_shadow.md (Φ(shadow)=1, x(θ) tolerancia, 0 bytes VPS)`	qa/t6`	8d423e2f7e779d0b15a1a9105c29390db12e5ebf49efac2308db0697e20fc516`	t17/t7
+"R-20261013T1545Z-t6/tools/vmap_delta.py (V-MAP-Δ EJECUTABLE persistido, DERIVA=0 ×3)`	qa/t6`	97615fce45a5ccba0ab65a5924512da0deaa2d040a16255ac8f755b213faa5be`	t17/t7
+"R-20261013T1545Z-t6/tools/c_evaluator.py (𝒞 EJECUTABLE persistido, canónica rc=0)`	qa/t6`	66e591d04337f8f797b0405d992947c868bd36d68665a25998f1563cd4ce9ad2`	t17/t7
+"R-20261013T1545Z-t6/tools/phi_static.py (Φ g1-g6 gate, exit=0)`	qa/t6`	ca4fbb9de554d124d06fe8f11deb17cd0de25a3dd74c9b7284a0e1be21708aa0`	t17/t7
+"R-20261013T1545Z-t6/ci/phi-t7.yml (CI t₇ SIN filtros de paths)`	qa/t6`	dd0554fdac068218eccfde4ead0f8a173a34c04c2b0fe9527bd8e1c770ca7426`	t17/t7
+t6-evidence/vmap_delta_p1.txt (Δ pasada 1, deriva=0)	qa/t6	fc8e71e04932d97d8c44b12147c023bffc7e8f94f7d44bdd04ef25e5f8825c27	t7
+t6-evidence/vmap_delta_p2.txt (Δ pasada 2, deriva=0)	qa/t6	f1d5baa25541843daa7a28a21299bd1cb155bdf4ddcb2705100047c21e4e08d5	t7
+t6-evidence/vmap_delta_p3.txt (Δ pasada 3, deriva=0)	qa/t6	d6e0297a3b8ac3925faf906aedc8d6f908f35d0940ca92a05d67e8666ea98b68	t7
+t6-evidence/hashes_maestro_t6.txt (52 hashes maestros)	qa/t6	2cb71ce420fae6e1ef00ca6098133620690301336aced29f00d8c7527c385bbb	t7
+R-20261013T1545Z-t6/V2_static.txt	qa/t6	7c8a4e461137acabeca550735fd80932f827b9ea7cef7685419ba65d92230e93	t7 (H1 reparación forma)
+R-20261013T1545Z-t6/V3_build.txt	qa/t6	57cb51a1169d39d32129847b3ec0ee90b5a7d0d71093a259154c21cf840f145e	t7 (H1 reparación forma)
+R-20261013T1545Z-t6/R_report_T6.md	qa/t6	f00c0921ff7fc19545ce90d659913f7471cb7e5baf94e89e7298d058d71be25c	t7 (H1 reparación forma)
+ESCALERA_REPORT.md (§E V0-V8 + Φ + quórum + P9 + Λ + §D + V6-RUNBOOK)	qa/t6	8c830f40284dc3363ba95f9532241cc4fe3ccaf9d568cc2c829a3fad4a293953	t7 (H1 reparación forma)
+t18-evidence/drill_rollback_v2.txt (drill swap 0.53s / rollback 10.66s / swap 10.60s, 1 comando sin rebuild sin red)	 qa/t18 	 31f93bdd71ab3ce58b71e50866fca6a529b9a9a7103669d611d34514fe64ca2f 	 t7
+t18-evidence/T18_report.md (pasada V6: transporte+D1+drill VERDES; dump en vuelo; swap bloqueado gate t7)	 qa/t18 	 2853275d2b7ca04fa6db976064650684c5484d6141a43998ec44a15ec1da05d4 	 t7
+t19-evidence/f2_tendencia_disco.txt (F2: crecimiento = PG vivo; route_discovery ~10-12GB/dia sin purge)	 qa/t19 	 a3b56e599e3040cea5ebb7c9b898037f6a9d30bb0d44e2af96cf7723c7fb70ea 	 t7
+t19-evidence/retention_diagnostico.txt (cron corrio 04:17Z purgando 9.75M filas de 7 tablas PERO route_discovery_outcomes AUSENTE del log — gap script-vs-politica)	 qa/t19 	 093a2dbe07197d3c4c7f5fdcc40e7fed790c2d95d3983112d2a4bc63513d8f46 	 t7
+t19-evidence/p2_auditoria_imagenes.txt (auditoria 24 imagenes: TODO en uso salvo rust:1.91=dependencia build; builder prune 0B; journal vacuum 0B)	 qa/t19 	 7b6d1aef0b28bd2441dae0c4f6ab7f81d815fc0ec05ab88167298e7f5553210a 	 t7
+t19-evidence/rollup_cobertura.txt (rollup-first VERIFICADO: max bucket_ms 1791864600000 cubre dia-12 completo, 2.43M filas)	 qa/t19 	 88b657e71df2b131f5ec62eb9b0fb839a9624d309a0b9d05de449aa817295977 	 t7
+t19-evidence/vmap_delta_p4.txt (Δ pasada 4: deriva=0 en todos los invariantes medidos)	 qa/t19 	 59227321cc3aebf74651aeabc1e54bf3e6d47141cc26439b5818a366d2f2ea24 	 t7
+t22-evidence/kill_zombi_y_drop.txt	qa/t22	f2ac08e24fee63c599c9a20e47ed14fdd94dfae0448279f91a13970c6940ee2e	t7
+t22-evidence/pieza0_verify_pieza1_launch.txt	qa/t22	02f72e4da341b2e982513f267881c320fcbc4023e98cb57f850709d67f045986	t7
+t22-evidence/pieza1_status.txt	qa/t22	080df7382b04505298a2723793da16b9ab08e7ff2267689f98b25ab46cd715a7	t7
+t22-evidence/pieza2_launch.txt	qa/t22	21378174729e4b528f7545e2b4c41254f5bda4f2998269cd0f21826486890120	t7
+t22-evidence/release_local_manifest.txt	qa/t22	efb3480775e2e8fc5cfe18892f3582160ce3787ccf801219a3ecf5a199a7a851	t7
+t22-evidence/vmap_delta_p5.txt	qa/t22	b9b39de5c7f197a79cebadf0110564c0c463673bcd2adfb8c190efe55bc89cef	t7
+arbx-backups/piece_resto.dump (pieza-0 F4+F1: 688 TOC, restore exit, conteos exactos)	qa/t22	aa4d4fc74b2d7f82d3e3af4a598d27b94a73d79e7aea66490bacb1edfcc58f64	t7
+arbx-backups/piece_route_discovery.dump (pieza-1 F4+F1: 68 TOC, restore exit=0, rollup 2434138 exacto)	qa/t22	af158dfa29c5de0e45253a0a16aaf0111c0b2a2739de5e48db06b3ab2e22d605	t7
+arbx-backups/piece_opportunities.dump (pieza-2 F4: sha 21a10d08… local==VPS, TOC 19; F1: dump 11.208.139 vs punto 11.208.211 borde-MVCC 72)	qa/t23	21a10d08499735b45c887d3e4822e7e6ad03f49d6231c0f33d8ba27be214b443	t7
+arbx-backups/piece_scored.dump (pieza-3 F4: sha bdc00f07… match, TOC 20; F1: 11.542.424 == 11.542.424 EXACTO)	qa/t23	bdc00f0768dc2e83a678881301f19bb342a4ec1a3d9aaf927d85a609ab83dbf8	t7
+arbx-backups/piece_poolres.dump (pieza-4 F4: sha ee415e26… match final, TOC 12; F1: 70.032.394 vs 70.032.393 borde 1)	qa/t23	ee415e266cfe44b1c4ab64da232ebe6fab27f73ff2795975e13fcd9d28d4b983	t7
+t21-evidence/f3_redrill_imagen_real.txt	qa/t21	de42ea49b19948f2a23f612e95806842a33ecf1cb969b0ede6edf4d54ea0eb09	t7
+t21-evidence/swap_ejecucion_v2.txt	qa/t21	8514133ebd3188ec764c0b3b906b3bfec36c2c26ebb05e3a0f7cb141f5be74d1	t7
+t21-evidence/w180_estabilidad.txt	qa/t21	1fa9b0e978a00296595a0b8008755527dcb04bc90df61440297130ae5990171b	t7
+t21-evidence/v8_rollback.txt	qa/t21	bcb45d4bdfecfbebbaf106d81b7732b867b3d5f3916be65a51b3a5d017cd8f5f	t7
+t24-evidence/pre_latencias.json	qa/t24	a4a400627546517ce079dfe5132df6f132f05e7d6f574e060455c73fce4d65c6	t7
+t24-evidence/post_latencias.json	qa/t24	147e8315ec1dfd8e421619c49ed893bcf13217915e193ed7ea528c9e9f9a4a70	t7
+t24-evidence/swap_republish.txt	qa/t24	ac2ace392221b6e62e1fc3a09c6b64bb9a4341476f79a2574fcd7c432269d6ff	t7
+t24-evidence/v8_rollback_2.txt	qa/t24	b9273d40d6b30e2c7ac54df3c0d216269d9d347a79952ebebb9d89a18bf2ebd3	t7
+t24-evidence/EXC-001-DRAFT.md	qa/t24	e096e3f8f11791193503b329cfd99b17738eb7d62c327ed4fe6a1c8f7c2617b2	t7
+t28-evidence/s1_correlacion.txt	qa/t28	c129d993c927cd8d0a0ca3e911146986cdde243f3158b36f57a659414d4100c4	t7
+t28-evidence/s1_logs_8h.txt	qa/t28	62f080f5b91ce601e09c8515a3420693f29ed28371c56e3bab8b84fe0b14ca00	t7
+t28-evidence/T28_triaje.md	qa/t28	6125e5b5ec8048f9bd9a1e615e9e660f29100157804d0964f425c1b327cfec69	t7
+t28-evidence/T28_triaje.md v2 (S1 re-etiquetado TRANSITORIO-INFERENCIA V2 + WATCH-V7-001 V1 + reconciliacion ℛ V4)	qa/t28	865cfbaefdca0cb038364c828f45f425c214acb7cc173ed37d0b23bf25cc3c69	t7
+evidence/console-20261013-operator-field-log.md (ℳ del operador: storm ×6 + cluster 500 + simulate 501/503, sin timestamps DECLARADO)	operador/capitán	6c13f88bf3ff15df51dee5559d227fc1c78085f8d4faada34e15b09616df5802	t17/t7
+REGISTRO_INCLUSIONES.md (A7 re-hash: ADM-7 watchdog → OBSERVADO en producción con ℳ field-log)	qa/t29	f6f28d866e031f8983b985b3b7f290f079314cd2d1c1c070f31a2c90102c4162	t7 (re-hash t29)
+t29-evidence/m1_tanda1.txt	qa/t29	38dcf1ada28e3e0c4b896af17a5b48da1987ca70595cefbf0355e6665ce8f0e9	t7
+t29-evidence/m1_tanda2.txt	qa/t29	586a6ed1cb0682ca8c02c0fa7891b5f38e19f86bfbbd5375d34413a96c8df0c9	t7
+t29-evidence/m1_tanda3.txt	qa/t29	164635533a3df8128cf7fb7b8be54be6647ed6183c2189da7a832581b6b4cb83	t7
+t29-evidence/m5_mapa_completo.txt	qa/t29	2cc8a8ed609a4f1b2a0a09663873ff36d3afde4a604226a8caac888e0cdc0378	t7
+t29-evidence/T29_report.md (M1-M6: 1400/1400 200, 503=searcher_api explicado, §B enmienda, ADM-7 OBSERVADO)	qa/t29	6e6ae9e47758971fa7f9b8b1fed5a7c25e43d018757bb9cf679a9a7e3c4eb30d	t7
+commit/C1-rust detector_policy.rs (4eb9258a3, +134/-0)	qa/t30	git-sha:4eb9258a37eabe61f9cd617ab2fa196d96e53f8c	t7
+commit/C2-frontend-bus t5 x11 (a7bf76071, +717/-3)	qa/t30	git-sha:a7bf760713c06643a857a61f5d66f7905b779846	t7
+commit/C3-control-plane adm t13 x4 (622fef56d)	qa/t30	git-sha:622fef56d314e2eb1aa3d8eef58e4ec5465349e5	t7
+commit/C4-tools-CI-gen t6 x9 (add97b9ba)	qa/t30	git-sha:add97b9baaed991c589e1d6b4d615304faa71d19	t7
+commit/C5-docs-evidencias x222 t1-t29 (711067bc4, t27-OUT removido por amend pre-ℛ)	qa/t30	git-sha:711067bc4b7beef1dd503c9c36765f5a656ac075	t7
+docs/integration-v4/ESCALERA_REPORT.md (RE-HASH t31: fila 48 declaro 8c830f40 pre-V4-correcciones; hash actual tras enmienda-smoke+t30 edits)	qa/t31	c7131f451f88a0273e32190065aa9ed219f7d8f4bb5442985ce897f5ee6aec2c	t7 (F-2 append)
+docs/integration-v4/t28-evidence/T28_triaje.md (RE-HASH t31: fila 78 declaro 6125e5b5 pre-V1/V2/V4-correcciones; hash actual tras S1-relabel+WATCH+reconciliacion)	qa/t31	865cfbaefdca0cb038364c828f45f425c214acb7cc173ed37d0b23bf25cc3c69	t7 (F-2 append)
+frontend/lib/prices/prices-contracts.ts (C7 mirror D2: copia byte-exacta de shared-ts/src/prices-contracts.ts cbb36d51…)	qa/t31	cbb36d513abed22e555dfa6056cabb8d5be56072f895e1b6ba5b0302c6acb866	t7
+commit/C7-fix-build (df489b3d6: mirror+paridad+import fix, 3 files path-scoped)	qa/t31	git-sha:df489b3d6438a903f286b90269f80a7a04fca2d0	t7
+commit/merge-main (1d0b66f3a: origin/main PR947-951 keep-both, 7 conflictos resueltos, C1-C6 intactos)	qa/t31	git-sha:1d0b66f3ac843ddcd3cb4ef505b5aee33e9567d8	t7

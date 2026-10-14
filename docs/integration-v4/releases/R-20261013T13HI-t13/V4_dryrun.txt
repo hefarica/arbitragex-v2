@@ -1,0 +1,18 @@
+{
+ "v4": "shadow replay read-only qa-baseline/edge_opps_live.json (sha 1FE9EFF0... x_ref)",
+ "calibracion_exacta_items": "17/17 (net(a0)==net0 +/-1e-6)",
+ "adm1": {
+  "n_sim": 17,
+  "sum_net_actual": -17915.4383,
+  "sum_net_politica": 0.0,
+  "delta_x6": 17915.4383,
+  "trades_tomados": 0
+ },
+ "adm3": {
+  "n": 26,
+  "quarantined": 2,
+  "not_computed": 0,
+  "passing": 24,
+  "threshold_ms": 2405.0
+ }
+}

@@ -1,0 +1,26 @@
+# V2 — verificación estática (t6, todo ejecutado esta sesión; salidas en release/t6-evidence)
+
+1. **Φ g1..g6 (anti-circularidad §7)**: `python tools/phi_static.py .tmp-inbox/integrado-supremo/MANIFEST.txt`
+   → PASS g1..g6 (7/7 checks incl. asserts-line), `PHI_STATIC(g1..g6)=1`, exit=0.
+2. **𝒞(θ-SSOT) canónica (enmienda cond7)**: `python tools/c_evaluator.py SSOT --canonical`
+   → `C(theta)=1 [canonical(6 cond)] - all conditions hold`, exit=0.
+   Modo literal → exit=1 `FAIL cond7 mask(MEV-05-003)=[2,3,4,5,6] != {2}` (errata documentada;
+   enmienda: {2}⊆mask ⇒ 𝒞=1). Reproduce EXACTAMENTE t9/t17 (instrumento persistido verificado).
+3. **DFAC D_=0.80**: `gen/detector_policy.rs` sha `5698976fd2573be720795e5e8357093e826c6f52dfa16fd27fa27b9002df2aeb`
+   == archivo del ÁRBOL COMPARTIDO (promoción t10, ℛ.tsv) — verificado por hash directo.
+4. **DERIV_POS>0**: 3560 (A1-semilla :7, definición F04/t13 citada en CRITERIOS_T6.md).
+5. **IMP≥BASE**: 31744 ≥ 19744 (A1-semilla :8-9); **+60.778% MEDIDO** (t8) vs +60.8% (A1 redondea).
+6. **SSOT congelado**: `SSOT/` del release == t9 byte-exacto (json `7fb529c6…`, csv `b25d4c89…`,
+   detector_policy.csv `91ef3ccb…` — == T1_inventario t1 y == V2 t9).
+7. **V-MAP-Δ ×3**: `python tools/vmap_delta.py --check-artifacts p1 p2 p3` → DERIVA=0 en las 3,
+   total_drift=0, exit=0 (α9 deriva=0; P9 pasadas limpias ≥3).
+8. **Baterías estáticas adm**: py_compile 6/6 exit=0; `python -m unittest test_adm -v` → Ran 10 tests OK.
+9. **Alertas t8 cargadas**: monotonic=A1/A2-only; detectores 60 definición AGREGADA (A1_MANIFEST §enmiendas 4).
+10. **Riesgo declarado que viaja**: campo `confirmations` ILEGIBLE como conteo (t13/ADM-5, en A7).
+
+## Instrumentos no disponibles (fail-honest, §D)
+
+- `sql_query` harness: NO devuelve filas (t16, replicado) — PG no usado como instrumento.
+- ssh.exe NATIVO: exit 255/stderr 0B (t15 R12/t16) — TODO ssh via Git ssh.exe pineado (verificado exit=0).
+- Compilación Rust local: AppControl os error 4551 ×2 intentos literales (TEMP y Desktop; ver V3_build.txt)
+  — patrón idéntico al anvil bloqueado de t11. V3 cubierto por la corrida t10 del conjunto idéntico.

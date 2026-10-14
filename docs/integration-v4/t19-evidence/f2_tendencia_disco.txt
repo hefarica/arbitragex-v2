@@ -1,0 +1,48 @@
+=== F2: df global ===
+/dev/sda1        153514M 136539M    10682M  93% /
+=== journal ===
+Archived and active journals take up 96.0M in the file system.
+=== docker df ===
+Images          24        23        8.43GB    2.323GB (27%)
+Containers      27        26        458MB     24.58kB (0%)
+Local Volumes   11        11        99.38GB   0B (0%)
+=== zonas du (MB) ===
+101045M	/var/lib/docker
+518M	/var/log
+9533M	/opt
+14952M	/var/backups
+226M	/tmp
+=== PG size ===
+82 GB
+=== particiones route_discovery ===
+route_discovery_outcomes_p20261012 8201 MB
+route_discovery_outcomes_p20261012_chain_id_ts_ms_idx 364 MB
+route_discovery_outcomes_p20261012_is_opportunity_ts_ms_idx 364 MB
+route_discovery_outcomes_p20261012_pkey 459 MB
+route_discovery_outcomes_p20261012_pool_hint_idx 126 MB
+route_discovery_outcomes_p20261012_stream_id_ts_ms_key 591 MB
+route_discovery_outcomes_p20261012_ts_ms_idx 282 MB
+route_discovery_outcomes_p20261013 6163 MB
+route_discovery_outcomes_p20261013_chain_id_ts_ms_idx 266 MB
+route_discovery_outcomes_p20261013_is_opportunity_ts_ms_idx 266 MB
+route_discovery_outcomes_p20261013_pkey 346 MB
+route_discovery_outcomes_p20261013_pool_hint_idx 90 MB
+route_discovery_outcomes_p20261013_stream_id_ts_ms_key 446 MB
+route_discovery_outcomes_p20261013_ts_ms_idx 208 MB
+route_discovery_outcomes_p20261014 56 kB
+route_discovery_outcomes_p20261014_chain_id_ts_ms_idx 8192 bytes
+route_discovery_outcomes_p20261014_is_opportunity_ts_ms_idx 8192 bytes
+route_discovery_outcomes_p20261014_pkey 8192 bytes
+route_discovery_outcomes_p20261014_pool_hint_idx 8192 bytes
+route_discovery_outcomes_p20261014_stream_id_ts_ms_key 8192 bytes
+route_discovery_outcomes_p20261014_ts_ms_idx 8192 bytes
+route_discovery_outcomes_p20261015 56 kB
+route_discovery_outcomes_p20261015_chain_id_ts_ms_idx 8192 bytes
+route_discovery_outcomes_p20261015_is_opportunity_ts_ms_idx 8192 bytes
+route_discovery_outcomes_p20261015_pkey 8192 bytes
+route_discovery_outcomes_p20261015_pool_hint_idx 8192 bytes
+route_discovery_outcomes_p20261015_stream_id_ts_ms_key 8192 bytes
+route_discovery_outcomes_p20261015_ts_ms_idx 8192 bytes
+=== top / (depth1) ===
+head: invalid trailing option -- 
+Try 'head --help' for more information.

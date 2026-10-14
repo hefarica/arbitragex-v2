@@ -1,0 +1,5 @@
+total 8
+drwxr-xr-x 2 root root 4096 Oct 13 17:59 .
+drwxr-xr-x 9 root root 4096 Oct 13 17:07 ..
+dir_eliminado
+/dev/sda1        153514M 128904M    18317M  88% /

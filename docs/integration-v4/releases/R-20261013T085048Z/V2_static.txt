@@ -1,0 +1,26 @@
+# V2 — verificación estática (todo medido esta sesión, artefactos en este release)
+
+1. SSOT congelado == inventario t1 (T1_inventario_sha256.txt:7-9):
+   strategy_hop_map.json  7fb529c607071a210a0b3bc627dd27b475008f2031445e9acccf317884861122 OK
+   strategy_hop_map.csv   b25d4c892c0b98734ff3eb2a91442e4f6d105a4cacef991a31e7eefd87420773 OK
+   detector_policy.csv    91ef3ccb650dcf852dd1fa742419de365773682fa69059571f531ab9b4ca4aa5 OK
+2. JSON parseable: strategy_hop_map.json (264 estrategias) y strategy_hop_map.v4.fixture.json
+   (264 rows) parsean; CSV json↔csv: 0 diferencias de campo (measured, script t9).
+3. Invariantes SSOT (ver C_THETA_verdict.json): |S|=264, |D|=60, |Omega|=1436, 3<=|mask|<=7,
+   d(h)=245/262/260/233/233/203, |Pi_j| (R_+CF_ fusionado)=53/31/31/30/30/25/20/18/14/12 — TODO PASS.
+4. 01_SSOT == xlsx A8 (CLASIFICACION_264 + TESTS_ATOMICOS HOP_MASK): 264/264 máscaras idénticas
+   (el SSOT es fiel a la fuente suprema del paquete).
+5. DFAC['D_']:=0.80 MATERIALIZADO en gen/detector_policy.rs:
+   - `pub const DFAC_D_UNDERSCORE: f64 = 0.80;` presente (verbatim check OK)
+   - `pub fn dfac(family:&str)->f64` (0.80 solo D_, 1.0 neutral resto)
+   - tabla `SSOT_V4_DETECTOR_POLICIES: [SsotDetectorPolicy; 60]` en orden csv, suma 264,
+     D_ = 5 detectores x 6 estrategias (=30, igual que hoja F04 del xlsx)
+   - tests `ssot_v4_detector_table_matches_ssot` + `dfac_fix_is_materialized` presentes.
+6. Regeneración puramente ADITIVA: diff +134/−0 (gen/detector_policy.rs.diff,
+   sha256 92e5758332e0360e06b6358afb3efc7b01107a4ce38000a32a7c0f30258ce812). QUOTEBASE legacy
+   intacto (coexistencia; el wire sigue sirviendo QUOTEBASE hasta promoción t6/t14).
+7. hop_cycle_bridge.rs: MIN_BRIDGE_HOPS=3, MAX_BRIDGE_HOPS=7 verificados en fuente
+   (gen/hop_cycle_bridge.verify.txt) — stub v4 'ciclos 3-7 hops' satisfecho por código existente;
+   universo de hops del SSOT v4 = [2..7]; hop 2 sigue exclusivo de dex_engine (invariante del módulo).
+8. fixture v4: MEV-05-003 h=[2,3,4,5,6] mask=31 s=BALANCER_WEIGHTED (s desde CLASIFICACION_264);
+   MEV-01-015 h=[3,4,5,6,7] mask=62 s=DEX_SPOT_V2.

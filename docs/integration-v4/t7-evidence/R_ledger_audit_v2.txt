@@ -1,0 +1,11 @@
+RESOLVED+VERIFIED: 39
+MISMATCH (0):
+NOT FOUND (0):
+C2 violations (1): [(41, 't6-evidence/vmap_delta_p{1,2,3}.txt + hashes_maestro_t6', '(ver p1=fc8e71e0… p2=f1d5baa2… p3=d')]
+C3 violations (0): []
+MALFORMED (3-col) rows (4):
+  line 42: 7c8a4e461137acabeca550735fd80932f827b9ea7cef7685419ba65d92230e93	qa/t6
+  line 43: 57cb51a1169d39d32129847b3ec0ee90b5a7d0d71093a259154c21cf840f145e	qa/t6
+  line 44: f00c0921ff7fc19545ce90d659913f7471cb7e5baf94e89e7298d058d71be25c	qa/t6
+  line 45: 8c830f40284dc3363ba95f9532241cc4fe3ccaf9d568cc2c829a3fad4a293953	qa/t6
+SUMMARY: 44 data rows -> verified=39 mismatch=0 notfound=0 c2=1 c3=0 malformed=4
