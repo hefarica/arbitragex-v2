@@ -24,6 +24,12 @@ jobs:
           node-version: "20"
       - name: Run no-hardcode lint
         run: bash automation/tools/lint-no-hardcode.sh
+      - name: Secret-exposure regression test (E-7 / GATE-SECRETOS-01)
+        # Pins the class that leaked through `.claude/settings.json`: the JSON pair
+        # shape ("KEY": "value") that no gate understood, plus the tracked-path
+        # rule. Mutation-sensitive by construction — assertion A4 fails the suite
+        # if the JSON-form rule is removed.
+        run: bash automation/tools/test-gate-secretos.sh
       - name: Verify dashboard metrics exist
         run: bash automation/tools/verify-dashboard-metrics.sh
       - name: Post-run advice on failure

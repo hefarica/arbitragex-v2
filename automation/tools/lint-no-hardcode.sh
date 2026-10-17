@@ -19,10 +19,17 @@
 
 set -uo pipefail
 
-ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-cd "$ROOT"
+# ARBX_GATE_ROOT lets the regression test (test-gate-secretos.sh) point this gate
+# at a throwaway fixture repo instead of the checkout under test.
+ROOT="${ARBX_GATE_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+cd "$ROOT" || exit 2
 
+# Legacy informational findings (categories 1-4): reported, never fatal
+# (267 pre-existing findings on main at 2026-10-05 — flipping them fatal is a
+# separate decision, NOT this hardening).
 VIOLATIONS=0
+# Blocking findings (categories 5-6 = the E-7 secret-exposure class): fatal.
+BLOCKING=0
 
 # ─── helper ──────────────────────────────────────────────────────────
 report() {
@@ -37,6 +44,23 @@ run_grep() {
   # shellcheck disable=SC2086
   git grep -n -E "$pat" -- $globs 2>/dev/null | \
     grep -Ev "$allow" || true
+}
+
+# Case-insensitive variant (POSIX ERE has no inline (?i); keys like
+# ANTHROPIC_AUTH_TOKEN are uppercase, so -i is required).
+run_grep_i() {
+  # run_grep_i <pattern> <include-globs>
+  local pat="$1" globs="$2"
+  # shellcheck disable=SC2086
+  git grep -n -i -E "$pat" -- $globs 2>/dev/null || true
+}
+
+# Blocking findings (the E-7 class). Distinct label so CI logs separate
+# "this blocks the merge" from the legacy informational categories.
+report_blocking() {
+  local cat="$1" file="$2" line="$3" content="$4"
+  printf 'BLOCKING[%s] %s:%s  %s\n' "$cat" "$file" "$line" "$content" >&2
+  BLOCKING=$((BLOCKING+1))
 }
 
 # ─── 1. EVM addresses outside allow-list ─────────────────────────────
@@ -165,11 +189,63 @@ done < <(run_grep "$SYMBOL_KEY_RE" \
             "*.rs *.ts *.tsx" \
             "$SYMBOL_KEY_ALLOW")
 
+# ─── 5. JSON secret literals ("CLAVE": "valor") — BLOCKING (E-7) ─────
+# Why this category exists: the shape that entered the tree on 2026-07-11 and
+# stayed tracked until 2026-09-30 (.claude/settings.json -> ANTHROPIC_AUTH_TOKEN)
+# is a JSON `"KEY": "<opaque value>"` pair. Categories 1-4 never matched it, and
+# no gate read JSON at all: the file was missed by TEMPORAL SCOPE, not by
+# allowlist. This category is PATH+FORM based — it never compares a candidate
+# value against a known credential, and it never prints one.
+# The secret-bearing word must be the LAST element of the key: this matches
+# "ANTHROPIC_AUTH_TOKEN" / "apiKey" / "seller_secret" and rejects descriptors
+# such as "auth_scheme", "auth_type", "api_key_id", "max_tokens" (plural).
+JSON_SECRET_RE='"([A-Za-z0-9_.-]*)(token|secret|password|passwd|credential|api_?key|private_key)"[[:space:]]*:[[:space:]]*"[^"]{16,}"'
+# Values that are demonstrably NOT credentials: documented placeholders,
+# interpolations, env reads (same spirit as the boot validator rejecting
+# *_change_me / *_dev_only).
+JSON_PLACEHOLDER_RE='(change_me|dev_only|replace_me|placeholder|example|dummy|sample|your_|your-|YOUR_|xxx|XXXX|\$\{|\$\(|process\.env|requireEnv|<[A-Z_]+>|\.\.\.)'
+# Paths where a DOCUMENTED example legitimately lives. `.claude/` is deliberately
+# absent: operator-local config is exactly where the E-7 file lived.
+JSON_ALLOW='(^docs/|^audits/|\.example|\.test\.|/tests?/|_test\.rs|package-lock\.json|pnpm-lock\.yaml|^ci-artifacts/|^frontend/playwright-report/)'
+
+# 5a. .claude/** — NO allow-list. Any secret-shaped JSON pair here is fatal.
+while IFS= read -r hit; do
+  [ -z "$hit" ] && continue
+  printf '%s' "$hit" | grep -Eq "$JSON_PLACEHOLDER_RE" && continue
+  file="${hit%%:*}"; rest="${hit#*:}"; line="${rest%%:*}"; content="${rest#*:}"
+  report_blocking "json-secret-claude" "$file" "$line" "$content"
+done < <(run_grep_i "$JSON_SECRET_RE" ".claude/")
+
+# 5b. JSON files anywhere outside the documented-example allow-list.
+while IFS= read -r hit; do
+  [ -z "$hit" ] && continue
+  printf '%s' "$hit" | grep -Eq "$JSON_PLACEHOLDER_RE" && continue
+  printf '%s' "$hit" | grep -Eq "$JSON_ALLOW" && continue
+  file="${hit%%:*}"; rest="${hit#*:}"; line="${rest%%:*}"; content="${rest#*:}"
+  report_blocking "json-secret" "$file" "$line" "$content"
+done < <(run_grep_i "$JSON_SECRET_RE" "*.json *.jsonc *.json5")
+
+# ─── 6. Operator-local credential paths must NEVER be tracked — BLOCKING ──
+# `git add -f` defeats .gitignore; this category defeats `git add -f`.
+# Path-based only: the file is never opened, matched or printed.
+FORBIDDEN_TRACKED_RE='^\.claude/settings(\..*)?\.json$'
+while IFS= read -r f; do
+  [ -z "$f" ] && continue
+  report_blocking "tracked-operator-local-secret-path" "$f" "0" \
+    "operator-local credential file is TRACKED (.gitignore is inert for tracked paths)"
+done < <(git ls-files | grep -E "$FORBIDDEN_TRACKED_RE" || true)
+
 # ─── summary ─────────────────────────────────────────────────────────
-if [ "$VIOLATIONS" -gt 0 ]; then
-  printf '\n%s\n' "lint-no-hardcode: $VIOLATIONS violation(s). See docs/governance/NO-HARDCODE-DOCTRINE.md." >&2
-  exit 0
+if [ "$BLOCKING" -gt 0 ]; then
+  printf '\n%s\n' "lint-no-hardcode: $BLOCKING BLOCKING finding(s) — E-7 class (JSON secret literal / tracked operator-local credential path). See docs/security/GATE-SECRETOS-01.md." >&2
+  if [ "$VIOLATIONS" -gt 0 ]; then
+    printf '%s\n' "lint-no-hardcode: ($VIOLATIONS legacy informational finding(s), categories 1-4, non-fatal by design)" >&2
+  fi
+  exit 1
 fi
-printf 'lint-no-hardcode: clean\n'
-exit 0
+if [ "$VIOLATIONS" -gt 0 ]; then
+  printf '\n%s\n' "lint-no-hardcode: $VIOLATIONS legacy informational finding(s) (categories 1-4, non-fatal). See docs/governance/NO-HARDCODE-DOCTRINE.md." >&2
+else
+  printf 'lint-no-hardcode: clean\n'
+fi
 exit 0

@@ -269,24 +269,49 @@ jobs:
       - name: gitleaks diff scan (PR/push delta)
         # Secondary scan: verify the incremental diff (PR or push) contains no
         # high-entropy strings. Complements the full-history scan above.
+        # SCOPE NOTE (GATE-SECRETOS-01): this step sees ONLY the event range, so a
+        # secret that entered EARLIER and is still tracked is invisible to it —
+        # exactly how `.claude/settings.json` survived 2026-07-11 -> 2026-09-30.
+        # A full-history gitleaks run is deliberately NOT enabled by default: the
+        # E-7 token still exists in history, so it would red every run forever
+        # without closing anything. ROTATION (operator, at the issuer) is the fix;
+        # history rewriting is forbidden by doctrine and ineffective (forks/clones).
         run: |
           set -euo pipefail
-          if command -v gitleaks >/dev/null 2>&1; then
-            if [ "${{ github.event_name }}" = "pull_request" ]; then
-              BASE="${{ github.event.pull_request.base.sha }}"
-              HEAD="${{ github.event.pull_request.head.sha }}"
-            else
-              BASE="${{ github.event.before }}"
-              HEAD="${{ github.event.after }}"
-            fi
-            echo "Scanning diff ${BASE}..${HEAD} for high-entropy secrets"
-            # --config: explicitly point to the repo's .gitleaks.toml so the
-            # path/regex allowlists are honored in the diff scan too (without
-            # this, a bare `gitleaks detect` uses default rules only).
-            gitleaks detect --source . --log-opts="${BASE}..${HEAD}" --config .gitleaks.toml --redact --verbose
-          else
-            echo "gitleaks binary not available in runner; skipping diff scan"
+          # Binary resolution (GATE-SECRETOS-01). Evidence from the gitleaks job log
+          # (run 37354142733): gitleaks-action installs the binary at
+          # `/tmp/gitleaks-<version>/gitleaks` ("Version to install: 8.24.3 (target
+          # directory: /tmp/gitleaks-8.24.3)") but does NOT export it on PATH — a bare
+          # `command -v gitleaks` misses it, which is why this step had a skip branch.
+          # Resolve explicitly; if neither location yields an executable, FAIL CLOSED:
+          # this branch used to echo and exit 0, so a scanner that could not run
+          # looked exactly like a clean scan.
+          GITLEAKS_BIN="$(command -v gitleaks || true)"
+          if [ -z "$GITLEAKS_BIN" ]; then
+            GITLEAKS_BIN="$(ls -1 /tmp/gitleaks-*/gitleaks 2>/dev/null | head -n1 || true)"
           fi
+          if [ -z "$GITLEAKS_BIN" ] || [ ! -x "$GITLEAKS_BIN" ]; then
+            echo "::error::gitleaks binary unavailable (PATH and /tmp/gitleaks-*/) — refusing to skip the secret scan (fail-closed)"
+            exit 1
+          fi
+          echo "using gitleaks binary: ${GITLEAKS_BIN}"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+            HEAD="${{ github.event.pull_request.head.sha }}"
+          else
+            BASE="${{ github.event.before }}"
+            HEAD="${{ github.event.after }}"
+          fi
+          echo "Scanning diff ${BASE}..${HEAD} for high-entropy secrets"
+          # --config: explicitly point to the repo's .gitleaks.toml so the
+          # path/regex allowlists are honored in the diff scan too (without
+          # this, a bare `gitleaks detect` uses default rules only).
+          "$GITLEAKS_BIN" detect --source . --log-opts="${BASE}..${HEAD}" --config .gitleaks.toml --redact --verbose
+
+      - name: Secret-exposure regression test (E-7 / GATE-SECRETOS-01)
+        # Scope-independent by construction (path + JSON-pair shape, no history
+        # window), so it cannot be evaded by time the way the delta scan can.
+        run: bash automation/tools/test-gate-secretos.sh
 
   npm-audit:
     # R2 (audit re-run #2, 2026-05-10): gate production-deps advisories.
