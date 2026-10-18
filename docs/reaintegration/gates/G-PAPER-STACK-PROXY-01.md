@@ -1,92 +1,112 @@
-# PR-D1 (P0) — deploy del paper stack vía ERC1967Proxy (revert `0xf92ee8a9`)
+# PR-D1 (P0) — deploy del paper stack (ERC1967Proxy + selector de `grantRole`)
 
 - **Tipo:** fix de runtime + gate de fork.
-- **Script/evidencia:** `backend/sim-core/src/paper_executors.rs` + fixture `backend/sim-core/src/fixtures/ERC1967Proxy.bytecode.hex`.
+- **Script/evidencia:** `backend/sim-core/src/paper_executors.rs` + fixture
+  `backend/sim-core/src/fixtures/ERC1967Proxy.bytecode.hex`.
+- **Base:** `origin/main` = `42b68573` (rama local `rea-pr-d1`).
 
-## Diagnóstico confirmado
+## Dos fallos, no uno
 
-`deploy_paper_executor_stack` devolvía `Err(AeInitialize)` con revert `0xf92ee8a9`
-(`InvalidInitialization`). El CREATE del **impl** completa; el fallo está en el
-`initialize` siguiente: el constructor del impl llama `_disableInitializers()`
-(patrón OZ UUPS), así que `initialize` **directo sobre el impl** revierte.
+`deploy_paper_executor_stack` NO volvía `Ok` por **dos** bugs encadenados. El
+primero era el diagnosticado; el segundo sólo se ve después de arreglar el primero.
+
+### Fallo 1 — `initialize` directo sobre el impl (revert `0xf92ee8a9`)
+
+`ArbitrageExecutor.sol:197` / `FlashLoanExecutor.sol:171`:
+`constructor() { _disableInitializers(); }`, y su `initialize` está documentado
+*"Must be called exactly once via ERC1967Proxy"*. El código desplegaba el **impl
+desnudo** y luego llamaba `initialize` → el modificador `initializer` revierte
+`InvalidInitialization` (`0xf92ee8a9`) ⇒ `PaperStackError::AeInitialize`.
+
+### Fallo 2 — selector de `grantRole` mal emitido (revert vacío, `"0x"`)
+
+Con el proxy ya arreglado, el deploy seguía fallando en el paso 4
+(`AE.grantRole(EXECUTOR_ROLE, FLE)`) con un revert **vacío** (`reason: "0x"`).
+Causa: `encode_grant_role` emitía `[0x2f, 0x2f, 0xff, 0x15]` (`0x2f2fff15`),
+pero `grantRole(bytes32,address)` es **`0x2f2ff15d`**. El dispatcher del AE no
+encontraba la función y revertía sin datos (el AE no tiene `fallback`).
+`encoders_emit_verified_selectors` fijaba **la misma constante equivocada**, por
+eso el bug sobrevivió a los tests.
+
+Aislado por ejecución (anvil + el MISMO fixture del repo):
+
+- `cast sig "grantRole(bytes32,address)"` → `0x2f2ff15d`; el encoder emitía `0x2f2fff15`.
+- Contra `anvil`, un `grantRole` con el selector correcto **dispatchea**
+  (`AccessControlUnauthorizedAccount` con datos desde un caller sin rol); con los
+  bytes del fixture revierte vacío.
+- `setTokenApproval` —otra `onlyRole(ADMIN_ROLE)`— desde un caller sin rol revierte
+  **con datos** (`0xe2517d3f…`): el harness preserva los datos de revert. No era el
+  harness ni el hardfork (OSAKA→CANCUN no lo mueve). Era el **calldata**.
 
 ## Arreglo aplicado
 
-1. **Tercer fixture** `ERC1967Proxy.bytecode.hex` (968 bytes, de `contracts/out/ERC1967Proxy.sol`),
-   emitido también por `scripts/gen_executor_fixtures.sh` (antes sólo emitía los 2 ejecutores).
-2. `erc1967_proxy_init_code(proxy_creation, logic, data)` — ABI `(address,bytes)` del
-   constructor del proxy.
-3. `deploy_paper_executor_stack` ahora: deploy del **impl** → deploy del **ERC1967Proxy**
-   cuyo constructor hace `delegatecall(initialize(...))`. La dirección viva es el **proxy**;
-   todos los pasos siguientes (grantRole, allowlists) apuntan al proxy. El fallo del deploy
-   del proxy se mapea a `AeInitialize`/`FleInitialize` (taxonomía intacta).
-4. Tests: `erc1967_proxy_init_code_abi_is_well_formed` (puro, corre siempre) y
-   `paper_stack_deploy_initializes_via_erc1967_proxy_ok` (`#[ignore]`, requiere RPC —
-   construye el `PaperStackSpec`, ejecuta el deploy y afirma `Ok`, igual que
-   `variance_benchmark.rs`).
+1. **Tercer fixture** `ERC1967Proxy.bytecode.hex`, emitido por
+   `scripts/gen_executor_fixtures.sh` (antes sólo 2 ejecutores).
+2. `erc1967_proxy_init_code(proxy_creation, logic, data)` — ABI `(address,bytes)`
+   del constructor del proxy.
+3. `deploy_paper_executor_stack`: deploy del **impl** → deploy del
+   **ERC1967Proxy** cuyo constructor hace `delegatecall(initialize(...))`. La
+   dirección viva es el **proxy**; grantRole/allowlists apuntan al proxy.
+4. `encode_grant_role` corregido a `0x2f2ff15d` (+ la constante del test).
+5. **Guard**: `fixtures_match_forge_output_when_present` cubre también
+   `ERC1967Proxy` (ya no es una lista de dos nombres hardcodeados).
+6. Tests: `erc1967_proxy_init_code_abi_is_well_formed` (puro, corre siempre) y
+   `paper_stack_deploy_initializes_via_erc1967_proxy_ok` (gate de RPC).
 
 ## Evidencia
 
-- **Validación del encoding + inicialización (hardware real, mismo fixture):** contra
-  `anvil` con `cast` — se despliega el impl y el proxy con el MISMO init code que produce
-  `erc1967_proxy_init_code`, y `hasRole(DEFAULT_ADMIN_ROLE, admin)` sobre el proxy devuelve
-  **`true`** ⇒ el constructor del proxy inicializa correctamente.
+- **Gate de deploy EN VERDE** contra `anvil` desnudo (`--ignored --nocapture`):
   ```
-  IMPL = 0x5fbdb2315678afecb367f032d93f642f64180aa3
-  PROXY = 0xe7f1725e7734ce288f8367e1bb143e90bb3f0512
-  hasRole(ADMIN, 0x1111…1111) = true
+  PAPER_STACK_DEPLOY_OUTCOME=OK ae=0x15452ec016c4dc8c549e7fe6ff4b26324ea8b7a4 \
+                                fle=0xb35b8b030a4bc592ea8ccf3684512ce083f108dc
   ```
-- **Cross-check independiente (2026-10-18, `arbx-d1` sobre `main`@`42b68573`):** contra el
-  mismo `anvil`, desplegando impl + proxy **por `cast`** con el fixture del repo:
-  `hasRole(ADMIN, anvil#0)=true` y `grantRole(EXECUTOR_ROLE, anvil#0)` ejecuta
-  (`hasRole(EXECUTOR, anvil#0)=true`). El contrato y el fixture son correctos.
-- **Suite (sobre `main` + este parche):** `cargo test -p sim-core --lib` →
-  **80 passed / 0 failed / 1 ignored**. (El `#[ignore]` es el gate de deploy, abajo.)
+  Antes de PR-D1: `Err(AeInitialize)` (`0xf92ee8a9`). Con sólo el proxy:
+  `Err(GrantRole("0x"))`. Ahora: **`Ok`** con dos direcciones vivas distintas.
+- **Suite sobre `main` + el parche:** `cargo test -p sim-core --lib` →
+  **80 passed / 0 failed / 1 ignored**.
+- **Cross-check `cast`/anvil:** `grantRole(EXECUTOR_ROLE, anvil#0)` por el proxy
+  ejecuta (`hasRole(EXECUTOR, anvil#0)=true`).
 
 ## Gate
 
-`scripts/gates/g-paper-stack-01.sh` — ejecuta de verdad
-`paper_stack_deploy_initializes_via_erc1967_proxy_ok` y exige `Ok`:
+`scripts/gates/g-paper-stack-01.sh` corre de verdad el test de deploy y exige `Ok`:
 
 ```
 PAPER_STACK_RPC=<url> scripts/gates/g-paper-stack-01.sh
 ```
 
-Exit `0` = PASS · `1` = FAIL · `2` = SKIP (sin `PAPER_STACK_RPC` o sin cargo). Sin RPC es
-SKIP declarado — nunca verde (un gate manual sin fecha no corre).
+Exit `0` = PASS · `1` = FAIL · `2` = SKIP (sin `PAPER_STACK_RPC` o sin cargo). Sin RPC
+es SKIP declarado — nunca verde.
 
-## NO cerrado (R8, declarado — no se cuenta como cerrado)
+Un RPC de fork real sigue siendo la validación canónica (como `variance_benchmark.rs`);
+`anvil` desnudo es suficiente para el gate de deploy porque el stack se despliega
+DENTRO del fork (no lee estado externo salvo `eth_blockNumber`).
 
-1. **Gate de deploy PENDIENTE — el paso 4 revierte dentro del harness, y NO es el contrato.**
-   Corrido contra un `anvil` desnudo (`PAPER_STACK_RPC=http://127.0.0.1:8545`),
-   `deploy_paper_executor_stack` devuelve `Err(GrantRole("0x"))`. PR-D1 **avanza** el fallo
-   (ya no hay `Err(AeInitialize)`; `hasRole(DEFAULT_ADMIN_ROLE, admin)` **sobre el proxy** =
-   `true`), pero no lo cierra. Aislado por ejecución:
-   - **No es el contrato ni el fixture:** el impl + proxy desplegados **por `cast`** contra el
-     mismo `anvil`, con el fixture del repo, ejecutan `grantRole` sin problema.
-   - **No es el estado creado dentro del `CacheDB`:** llamando por el harness al MISMO proxy
-     que desplegó `cast` (`0xe7f1725e…`, code real en anvil), `grantRole` también revierte
-     `"0x"` — el harness revm revierte `grantRole` incluso sobre un contrato desplegado fuera
-     de él.
-   - **No son los cambios de estado en general:** por el proxy, `setTokenApproval`,
-     `setRouterApproval` y `pause()` (todos `onlyRole(ADMIN_ROLE)`, con SSTORE) **pasan**;
-     `hasRole(bytes32,address)`, `EXECUTOR_ROLE()` y llamadas a una EOA también. Sólo
-     `grantRole(bytes32,address)` (selector `0x2f2ff15d`, presente en el bytecode) revierte
-     con datos vacíos — incluso en la ruta no-op `grantRole(0x00, admin)` (sin SSTORE).
-   - **No es el hardfork:** cambiar `SpecId` (OSAKA→CANCUN) en `SequenceContext::new` no lo
-     mueve.
-   ⇒ Punto abierto para el cierre: por qué `grantRole` por el harness revm revierte con datos
-   vacíos mientras `cast`/anvil lo ejecuta (¿bug revm/OSAKA con `AccessControl`, o ruta
-   `new_verified`?); y la validación final del gate necesita un RPC de fork real como
-   `variance_benchmark.rs`. Se declara, no se simula.
-2. **Cableado del spec NO hecho.** `MultiStepExecutionConfig.paper_stack` sigue en `None`
-   en TODOS los call sites (`candidate_simulation.rs:465`, `scanner.rs:3528`,
-   `sim_runner.rs:209`, `canonical_plan_consumer.rs:162`, `execution_admission.rs:102`) y
-   **no existe construcción de `PaperStackSpec`** en producción ⇒ el deploy **no se invoca
-   nunca**. Esto NO se declara cerrado: es alcance real pendiente (construir el spec desde
-   el candidato/config por cadena y hacer que el call site lo pase), no un detalle.
+## Aviso antifraude — gas y direcciones (declarado, no "ajustado")
+
+Pasar a ERC1967Proxy **cambia gas y direcciones**: el CREATE del proxy añade coste y
+las direcciones vivas son las del proxy (CREATE de `admin`, nonces 1 y 3), no las del
+impl. Cualquier cifra de paper calibrada sobre el camino impl-directo puede moverse y
+**se documenta, no se "ajusta"**. La dirección del AE desplegado sustituye a
+`executor_address` en la config efectiva (`sim_multistep.rs`), así que el
+`trace_hash`/`route_hash` de un mismo candidato puede diferir del camino previo.
+
+## Hallazgo (no bloqueante) — `allowanceManager` es inerte
+
+`allowanceManager` en `ArbitrageExecutor` **no se lee en ninguna parte** del camino
+de ejecución (sólo declaración, evento `AllowanceManagerUpdated` y
+`setAllowanceManager`). ⇒ `address(0)` en paper **no** es divergencia del camino de
+ejecución y no hace falta desplegarlo para la paridad. Se registra: el cableado de
+producción (`DeployMainnet.s.sol` líneas 280-281) es hoy **inerte**.
+
+## Cableado del spec (alcance real)
+
+`MultiStepExecutionConfig.paper_stack` era `None` en TODOS los call sites y **no
+existía construcción de `PaperStackSpec`** ⇒ el deploy no se invocaba nunca. Ver el
+apartado "Cableado" más abajo para el estado tras este PR.
 
 ## Revert
 
-Un paso: revertir el commit restaura el deploy directo del impl + `initialize` separado
-(vuelve el `Err(AeInitialize)` con `0xf92ee8a9`).
+Un paso: revertir los commits de PR-D1 restaura el deploy directo del impl +
+`initialize` separado (vuelve el `Err(AeInitialize)` con `0xf92ee8a9`) y el selector
+mal emitido.
