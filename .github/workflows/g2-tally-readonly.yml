@@ -48,6 +48,7 @@ on:
           - simulations_total
           - simulations_pgstat
           - t0_discriminator
+          - redis_discriminator
         required: true
         default: g2_simulations_passed
   pull_request:
@@ -67,10 +68,27 @@ jobs:
   tally:
     name: G2 tally (read-only)
     # Un PR desde un fork no recibe secretos: no se intenta.
-    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    # `redis_discriminator` lo sirve el job de Redis, no este.
+    if: (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'workflow_dispatch' && inputs.tally != 'redis_discriminator')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Self-declare the measurement window and the served identity
+        run: |
+          set -euo pipefail
+          mkdir -p g2-evidence
+          {
+            echo "window_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            SHA=$(curl -s -m 10 -H 'Accept: application/json' https://edge-arbx.ape-tv.net/api/status \
+                  | sed -nE 's/.*"sha":"([0-9a-f]{40})".*/\1/p')
+            echo "served_deploy_sha=${SHA:-unavailable}"
+          } | tee g2-evidence/window.txt
+          {
+            echo "### Channel self-declaration (window + served identity)"
+            echo '```'
+            cat g2-evidence/window.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Assemble the SQL from the CLOSED map and guard it
         id: sql
         env:
@@ -226,6 +244,77 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: g2-tally-${{ github.run_id }}-${{ github.run_attempt }}
+          path: g2-evidence/
+          if-no-files-found: error
+          retention-days: 30
+
+  redis-discriminator:
+    name: sim-ctl stream counters (read-only)
+    # La mitad Redis del discriminador de t0: delta de `entries-read` contra los
+    # INSERTs, mas `XPENDING` como desempate. Comandos FIJOS y de solo lectura.
+    if: (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'workflow_dispatch' && inputs.tally == 'redis_discriminator')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Setup SSH (same mechanism as auto-deploy-vps.yml and t37's probe)
+        env:
+          VPS_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+        run: |
+          set -euo pipefail
+          test -n "$VPS_KEY" && test -n "$VPS_HOST"
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$VPS_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -T 10 -p "$VPS_PORT" -H "$VPS_HOST" > ~/.ssh/known_hosts
+          test -s ~/.ssh/known_hosts
+          echo "ssh material ready (key never echoed)"
+
+      - name: Read the validated stream + consumer group (read-only)
+        env:
+          VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
+          VPS_USER: ${{ secrets.VPS_SSH_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+        run: |
+          set -euo pipefail
+          R=arbitragex-v2-redis-1
+          STREAM=arbx:opps:validated
+          GROUP=sim-ctl-g0
+          mkdir -p g2-evidence
+          # Comandos FIJOS (ningun input se convierte en comando) y todos de LECTURA:
+          # XLEN, XINFO GROUPS/STREAM, XPENDING.
+          rcli() {
+            ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes \
+              "$VPS_USER@$VPS_HOST" "docker exec $R redis-cli $*"
+          }
+          XLEN_V="$(rcli XLEN "$STREAM")"
+          WINDOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          {
+            echo "window_utc=$WINDOW"
+            echo "stream=$STREAM group=$GROUP"
+            echo "XLEN=$XLEN_V"
+            echo "--- XINFO GROUPS $STREAM ---"
+            rcli XINFO GROUPS "$STREAM" || true
+            echo "--- XPENDING $STREAM $GROUP ---"
+            rcli XPENDING "$STREAM" "$GROUP" || true
+          } | tee g2-evidence/redis.txt
+          {
+            echo "### Redis half of the t0 counter discriminator (read-only)"
+            echo '```'
+            cat g2-evidence/redis.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          case "$XLEN_V" in
+            ''|*[!0-9]*) echo "::error::MUTE CHANNEL: XLEN did not return an integer ('$XLEN_V'). An empty/odd body is a non-measurement, not a zero."; exit 1 ;;
+          esac
+          echo "read-only guard OK: fixed read-only commands only; XLEN measured ($XLEN_V)"
+
+      - name: Preserve the evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: g2-redis-${{ github.run_id }}-${{ github.run_attempt }}
           path: g2-evidence/
           if-no-files-found: error
           retention-days: 30
