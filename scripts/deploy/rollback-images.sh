@@ -19,6 +19,8 @@
 #   bash scripts/deploy/rollback-images.sh --list
 #   bash scripts/deploy/rollback-images.sh --gen 20261018T153156Z --dry-run
 #   bash scripts/deploy/rollback-images.sh --gen 20261018T153156Z
+#   bash scripts/deploy/rollback-images.sh --clean --dry-run   # who cleans, after a revert
+#   bash scripts/deploy/rollback-images.sh --clean
 #
 # EXIT CODES: 0 = rolled back (or listed), 1 = refused / failed.
 # This script never touches git, never builds, and never removes a container
@@ -33,6 +35,7 @@ ROLLBACK_SERVICES="${ROLLBACK_SERVICES:-api-server edge frontend searcher-rs sim
 GEN=""
 LIST=0
 DRY_RUN=0
+CLEAN=0
 
 usage() {
   sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
@@ -44,6 +47,7 @@ while [ $# -gt 0 ]; do
     --gen) GEN="${2:-}"; shift 2 ;;
     --list) LIST=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
+    --clean) CLEAN=1; shift ;;
     -h|--help) usage 0 ;;
     *) echo "unknown argument: $1" >&2; usage 1 ;;
   esac
@@ -57,6 +61,26 @@ generations() {
   docker ps -a --filter 'name=arbx-rollback-' --format '{{.Names}}' 2>/dev/null \
     | sed -nE 's/^arbx-rollback-.*-([0-9]{8}T[0-9]{6}Z)$/\1/p' | sort -u
 }
+
+# --clean removes EVERYTHING this mechanism created. OWNERSHIP (ADR-005): after a
+# `git revert` of the deploy hardening, the workflow stops creating keepers but
+# the ones already on disk stay — they age out on their own via the deploy's
+# retention, or the operator removes them here in one step.
+if [ "$CLEAN" -eq 1 ]; then
+  if [ "$DRY_RUN" -eq 1 ]; then
+    say "[dry-run] would remove every docker container labelled arbx.rollback=1 and prune:"
+    docker ps -a --filter 'label=arbx.rollback=1' --format '  {{.Names}}  ({{.Image}})' 2>/dev/null || true
+    say "[dry-run] then: docker image prune -af"
+    exit 0
+  fi
+  n="$(docker ps -a --filter 'label=arbx.rollback=1' -q 2>/dev/null | grep -c . || true)"
+  say "removing ${n} rollback keeper container(s)…"
+  docker ps -a --filter 'label=arbx.rollback=1' -q 2>/dev/null | xargs -r docker rm -f >/dev/null 2>&1 || true
+  docker image ls --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep -E '^arbx-rollback/' \
+    | while read -r ref; do docker image rm "$ref" >/dev/null 2>&1 || true; done || true
+  say "done — remaining keepers: $(docker ps -a --filter 'label=arbx.rollback=1' -q 2>/dev/null | grep -c . || true)"
+  exit 0
+fi
 
 if [ "$LIST" -eq 1 ]; then
   gens="$(generations)"

@@ -136,6 +136,21 @@ today (no capture, no environment key); the rollback script becomes inert (no
 generations are produced) and the gate fails loudly if the capture is removed
 while the script is still advertised.
 
+**The revert does NOT clean what the mechanism already created.** A revert
+restores code; the keepers and `arbx-rollback/*` tags already on the VPS stay
+until something removes them. Ownership, stated explicitly:
+
+- **By itself:** the deploy's bounded retention removes them as newer
+  generations arrive — but only while the code is still deployed. After a
+  revert nothing prunes them, so they would sit there forever.
+- **The operator removes them, in one step:**
+  `bash scripts/deploy/rollback-images.sh --clean --dry-run` (shows what would
+  go) and then `--clean` (removes every container labelled `arbx.rollback=1`,
+  every `arbx-rollback/*` tag, and prunes).
+- **Disk impact if left alone:** up to `ROLLBACK_KEEP` × 12 images; the next
+  `[-1/9]` guard treats them as unused and they become prunable once their
+  keeper is gone.
+
 ## Gate
 
 `bash scripts/gates/g-img-rollback-01.sh` — asserts the capture runs **before**

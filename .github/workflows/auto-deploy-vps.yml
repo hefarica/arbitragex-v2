@@ -162,6 +162,80 @@ jobs:
             exit 1
           fi
           cd "$DEPLOY_PATH"
+          # ═══ G-IMG-ROLLBACK-01 (deploy-hardening-01, 2026-10-18) ═══════════
+          # Capture the CURRENT (pre-deploy) images as one-step rollback points.
+          #
+          # ORDER (auditable in LINE ORDER, not in this comment): this block runs
+          # BEFORE the first `docker image prune` of the run (the [-1/9] disk
+          # guard, below) and BEFORE [6/9] the build. Why it matters here: [6/9]
+          # re-points `arbitragex-v2-<svc>:latest` at the new image and leaves the
+          # previous release DANGLING, and both [-1/9] and [7a-bis] delete
+          # dangling images. The 2026-10-18 read-only census (`audit-vps-wiring`,
+          # run 39143097918) measured 0 tags matching pre-/backup/rollback on the
+          # VPS — there was no image-level way back.
+          #
+          # MECHANISM (the disk guard is NOT weakened): retag the running image
+          # BY ID into `arbx-rollback/<svc>:<gen>` AND `docker create` a keeper
+          # container per image. A CREATED (never started) container references
+          # its image, so `docker image prune -af` — "remove all images not used
+          # by a container" — cannot delete it. The keepers are plain `docker
+          # create` containers: they carry NO compose project label (compose is
+          # never asked to create them), so neither `up --remove-orphans` nor a
+          # future `docker container prune` can orphan them into a state where
+          # the next prune eats the image. The explicit `arbx.rollback=1` label
+          # is what the offline cleanup keys on.
+          #
+          # RETENTION: keep the newest ROLLBACK_KEEP generations (default 3);
+          # older keepers are removed first so their images become prunable again.
+          #
+          # ROLLBACK: docs/adr/005 + scripts/deploy/rollback-images.sh --gen <GEN>.
+          # CLEANUP AFTER A REVERT: `git revert` restores the workflow but does NOT
+          # remove keepers/generations already created — they age out on their own
+          # (the next deploy keeps ROLLBACK_KEEP) or go in one step with:
+          #   docker ps -a --filter 'label=arbx.rollback=1' -q | xargs -r docker rm -f
+          #   docker image prune -af
+          ROLLBACK_KEEP="${ROLLBACK_KEEP:-3}"
+          ROLLBACK_GEN="$(date -u +%Y%m%dT%H%M%SZ)"
+          ROLLBACK_SERVICES="api-server edge frontend searcher-rs sim-ctl relays-client recon selector-api anvil math-engine token-enricher socket-proxy"
+          echo "[0b/9] Capturing image rollback points (gen=${ROLLBACK_GEN}, keep=${ROLLBACK_KEEP}) — BEFORE the disk guard and the build"
+          CAPTURED=0
+          for svc in $ROLLBACK_SERVICES; do
+            cid="$(docker ps -q --filter "name=arbitragex-v2-${svc}-1" | head -1 || true)"
+            if [ -z "$cid" ]; then continue; fi
+            img="$(docker inspect -f '{{.Image}}' "$cid" 2>/dev/null || true)"
+            if [ -z "$img" ]; then continue; fi
+            if ! docker tag "$img" "arbx-rollback/${svc}:${ROLLBACK_GEN}" >/dev/null 2>&1; then continue; fi
+            docker create \
+              --name "arbx-rollback-${svc}-${ROLLBACK_GEN}" \
+              --label arbx.rollback=1 \
+              --label "arbx.rollback.gen=${ROLLBACK_GEN}" \
+              --restart=no \
+              "$img" >/dev/null 2>&1 || true
+            CAPTURED=$((CAPTURED+1))
+          done
+          echo "    rollback points captured: ${CAPTURED} service(s)"
+          # PIPE-ERREXIT HARDENING: the remote script runs `set -euo pipefail`, and
+          # EVERY `grep` below returns 1 when it matches nothing — the normal case
+          # on the FIRST run (no generations yet) and on the last kept generation
+          # (no keeper left to release). Without the trailing `|| true` the
+          # pipeline's non-zero status would abort the deploy under `pipefail`:
+          # the capture would break the very deploy it protects. These are
+          # best-effort housekeeping steps — a failed cleanup must never fail the
+          # release.
+          ROLLBACK_GENS="$(docker ps -a --filter 'label=arbx.rollback=1' --format '{{.Names}}' 2>/dev/null \
+            | sed -nE 's/^arbx-rollback-.*-([0-9]{8}T[0-9]{6}Z)$/\1/p' | sort -u || true)"
+          KEEP_LIST="$(printf '%s\n' "$ROLLBACK_GENS" | grep -v '^$' | tail -n "$ROLLBACK_KEEP" || true)"
+          printf '%s\n' "$ROLLBACK_GENS" | grep -v '^$' | while read -r gen; do
+            if printf '%s\n' "$KEEP_LIST" | grep -qx "$gen"; then continue; fi
+            echo "    releasing rollback gen ${gen} (beyond keep=${ROLLBACK_KEEP})"
+            docker ps -a --filter 'label=arbx.rollback=1' --format '{{.Names}}' 2>/dev/null \
+              | grep -E -- "-${gen}$" | while read -r k; do docker rm -f "$k" >/dev/null 2>&1 || true; done || true
+            docker image ls --format '{{.Repository}}:{{.Tag}}' 2>/dev/null \
+              | grep -E -- "^arbx-rollback/.*:${gen}$" | while read -r ref; do docker image rm "$ref" >/dev/null 2>&1 || true; done || true
+          done || true
+          echo "    rollback generations kept: $(printf '%s\n' "$KEEP_LIST" | grep -c . || true)"
+          # ══════════════════════════════════════════════════════════════════
+
           echo "[-1/9] Disk guard (APT-GPG-02 + DEPLOY-DISK-GUARD-01): freeing build cache and checking free space"
           # DEPLOY-DISK-GUARD-01 (2026-09-27, measured). This guard shipped with
           # `prune -f`, which removes only DANGLING build cache. The cache that
@@ -425,69 +499,6 @@ jobs:
           }
           trap deploy_self_heal EXIT
 
-          # ═══ G-IMG-ROLLBACK-01 (deploy-hardening-01, 2026-10-18) ═══════════
-          # Capture the CURRENT (pre-deploy) images as one-step rollback points.
-          #
-          # WHY HERE: [6/9] runs `docker compose build --no-cache <svc>`, which
-          # re-points `arbitragex-v2-<svc>:latest` at the NEW image and leaves the
-          # previous release DANGLING — and both [-1/9] and [7a-bis] prune
-          # dangling images. Before this change the previous release was gone the
-          # moment the new one was built; the 2026-10-18 read-only census
-          # (`audit-vps-wiring`, run 39143097918) measured **0 tags matching
-          # pre-/backup/rollback** on the VPS, i.e. no image-level rollback.
-          #
-          # MECHANISM (no change to the disk guard): retag the running image BY
-          # ID into the `arbx-rollback/<svc>:<gen>` namespace AND `docker create`
-          # a keeper container per image. A CREATED (never started) container
-          # references its image, and `docker image prune -af` — "remove all
-          # images not used by a container" — therefore CANNOT delete it. The
-          # guard keeps freeing exactly the space it freed before; this mechanism
-          # rides on top of it. Keeper containers carry no compose project label,
-          # so `up --remove-orphans` never removes them.
-          #
-          # RETENTION: keep the newest ROLLBACK_KEEP generations (default 3).
-          # Older keeper containers are removed first, which makes their images
-          # prunable again for the next [-1/9] guard.
-          #
-          # ROLLBACK (one step, documented in docs/adr/005 and scripted in
-          # scripts/deploy/rollback-images.sh): retag the rollback image back to
-          # arbitragex-v2-<svc>:latest and `up -d --no-build --force-recreate`.
-          ROLLBACK_KEEP="${ROLLBACK_KEEP:-3}"
-          ROLLBACK_GEN="$(date -u +%Y%m%dT%H%M%SZ)"
-          ROLLBACK_SERVICES="api-server edge frontend searcher-rs sim-ctl relays-client recon selector-api anvil math-engine token-enricher socket-proxy"
-          echo "[5b/9] Capturing image rollback points (gen=${ROLLBACK_GEN}, keep=${ROLLBACK_KEEP})"
-          CAPTURED=0
-          for svc in $ROLLBACK_SERVICES; do
-            cid="$(docker ps -q --filter "name=arbitragex-v2-${svc}-1" | head -1 || true)"
-            if [ -z "$cid" ]; then continue; fi
-            img="$(docker inspect -f '{{.Image}}' "$cid" 2>/dev/null || true)"
-            if [ -z "$img" ]; then continue; fi
-            if ! docker tag "$img" "arbx-rollback/${svc}:${ROLLBACK_GEN}" >/dev/null 2>&1; then continue; fi
-            docker create --name "arbx-rollback-${svc}-${ROLLBACK_GEN}" "$img" >/dev/null 2>&1 || true
-            CAPTURED=$((CAPTURED+1))
-          done
-          echo "    rollback points captured: ${CAPTURED} service(s)"
-          ROLLBACK_GENS="$(docker ps -a --filter 'name=arbx-rollback-' --format '{{.Names}}' 2>/dev/null \
-            | sed -nE 's/^arbx-rollback-.*-([0-9]{8}T[0-9]{6}Z)$/\1/p' | sort -u || true)"
-          KEEP_LIST="$(printf '%s\n' "$ROLLBACK_GENS" | grep -v '^$' | tail -n "$ROLLBACK_KEEP" || true)"
-          # PIPE-ERREXIT HARDENING: the remote script runs `set -euo pipefail`, and
-          # EVERY `grep` below returns 1 when it matches nothing — which is the
-          # normal case on a first run (no generations yet) and on the last kept
-          # generation (no keeper left to release). Without the trailing `|| true`
-          # the pipeline's non-zero status would abort the deploy under
-          # `pipefail`, i.e. the capture would break the very deploy it protects.
-          # These are best-effort housekeeping steps: a failed cleanup must never
-          # fail the release.
-          printf '%s\n' "$ROLLBACK_GENS" | grep -v '^$' | while read -r gen; do
-            if printf '%s\n' "$KEEP_LIST" | grep -qx "$gen"; then continue; fi
-            echo "    releasing rollback gen ${gen} (beyond keep=${ROLLBACK_KEEP})"
-            docker ps -a --filter 'name=arbx-rollback-' --format '{{.Names}}' 2>/dev/null \
-              | grep -E -- "-${gen}$" | while read -r k; do docker rm -f "$k" >/dev/null 2>&1 || true; done || true
-            docker image ls --format '{{.Repository}}:{{.Tag}}' 2>/dev/null \
-              | grep -E -- "^arbx-rollback/.*:${gen}$" | while read -r ref; do docker image rm "$ref" >/dev/null 2>&1 || true; done || true
-          done || true
-          echo "    rollback generations kept: $(printf '%s\n' "$KEEP_LIST" | grep -c . || true)"
-          # ══════════════════════════════════════════════════════════════════
 
           echo "[6/9] Building core + hot-path services (sequential — lower peak disk/RAM)..."
           # RULE 03: no-cache, explicit environment, one service build at a time.
