@@ -812,7 +812,11 @@ mod tests {
         let proxy = vec![0x60u8, 0x80, 0x60, 0x40, 0x52]; // stand-in creation code
         let logic = Address::from([0x11u8; 20]);
         let data = encode_initialize_admin(Address::from([0x22u8; 20]));
-        assert_eq!(data.len(), 36, "initialize(address) calldata is 4 + 32 bytes");
+        assert_eq!(
+            data.len(),
+            36,
+            "initialize(address) calldata is 4 + 32 bytes"
+        );
 
         let cd = erc1967_proxy_init_code(&proxy, logic, &data);
 
@@ -826,7 +830,11 @@ mod tests {
         // dynamic tail: length word then the data, zero-padded to 32 bytes.
         assert_eq!(&tail[64 + 24..64 + 32], &(data.len() as u64).to_be_bytes());
         assert_eq!(&tail[96..96 + data.len()], data.as_slice());
-        assert_eq!((cd.len() - proxy.len()) % 32, 0, "ABI tail is 32-byte aligned");
+        assert_eq!(
+            (cd.len() - proxy.len()) % 32,
+            0,
+            "ABI tail is 32-byte aligned"
+        );
         assert!(cd.len() > proxy.len() + 96, "data must be present");
 
         // The committed fixture decodes and is non-empty.
