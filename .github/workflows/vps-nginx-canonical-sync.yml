@@ -53,7 +53,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - name: Guard de confirmación (alcanzable: sin `if` en el job)
+      - name: "Guard de confirmación (alcanzable: sin `if` en el job)"
         run: |
           if [ "${{ inputs.confirm }}" != "SYNC" ]; then
             echo "::error::confirm debe ser SYNC (recibido: '${{ inputs.confirm }}')"
@@ -176,6 +176,14 @@ jobs:
           # --- Comentar (no borrar) el add_header CSP driftado, resiguiendo symlinks ---
           TARGETS=\$(grep -rlE "^[[:space:]]*add_header[^;]*Content-Security-Policy" \
                      /etc/nginx/nginx.conf /etc/nginx/conf.d /etc/nginx/sites-enabled /etc/nginx/sites-available 2>/dev/null || true)
+          # v3 (revisión del operador): DEDUPE por fichero REAL. `sites-enabled/x` es un
+          # symlink a `sites-available/x`, así que `grep -rl` lista el MISMO fichero real dos
+          # veces. Sin dedupe, la 2ª iteración hace `cp -a` sobre el fichero YA modificado y
+          # pisa el backup prístino ⇒ si `nginx -t` falla, el "rollback" restaura la versión
+          # con el drift. Resolver a ruta real y ordenar -u antes del bucle.
+          if [ -n "\$TARGETS" ]; then
+            TARGETS=\$(printf '%s\n' \$TARGETS | xargs -r readlink -f | sort -u)
+          fi
           CHANGED=0
           for f in \$TARGETS; do
             REAL=\$(readlink -f "\$f")
@@ -245,3 +253,15 @@ jobs:
           echo "Si algún paso falló, el estado NO es 'sin cambios': puede quedar el canónico"
           echo "instalado y el drift presente (o al revés). Revisar /tmp/nginx-evidence/aplicar.txt"
           echo "y las cabeceras del artefacto antes de reintentar."
+          # v3 (revisión del operador): el estado parcial debe FALLAR el run, no sólo imprimirse.
+          #   ROLLBACK: `nginx -t` falló y se restauraron backups ⇒ el objetivo NO se logró.
+          #   ABORT:    el delta vivo-vs-canónico NO era sólo el drift CSP ⇒ el canónico no se
+          #             instaló (el drift sí se comentó en sitio) ⇒ requiere revisión humana.
+          # Con `if: always()`, esto convierte en rojo un run que de otro modo quedaría verde
+          # con el canónico instalado y el drift presente (o al revés).
+          if [ -f /tmp/nginx-evidence/aplicar.txt ] && grep -qE 'ROLLBACK:|ABORT install' /tmp/nginx-evidence/aplicar.txt; then
+            echo "::error::estado PARCIAL — la evidencia de 'aplicar' contiene ROLLBACK/ABORT; el run NO es 'sin cambios'."
+            grep -nE 'ROLLBACK:|ABORT install' /tmp/nginx-evidence/aplicar.txt
+            exit 1
+          fi
+          echo "sin señales de estado parcial en la evidencia de 'aplicar'."
