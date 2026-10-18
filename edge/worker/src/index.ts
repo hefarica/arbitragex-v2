@@ -566,7 +566,7 @@ function applyTopologySteroids(context: Record<string, unknown>): void {
 // navigation). JSON ⇐ Accept: application/json, ?format=json, or a CLI UA
 // (curl/httpie/wget/...). HTML ⇐ Accept includes text/html and not json. Default
 // (ambiguous) → JSON, preserving the exact legacy API-client behaviour.
-function statusWantsJson(c: import("hono").Context<{ Bindings: Env }>): boolean {
+export function statusWantsJson(c: import("hono").Context<{ Bindings: Env }>): boolean {
   const fmt = (new URL(c.req.url).searchParams.get("format") ?? "").toLowerCase();
   if (fmt === "json") return true;
   const ua = (c.req.header("user-agent") ?? "").toLowerCase();
@@ -580,6 +580,24 @@ function statusWantsJson(c: import("hono").Context<{ Bindings: Env }>): boolean 
   return true;
 }
 
+// API-JSON-01 (2026-10-18) — `/api/*` is an API surface by construction: it is
+// NOT negotiated. Measured on both hosts before this change: the browser
+// StatusClient poll of `/api/status` (UA Chrome + `Accept: text/html`, forwarded
+// through Next's /api/* rewrite) got a 404 `html_served_by_spa`, while the same
+// URL with a curl UA got 200 — because the negotiation was written for the bare
+// `/status` PAGE route (which collides with Next's /status page) and then reused
+// for the API alias.
+//
+// `edge/dev-local` already proxied `/api/status` unconditionally and documented
+// it as "Mirrors edge/worker/src/index.ts (Cloudflare Hono)". It did not: this
+// makes that mirror TRUE instead of aspirational, by exempting the `/api/` prefix
+// here rather than at each call site. Negotiation for the bare `/status` is
+// unchanged.
+export function pathWantsJson(c: import("hono").Context<{ Bindings: Env }>): boolean {
+  if (new URL(c.req.url).pathname.startsWith("/api/")) return true;
+  return statusWantsJson(c);
+}
+
 // FE-CRIT-01 — content-negotiated /status. API clients get the proxied backend
 // JSON verbatim (unchanged). For browser navigations (Accept: text/html) the
 // worker does NOT shadow the SPA with JSON — it returns the same not_found JSON
@@ -587,7 +605,7 @@ function statusWantsJson(c: import("hono").Context<{ Bindings: Env }>): boolean 
 // /status page. The worker has no frontend upstream binding, so this is the
 // honest "I don't own the HTML route" signal (NEVER a fabricated 200).
 app.get("/status", (c) => {
-  if (statusWantsJson(c)) return proxy(c, "/status", "arbx:cache:status", 2);
+  if (pathWantsJson(c)) return proxy(c, "/status", "arbx:cache:status", 2);
   return c.json({ error: "not_found", detail: "html_served_by_spa" }, 404);
 });
 // Alias under /api/* so the browser StatusClient poll reaches the edge via
@@ -595,7 +613,9 @@ app.get("/status", (c) => {
 // page route, so the client polls /api/status. Upstream target unchanged
 // (api-server /status); SSR keeps using INTERNAL_EDGE_URL/status directly.
 app.get("/api/status", (c) => {
-  if (statusWantsJson(c)) return proxy(c, "/status", "arbx:cache:status", 2);
+  // API-JSON-01: `/api/*` never negotiates — always the backend JSON. Never the
+  // html_served_by_spa 404 (see pathWantsJson above).
+  if (pathWantsJson(c)) return proxy(c, "/status", "arbx:cache:status", 2);
   return c.json({ error: "not_found", detail: "html_served_by_spa" }, 404);
 });
 // FE-CRIT — system manifest read surface. api-server mounts these at /api/system/*

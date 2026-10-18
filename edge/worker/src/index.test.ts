@@ -10,7 +10,7 @@
  *      put lands) and the max+1-th request in a window gets 429.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import app from "./index.js";
+import app, { pathWantsJson, statusWantsJson } from "./index.js";
 
 // Hono's app.request signature: (input, requestInit, Env, executionCtx).
 // Passing env as the 3rd arg and NO executionCtx mirrors the node-server
@@ -173,5 +173,60 @@ describe("WO-10: checkRl() deferred counter", () => {
     }
 
     expect(last).toBe(429);
+  });
+});
+
+/**
+ * API-JSON-01 (2026-10-18) — `/api/*` is an API surface by construction: it is
+ * NOT content-negotiated.
+ *
+ * Regression protected here (measured on both hosts before the fix): the browser
+ * StatusClient polls `/api/status` through Next's /api/* rewrite, so it sends a
+ * Chrome UA and `Accept: text/html`. The negotiation written for the bare
+ * `/status` PAGE route was reused for the API alias, so that poll got a
+ * 404 `html_served_by_spa` while a curl UA on the same URL got 200.
+ *
+ * `edge/dev-local` already proxied `/api/status` unconditionally and documented
+ * itself as a mirror of this worker; these cases keep the mirror honest.
+ * Negotiation for the bare `/status` must be untouched.
+ */
+describe("API-JSON-01 — /api/* never negotiates", () => {
+  type Ctx = Parameters<typeof pathWantsJson>[0];
+  const ctx = (path: string, headers: Record<string, string>): Ctx =>
+    ({
+      req: {
+        url: `https://edge.example${path}`,
+        header: (name: string) => headers[name.toLowerCase()],
+      },
+    }) as unknown as Ctx;
+
+  const BROWSER = {
+    "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0 Safari/537.36",
+    accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  };
+  const CURL = { "user-agent": "curl/8.4.0", accept: "*/*" };
+
+  it("browser poll of /api/status wants JSON (the 404 regression)", () => {
+    expect(pathWantsJson(ctx("/api/status", BROWSER))).toBe(true);
+    // and it is the API-prefix rule doing it, not the negotiation:
+    expect(statusWantsJson(ctx("/api/status", BROWSER))).toBe(false);
+  });
+
+  it("any /api/* path wants JSON regardless of UA/Accept", () => {
+    expect(pathWantsJson(ctx("/api/system/drift", BROWSER))).toBe(true);
+    expect(pathWantsJson(ctx("/api/v1/health", { ...BROWSER, accept: "text/html" }))).toBe(true);
+  });
+
+  it("the bare /status PAGE route still negotiates (SPA preserved)", () => {
+    expect(pathWantsJson(ctx("/status", BROWSER))).toBe(false);
+    expect(pathWantsJson(ctx("/status", CURL))).toBe(true);
+    expect(pathWantsJson(ctx("/status", { ...BROWSER, accept: "application/json" }))).toBe(true);
+    expect(pathWantsJson(ctx("/status?format=json", BROWSER))).toBe(true);
+  });
+
+  it("a route that merely CONTAINS 'api' is not exempt", () => {
+    // Only the `/api/` PREFIX is an API surface; `/apiary` is not.
+    expect(pathWantsJson(ctx("/apiary", BROWSER))).toBe(false);
+    expect(pathWantsJson(ctx("/status/api", BROWSER))).toBe(false);
   });
 });
