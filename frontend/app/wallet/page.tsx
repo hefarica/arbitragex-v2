@@ -22,6 +22,7 @@ import { AccountPopover } from "@/components/wallet/AccountPopover";
 import { WalletIntentPanel } from "@/components/wallet/WalletIntentPanel";
 import { ContractAdminPanel } from "@/components/wallet/ContractAdminPanel";
 import { WalletOnboardingGuard } from "@/components/wallet/WalletOnboardingGuard";
+import { WalletConnectDegradedNotice } from "@/components/wallet/WalletConnectDegradedNotice";
 import { SiweAuthPanel } from "@/app/wallet/SiweAuthPanel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -45,6 +46,10 @@ export default function WalletPage() {
             RainbowKit modal as the disconnected entry point; the header button below only surfaces
             connected-state account/chain controls. */}
         <WalletOnboardingGuard />
+
+        {/* PR-A condition (c): declare the degraded WalletConnect state in the FIRST
+            render (server-rendered) — never silent, never fabricated. */}
+        <WalletConnectDegradedNotice />
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           <WalletStatusCard />

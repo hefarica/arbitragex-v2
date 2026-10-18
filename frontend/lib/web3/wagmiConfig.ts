@@ -9,10 +9,22 @@
  * hydration mismatches. The Web3Provider hydrates with `cookieToInitialState`.
  *
  * No-hardcode (RULE 00): the WalletConnect project id, the enabled chains, and
- * the default chain all come from env. If NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID
- * is absent the WalletConnect connector degrades to a fail-honest
- * `walletconnect_project_id_missing` state — injected / MetaMask via EIP-6963
- * still works.
+ * the default chain all come from env.
+ *
+ * PR-A (2026-10-18) — SEV-1 FIX. Before this change the absent-config path fed
+ * the old placeholder project-id literal into
+ * RainbowKit's `getDefaultConfig` as the `projectId`. RainbowKit 2.2.x builds
+ * its WalletConnect connector on Reown AppKit, so the page initialised that SDK
+ * and the live site called PRODUCTION endpoints with a bogus id:
+ *   POST https://pulse.walletconnect.org/e?projectId=<placeholder>&st=appkit  -> 400
+ *   GET  https://api.web3modal.org/appkit/v1/config?projectId=<placeholder>                      -> 403
+ *
+ * Now, when no real project id is configured we build the SAME RainbowKit
+ * config but with a wallet list that contains NO WalletConnect/Reown wallet
+ * (`injectedWallet` only). No WalletConnect connector is created, therefore no
+ * AppKit SDK is initialised and no upstream call happens — injected / EIP-6963
+ * wallets keep working. The degraded state is declared in the DOM by the
+ * server-rendered `WalletConnectDegradedNotice`.
  *
  * SECURITY: this config NEVER provisions a signer key. It only lets the browser
  * wallet expose its address read-only. No private key, no broadcast path here.
@@ -20,43 +32,36 @@
 
 import { cookieStorage, createStorage } from "wagmi";
 import { getDefaultConfig } from "@rainbow-me/rainbowkit";
+import { injectedWallet } from "@rainbow-me/rainbowkit/wallets";
 import type { Chain } from "viem";
 
 import { resolveSupportedChains } from "./chains";
+import {
+  walletConnectEnabled,
+  walletConnectProjectId,
+  walletConnectStatus,
+  WALLETCONNECT_NOT_CONFIGURED,
+} from "./walletconnect-config";
 
-/** Whether wallet connect (the dApp surface) is enabled at all. */
-export function walletConnectEnabled(): boolean {
-  const v = (process.env.NEXT_PUBLIC_WALLET_CONNECT_ENABLED ?? "").trim().toLowerCase();
-  // Default ON (the page is always safe-gated). Only an explicit "false"/"0"/"off"
-  // disables the connect affordances (they then render as a disabled shell).
-  return !(v === "false" || v === "0" || v === "off");
-}
-
-/** The WalletConnect (Reown) project id, or null when not configured. */
-export function walletConnectProjectId(): string | null {
-  const v = (process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ?? "").trim();
-  return v.length > 0 ? v : null;
-}
-
-/**
- * Fail-honest reason for a degraded WalletConnect connector. When the project id
- * is missing, WalletConnect is unavailable but injected/EIP-6963 wallets still
- * work — the UI surfaces this reason instead of silently breaking.
- */
-export function walletConnectStatus(): { available: boolean; reason: string | null } {
-  if (walletConnectProjectId()) return { available: true, reason: null };
-  return { available: false, reason: "walletconnect_project_id_missing" };
-}
+// Re-exported so existing client imports keep working with ONE definition.
+export {
+  walletConnectEnabled,
+  walletConnectProjectId,
+  walletConnectStatus,
+  WALLETCONNECT_NOT_CONFIGURED,
+};
 
 let _config: ReturnType<typeof getDefaultConfig> | null = null;
 
 /**
- * Build (and memoise) the wagmi config. getDefaultConfig wires the standard
- * RainbowKit connectors (injected/EIP-6963 + WalletConnect when the project id
- * is present). We pass a placeholder project id only to satisfy the type when
- * WalletConnect is disabled; the WalletConnect connector is non-functional
- * without a real id, which is exactly the fail-honest degradation we want
- * (injected wallets remain fully functional).
+ * Build (and memoise) the wagmi config.
+ *
+ * Configured   → RainbowKit's default wallet list (includes WalletConnect).
+ * Not configured → same RainbowKit surface with an injected-only wallet list,
+ *                  so the WalletConnect SDK is never instantiated. `projectId`
+ *                  is passed as the empty string: it is unused by the injected
+ *                  wallet, and passing a placeholder is exactly the bug this
+ *                  fix removes.
  */
 export function getWagmiConfig() {
   if (_config) return _config;
@@ -64,14 +69,32 @@ export function getWagmiConfig() {
   // getDefaultConfig requires a non-empty chains tuple.
   const chainTuple = (chains.length > 0 ? chains : resolveSupportedChains()) as readonly [Chain, ...Chain[]];
 
+  const projectId = walletConnectProjectId();
+  if (projectId) {
+    _config = getDefaultConfig({
+      appName: "QuantumX — Wallet (read-only)",
+      projectId,
+      chains: chainTuple,
+      ssr: true,
+      storage: createStorage({ storage: cookieStorage }),
+    });
+    return _config;
+  }
+
   _config = getDefaultConfig({
     appName: "QuantumX — Wallet (read-only)",
-    // A real project id enables WalletConnect; the placeholder leaves it
-    // degraded (fail-honest), injected/EIP-6963 wallets still connect.
-    projectId: walletConnectProjectId() ?? "walletconnect_project_id_missing",
+    // Unused by the injected-only wallet list below; never a placeholder that
+    // reaches an upstream SDK.
+    projectId: "",
+    wallets: [{ groupName: "Browser", wallets: [injectedWallet] }],
     chains: chainTuple,
     ssr: true,
     storage: createStorage({ storage: cookieStorage }),
   });
   return _config;
+}
+
+/** True when a WalletConnect/Reown connector exists in the built config. */
+export function walletConnectConnectorAvailable(): boolean {
+  return walletConnectProjectId() !== null;
 }

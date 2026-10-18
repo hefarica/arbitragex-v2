@@ -26,7 +26,7 @@ export function WalletConnectConfirm({
   connecting: boolean;
   /** False when no live wagmi connector resolves for this wallet → fail-honest, no dead button. */
   connectable?: boolean;
-  /** Machine reason when not connectable (e.g. no_matching_connector / walletconnect_project_id_missing). */
+  /** Machine reason when not connectable (e.g. no_matching_connector / walletconnect_not_configured). */
   reason?: string | null;
   onConnect: () => void;
   onCancel: () => void;

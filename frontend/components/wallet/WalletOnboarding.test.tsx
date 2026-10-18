@@ -100,13 +100,13 @@ describe("WalletConnectConfirm (SSR)", () => {
         entry={wc}
         connecting={false}
         connectable={false}
-        reason="walletconnect_project_id_missing"
+        reason="walletconnect_not_configured"
         onConnect={() => {}}
         onCancel={() => {}}
       />,
     );
     expect(html).toContain("wallet-connect-unavailable");
-    expect(html).toContain("walletconnect_project_id_missing");
+    expect(html).toContain("walletconnect_not_configured");
     expect(html).toContain('aria-disabled="true"');
   });
 });

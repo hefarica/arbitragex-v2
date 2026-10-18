@@ -17,7 +17,7 @@ describe("walletConnectStatus — fail-honest WalletConnect degradation", () => 
   it("absent project id → unavailable with the honest machine reason", () => {
     delete process.env[KEY];
     expect(walletConnectProjectId()).toBeNull();
-    expect(walletConnectStatus()).toEqual({ available: false, reason: "walletconnect_project_id_missing" });
+    expect(walletConnectStatus()).toEqual({ available: false, reason: "walletconnect_not_configured" });
   });
 
   it("present project id → available, no reason", () => {
