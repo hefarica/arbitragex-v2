@@ -2,6 +2,18 @@ name: Auto-Deploy VPS (Post-E2E)
 
 # Every deploy, including manual dispatch, requires same-SHA main-push gates.
 # A missing, failed, stale or cancelled validation never authorizes deployment.
+#
+# ── DEPLOY HARDENING RULES (deploy-hardening-01, 2026-10-18) ─────────────────
+# G-IMG-ROLLBACK-01 — every deploy first captures the running images as
+#   `arbx-rollback/<svc>:<gen>` + a keeper container, so any release can be
+#   rolled back one step at image level (see [5b/9] and docs/adr/005). The
+#   disk guard is NOT weakened; keeper containers make the images unprunable.
+# G-DEPLOY-ENV-01 — the deploy job runs in the GitHub `production` environment:
+#   deployments are recorded and the human brake (required reviewers) lives
+#   there, not in this file.
+# G-DEPLOY-TRUTH-01 — no step may report success it did not measure; the
+#   served-identity verification stays mandatory (see DEPLOY_POSTCHECK_COMPLETE).
+# ────────────────────────────────────────────────────────────────────────────
 on:
   push:
     branches: [main]
@@ -41,6 +53,21 @@ jobs:
     runs-on: ubuntu-latest
     needs: wait-for-gates
     if: ${{ github.ref == 'refs/heads/main' }}
+    # G-DEPLOY-ENV-01 (deploy-hardening-01, 2026-10-18) — the deploy job now runs
+    # inside the GitHub `production` ENVIRONMENT, the same one `deploy.yml` uses.
+    # WHY: (a) every production deploy is recorded as a deployment (who/when/sha,
+    # with a rollback trail), (b) secrets can be scoped to the environment instead
+    # of the whole repo, and (c) the environment is the SINGLE documented place to
+    # attach a human brake.
+    # BRAKE (documented, OFF by default): add yourself as a *required reviewer* on
+    # the `production` environment and this job will wait for an approval before
+    # SSH. It is deliberately NOT enabled: the operator's decision is auto-deploy
+    # ("déjalo activo"), so production stays automatic. To turn the brake on/off,
+    # change the environment's protection rules only — never this workflow.
+    # Verified 2026-10-18: the `production` environment currently has NO protection
+    # rules, so adding this key does not change today's behaviour.
+    environment:
+      name: production
     # DEPLOY-BUDGET-01 (t199, 2026-10-08) — el techo se justifica con MEDICION.
     # El step `Deploy to VPS via SSH` hace 12 `docker compose build --no-cache`
     # EN SERIE (paso [6/9], lineas 318-323: "sequential — lower peak disk/RAM",
@@ -135,6 +162,80 @@ jobs:
             exit 1
           fi
           cd "$DEPLOY_PATH"
+          # ═══ G-IMG-ROLLBACK-01 (deploy-hardening-01, 2026-10-18) ═══════════
+          # Capture the CURRENT (pre-deploy) images as one-step rollback points.
+          #
+          # ORDER (auditable in LINE ORDER, not in this comment): this block runs
+          # BEFORE the first `docker image prune` of the run (the [-1/9] disk
+          # guard, below) and BEFORE [6/9] the build. Why it matters here: [6/9]
+          # re-points `arbitragex-v2-<svc>:latest` at the new image and leaves the
+          # previous release DANGLING, and both [-1/9] and [7a-bis] delete
+          # dangling images. The 2026-10-18 read-only census (`audit-vps-wiring`,
+          # run 39143097918) measured 0 tags matching pre-/backup/rollback on the
+          # VPS — there was no image-level way back.
+          #
+          # MECHANISM (the disk guard is NOT weakened): retag the running image
+          # BY ID into `arbx-rollback/<svc>:<gen>` AND `docker create` a keeper
+          # container per image. A CREATED (never started) container references
+          # its image, so `docker image prune -af` — "remove all images not used
+          # by a container" — cannot delete it. The keepers are plain `docker
+          # create` containers: they carry NO compose project label (compose is
+          # never asked to create them), so neither `up --remove-orphans` nor a
+          # future `docker container prune` can orphan them into a state where
+          # the next prune eats the image. The explicit `arbx.rollback=1` label
+          # is what the offline cleanup keys on.
+          #
+          # RETENTION: keep the newest ROLLBACK_KEEP generations (default 3);
+          # older keepers are removed first so their images become prunable again.
+          #
+          # ROLLBACK: docs/adr/005 + scripts/deploy/rollback-images.sh --gen <GEN>.
+          # CLEANUP AFTER A REVERT: `git revert` restores the workflow but does NOT
+          # remove keepers/generations already created — they age out on their own
+          # (the next deploy keeps ROLLBACK_KEEP) or go in one step with:
+          #   docker ps -a --filter 'label=arbx.rollback=1' -q | xargs -r docker rm -f
+          #   docker image prune -af
+          ROLLBACK_KEEP="${ROLLBACK_KEEP:-3}"
+          ROLLBACK_GEN="$(date -u +%Y%m%dT%H%M%SZ)"
+          ROLLBACK_SERVICES="api-server edge frontend searcher-rs sim-ctl relays-client recon selector-api anvil math-engine token-enricher socket-proxy"
+          echo "[0b/9] Capturing image rollback points (gen=${ROLLBACK_GEN}, keep=${ROLLBACK_KEEP}) — BEFORE the disk guard and the build"
+          CAPTURED=0
+          for svc in $ROLLBACK_SERVICES; do
+            cid="$(docker ps -q --filter "name=arbitragex-v2-${svc}-1" | head -1 || true)"
+            if [ -z "$cid" ]; then continue; fi
+            img="$(docker inspect -f '{{.Image}}' "$cid" 2>/dev/null || true)"
+            if [ -z "$img" ]; then continue; fi
+            if ! docker tag "$img" "arbx-rollback/${svc}:${ROLLBACK_GEN}" >/dev/null 2>&1; then continue; fi
+            docker create \
+              --name "arbx-rollback-${svc}-${ROLLBACK_GEN}" \
+              --label arbx.rollback=1 \
+              --label "arbx.rollback.gen=${ROLLBACK_GEN}" \
+              --restart=no \
+              "$img" >/dev/null 2>&1 || true
+            CAPTURED=$((CAPTURED+1))
+          done
+          echo "    rollback points captured: ${CAPTURED} service(s)"
+          # PIPE-ERREXIT HARDENING: the remote script runs `set -euo pipefail`, and
+          # EVERY `grep` below returns 1 when it matches nothing — the normal case
+          # on the FIRST run (no generations yet) and on the last kept generation
+          # (no keeper left to release). Without the trailing `|| true` the
+          # pipeline's non-zero status would abort the deploy under `pipefail`:
+          # the capture would break the very deploy it protects. These are
+          # best-effort housekeeping steps — a failed cleanup must never fail the
+          # release.
+          ROLLBACK_GENS="$(docker ps -a --filter 'label=arbx.rollback=1' --format '{{.Names}}' 2>/dev/null \
+            | sed -nE 's/^arbx-rollback-.*-([0-9]{8}T[0-9]{6}Z)$/\1/p' | sort -u || true)"
+          KEEP_LIST="$(printf '%s\n' "$ROLLBACK_GENS" | grep -v '^$' | tail -n "$ROLLBACK_KEEP" || true)"
+          printf '%s\n' "$ROLLBACK_GENS" | grep -v '^$' | while read -r gen; do
+            if printf '%s\n' "$KEEP_LIST" | grep -qx "$gen"; then continue; fi
+            echo "    releasing rollback gen ${gen} (beyond keep=${ROLLBACK_KEEP})"
+            docker ps -a --filter 'label=arbx.rollback=1' --format '{{.Names}}' 2>/dev/null \
+              | grep -E -- "-${gen}$" | while read -r k; do docker rm -f "$k" >/dev/null 2>&1 || true; done || true
+            docker image ls --format '{{.Repository}}:{{.Tag}}' 2>/dev/null \
+              | grep -E -- "^arbx-rollback/.*:${gen}$" | while read -r ref; do docker image rm "$ref" >/dev/null 2>&1 || true; done || true
+          done || true
+          echo "    rollback generations kept: $(printf '%s\n' "$KEEP_LIST" | grep -c . || true)"
+          # ══════════════════════════════════════════════════════════════════
+
           echo "[-1/9] Disk guard (APT-GPG-02 + DEPLOY-DISK-GUARD-01): freeing build cache and checking free space"
           # DEPLOY-DISK-GUARD-01 (2026-09-27, measured). This guard shipped with
           # `prune -f`, which removes only DANGLING build cache. The cache that
@@ -397,6 +498,7 @@ jobs:
             deploy_completion_guard "$rc"
           }
           trap deploy_self_heal EXIT
+
 
           echo "[6/9] Building core + hot-path services (sequential — lower peak disk/RAM)..."
           # RULE 03: no-cache, explicit environment, one service build at a time.
