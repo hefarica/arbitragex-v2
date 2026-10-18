@@ -298,6 +298,20 @@ pub struct PaperExecutorStack {
 /// flash dispatch to pay gas.
 pub const PAPER_ADMIN_ETH_SEED_WEI: u128 = 1_000_000_000_000_000_000; // 1 ETH
 
+/// PR-D2 (2026-10-18): maximum per-transaction gas the paper stack will ask
+/// for. EIP-7825 caps a single transaction's gas limit at `2^24 = 16_777_216`
+/// from the OSAKA fork on, and the REVM transactor REJECTS a transaction whose
+/// gas limit exceeds that cap *before* executing it (`transaction gas limit
+/// (30000000) is greater than the cap (16777216)`). The paper `SequenceContext`
+/// pins `SpecId::OSAKA` regardless of the forked block, so the cap always
+/// applies. `searcher-rs::scanner` passed `gas_limit_per_step = 30_000_000`,
+/// which made a wired `PAPER_STACK_DEPLOY` unusable — the defect PR-D2 fixes.
+///
+/// Every spec built through [`PaperStackSpec::for_round_trip`] is capped here,
+/// one notch below the consensus cap (the same margin the verified path keeps:
+/// `verified_simulation` caps at `min(gas_limit, 16_777_216)`).
+pub const PAPER_STACK_MAX_TX_GAS: u64 = 16_000_000;
+
 /// Environment flag that turns the paper-stack deploy ON for the sim paths.
 /// Absent, or any value other than `1`/`true`/`yes`/`on`, leaves the spec
 /// `None`, so the default behaviour of every call site is unchanged
@@ -365,7 +379,13 @@ impl PaperStackSpec {
             flashloan_callers: vec![ctx.caller],
             admin_eth_seed_wei: U256::from(PAPER_ADMIN_ETH_SEED_WEI),
             gas_price_wei,
-            gas_limit,
+            // PR-D2: never ask for more than the OSAKA per-tx gas cap
+            // (EIP-7825). The `scanner` call site passes `30_000_000`; uncapped,
+            // the transactor rejects the deploy tx with
+            // `transaction gas limit (30000000) is greater than the cap
+            // (16777216)` before executing — a wired `PAPER_STACK_DEPLOY` could
+            // never turn on. The cap is a no-op for call sites already under it.
+            gas_limit: gas_limit.min(PAPER_STACK_MAX_TX_GAS),
         })
     }
 }
@@ -937,6 +957,51 @@ mod tests {
         assert_eq!(spec.flashloan_callers, vec![Address::from([0x11u8; 20])]);
         assert_eq!(spec.gas_price_wei, 7);
         assert_eq!(spec.gas_limit, 16_000_000);
+        std::env::remove_var(format!("AAVE_POOL_{chain}"));
+    }
+
+    /// PR-D2: `for_round_trip` caps the per-tx gas below the OSAKA cap
+    /// (EIP-7825, `2^24 = 16_777_216`) for EVERY wired call site, using each
+    /// call site's real `gas_limit_per_step`. The scanner passes `30_000_000`
+    /// — the value that made a wired `PAPER_STACK_DEPLOY` unusable (the
+    /// transactor rejected the deploy tx before executing). Below the cap the
+    /// value is untouched (no behaviour change for the 500k/16M call sites).
+    #[test]
+    fn paper_stack_spec_caps_gas_below_osaka_tx_cap_for_every_call_site() {
+        const OSAKA_TX_CAP: u64 = 16_777_216; // EIP-7825, revm 42 SpecId::OSAKA
+        let chain = 4_242_428u64; // test-only chain id, no other test touches it
+        std::env::set_var(
+            format!("AAVE_POOL_{chain}"),
+            "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+        );
+        let ctx = diag_ctx();
+
+        // (call site, the real gas it passes today)
+        for (site, gas) in [
+            ("searcher-rs/scanner.rs", 30_000_000u64),
+            ("searcher-rs/candidate_simulation.rs", 16_000_000),
+            ("relays-client/execution_admission.rs", 16_000_000),
+            (
+                "sim-ctl/sim_runner.rs (SIM_GAS_LIMIT_PER_STEP default)",
+                500_000,
+            ),
+            (
+                "sim-ctl/canonical_plan_consumer.rs (same env default)",
+                500_000,
+            ),
+        ] {
+            let spec = PaperStackSpec::for_round_trip(&ctx, chain, 7, gas).expect(site);
+            assert!(
+                spec.gas_limit <= OSAKA_TX_CAP,
+                "{site}: gas_limit {} exceeds the OSAKA per-tx cap {OSAKA_TX_CAP}",
+                spec.gas_limit
+            );
+            assert_eq!(
+                spec.gas_limit,
+                gas.min(PAPER_STACK_MAX_TX_GAS),
+                "{site}: the cap must be exactly min(gas, {PAPER_STACK_MAX_TX_GAS})"
+            );
+        }
         std::env::remove_var(format!("AAVE_POOL_{chain}"));
     }
 
