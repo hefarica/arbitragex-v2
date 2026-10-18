@@ -2,10 +2,16 @@
 # G-SIM-1 WO-LR22.13 PR-B — regenerate the paper-executor bytecode fixtures.
 #
 # Rebuilds contracts/ with forge and copies the REAL creation bytecode of
-# ArbitrageExecutor + FlashLoanExecutor into the committed hex fixtures under
-# backend/sim-core/src/fixtures/. The drift test in
+# ArbitrageExecutor + FlashLoanExecutor (+ ERC1967Proxy, PR-D1) into the
+# committed hex fixtures under backend/sim-core/src/fixtures/. The drift test in
 # backend/sim-core/src/paper_executors.rs enforces fixture == forge output
 # whenever contracts/out exists.
+#
+# ERC1967Proxy (PR-D1, 2026-10-18): the paper stack deploys each executor
+# BEHIND an ERC1967Proxy whose constructor delegatecalls `initialize`, because
+# the implementation's own constructor calls `_disableInitializers()` and a
+# direct `initialize` on the impl reverts with InvalidInitialization
+# (0xf92ee8a9). The proxy creation code is therefore a first-class fixture.
 #
 # Requires forge (NOT available in the VPS rust:1.91 image — run locally).
 set -euo pipefail
@@ -20,7 +26,7 @@ import json, pathlib, sys
 repo = pathlib.Path(sys.argv[1])
 fixtures_dir = repo / "backend" / "sim-core" / "src" / "fixtures"
 fixtures_dir.mkdir(parents=True, exist_ok=True)
-for name in ("ArbitrageExecutor", "FlashLoanExecutor"):
+for name in ("ArbitrageExecutor", "FlashLoanExecutor", "ERC1967Proxy"):
     art_path = repo / "contracts" / "out" / f"{name}.sol" / f"{name}.json"
     with art_path.open() as f:
         artifact = json.load(f)
