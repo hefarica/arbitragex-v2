@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       target_sha:
-        description: 'Commit SHA a desplegar (default: HEAD de main)'
+        description: 'Commit SHA a desplegar (vacío = SHA del propio run; dispatch sobre main ⇒ HEAD de main)'
         required: false
         default: ''
       skip_no_cache:
@@ -139,7 +139,13 @@ jobs:
         env:
           TARGET_SHA: ${{ github.event.inputs.target_sha }}
         run: |
-          SHA="${TARGET_SHA:-c815ef8c9048e8d6c6e97adc6865d884bfea6140}"
+          # ARBX-DEPLOY-SHA-DEFAULT-01 (2026-10-18): el default era un SHA fijo
+          # (`c815ef8c…`) mientras la descripción del input decía "HEAD de main" —
+          # quien despachaba sin `target_sha` desplegaba un commit de otra época.
+          # `GITHUB_SHA` es el commit del propio run: en un dispatch sobre `main`
+          # equivale a HEAD de main, y en cualquier otro ref fija exactamente lo
+          # que el operador despachó.
+          SHA="${TARGET_SHA:-${GITHUB_SHA}}"
           ssh arbx "bash -s" <<EOSSH
           set -e
           cd /opt/arbitragex-v2
@@ -236,7 +242,7 @@ jobs:
           # auditoria publica de navegador no puede identificar ni certificar la
           # version servida (run 39126190606: status_before/after FAILED por
           # 'unknown'). auto-deploy-vps.yml ya lo hacia; deploy.yml no.
-          SHA="${TARGET_SHA:-c815ef8c9048e8d6c6e97adc6865d884bfea6140}"
+          SHA="${TARGET_SHA:-${GITHUB_SHA}}"
           ssh arbx "ARBX_DEPLOY_SHA='$SHA' ARBX_DEPLOY_ID='$GITHUB_RUN_ID' ARBX_DEPLOYED_AT='$(date -u +%Y-%m-%dT%H:%M:%SZ)' bash -s" <<'EOSSH'
           set -e
           cd /opt/arbitragex-v2
