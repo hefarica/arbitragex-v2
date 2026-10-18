@@ -590,6 +590,23 @@ mod tests {
             let (fixture_code, fixture_meta) = split_solc_metadata(&fixture_bytes);
             let (want_code, want_meta) = split_solc_metadata(&want_bytes);
 
+            // R-1 (2026-10-18): a degenerate split where the WHOLE blob is
+            // declared as metadata (`declared + 2 == code.len()`) yields an
+            // EMPTY executable slice, and comparing two empty slices passes
+            // trivially. Both sides must have real executable code before the
+            // comparison means anything.
+            assert!(
+                !fixture_code.is_empty(),
+                "{name}: fixture has NO executable code after the metadata split \
+                 (declared metadata covers the whole blob) — the comparison below \
+                 would pass trivially"
+            );
+            assert!(
+                !want_code.is_empty(),
+                "{name}: contracts/out has NO executable code after the metadata split \
+                 — the comparison below would pass trivially"
+            );
+
             // The split must be lossless — a guard that silently drops bytes
             // would be worse than no guard.
             assert_eq!(

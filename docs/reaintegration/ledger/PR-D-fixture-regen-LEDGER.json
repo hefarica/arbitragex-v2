@@ -1,0 +1,46 @@
+{
+  "schema": "reaintegration/pr-d-ledger/1",
+  "date": "2026-10-18",
+  "pr": "PR-D",
+  "base_commit": "cab395fc",
+  "protocol": "regen -> sha256 both -> full sim paper suite -> gate -> revert",
+  "fixtures": [
+    {
+      "path": "backend/sim-core/src/fixtures/ArbitrageExecutor.bytecode.hex",
+      "bytes_before": 9575,
+      "bytes_after": 9575,
+      "sha256_before": "86b0a5a18fb0d7f75821378d77938f546297888497557c1782dd1a7955155e0c",
+      "sha256_after": "c7b9d50116f185cf86eb05b4d31e6aa3c41de72126d566437070afc3b1a25464",
+      "changed": true,
+      "note": "byte-identical executable code before and after; the change is the trailing solc metadata hash only"
+    },
+    {
+      "path": "backend/sim-core/src/fixtures/FlashLoanExecutor.bytecode.hex",
+      "bytes_before": 8035,
+      "bytes_after": 8587,
+      "sha256_before": "bd10d1a856dc571db22b0fe4495db084a86b4d684bb33e2a9033fe7d5786438f",
+      "sha256_after": "a3403ede4390f622be9e277b842587467636b2796fe346538ea98081e06863a6",
+      "changed": true,
+      "note": "REAL executable-code drift: 7982 -> 8534 bytes of executable code (the committed fixture was not what contracts/src compiled)"
+    }
+  ],
+  "steps": {
+    "a_regenerate": "PASS — scripts/gen_executor_fixtures.sh (forge build + copy both artifacts)",
+    "b_sha256_both": "PASS — both .hex hashed before and after (see fixtures[])",
+    "c_paper_suite": "PASS — cargo test -p sim-core -p simulator-v2 -p sim-ctl: 231 passed, 0 failed, 6 ignored (14 suites); paper_executors::tests::fixtures_match_forge_output_when_present -> ok (was FAIL)",
+    "d_gate": "PASS — scripts/gates/g-fixture-metadata-01.sh",
+    "e_revert": "one step: git revert of this commit restores both .hex and the CI job in a single revert"
+  },
+  "r1": {
+    "requirement": "assert!(!exec.is_empty()) — a split where declared+2 == code.len() yields an empty executable and the comparison would pass trivially",
+    "status": "DONE — both sides asserted non-empty before the executable comparison (paper_executors.rs)"
+  },
+  "r2": {
+    "requirement": "raise the guard's category: a gate on the sim release path, not a self-skipping #[test]; register in the ledger as MANUAL-ONLY with expiry; add a CI job with foundry-toolchain if the image admits it",
+    "ci_job": ".github/workflows/ci.yml :: fixture-metadata-gate (checkout submodules:recursive + dtolnay/rust-toolchain 1.91.0 + foundry-rs/foundry-toolchain + scripts/gates/g-fixture-metadata-01.sh) — added to ci-gate needs AND to the required set, so it is blocking, not advisory",
+    "category": "MANUAL-ONLY",
+    "category_scope": "applies only to environments WITHOUT forge (e.g. this sandbox): there the gate returns SKIP=2 and a human must run it. In CI the path is automated by fixture-metadata-gate.",
+    "expiry": "2026-11-18",
+    "expiry_rule": "re-register or retire by 2026-11-18; retire early once fixture-metadata-gate has reported green on main for one full week"
+  }
+}
