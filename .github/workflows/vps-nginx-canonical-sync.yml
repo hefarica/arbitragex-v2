@@ -151,18 +151,46 @@ jobs:
           BAKDIR="/etc/nginx/drift-backup-\$TS"
           install -m 700 -d "\$BAKDIR"
 
-          # --- R1: el install canónico sólo si el delta es EXACTAMENTE el drift CSP ---
+          # --- R1 (revisado 2026-10-18): el install canónico se decide por CLASE de delta ---
+          #
+          # DEFECTO CORREGIDO: R1 abortaba ante CUALQUIER línea cambiada que no fuera un
+          # `add_header ... Content-Security-Policy`, incluidas las de COMENTARIO. El
+          # canónico trae comentarios que el fichero vivo no tiene ⇒ R1 abortaba SIEMPRE
+          # y el canónico NO se instalaba nunca (el drift se parcheaba en sitio y el
+          # resto del canónico quedaba sin aplicar, indefinidamente).
+          #
+          # Ahora cada línea cambiada se CLASIFICA y se imprime — nada silencioso:
+          #   CSP     el drift que R1 existe para matar (add_header CSP)
+          #   COMMENT empieza por '#' tras el +/-: no cambia el comportamiento de nginx
+          #   BLANK   línea vacía: no cambia el comportamiento de nginx
+          #   REAL    cualquier otra línea ⇒ ÚNICO caso que aborta
+          # El aborto se conserva para drift REAL, que es su razón de existir.
           if [ -e "\$LIVE" ]; then
             LIVE_REAL=\$(readlink -f "\$LIVE")
             DIFF=\$(diff -u "\$LIVE_REAL" "\$CANON" || true)
-            NONCSP=\$(printf '%s\n' "\$DIFF" | grep -E '^[+-]' | grep -vE '^(\+\+\+|---)' | grep -vE 'add_header.*Content-Security-Policy' || true)
-            if [ -n "\$NONCSP" ]; then
-              echo "ABORT install canónico: el delta NO es sólo el drift CSP. Diferencias ajenas:"
-              printf '%s\n' "\$NONCSP" | head -40
+            CHANGED=\$(printf '%s\n' "\$DIFF" | grep -E '^[+-]' | grep -vE '^(\+\+\+|---)' || true)
+            R1_CSP=\$(printf '%s\n' "\$CHANGED" | grep -E 'add_header.*Content-Security-Policy' || true)
+            R1_COMMENT=\$(printf '%s\n' "\$CHANGED" | grep -E '^[+-][[:space:]]*#' || true)
+            R1_BLANK=\$(printf '%s\n' "\$CHANGED" | grep -E '^[+-][[:space:]]*$' || true)
+            R1_REAL=\$(printf '%s\n' "\$CHANGED" \
+                        | grep -vE 'add_header.*Content-Security-Policy' \
+                        | grep -vE '^[+-][[:space:]]*#' \
+                        | grep -vE '^[+-][[:space:]]*$' || true)
+            echo "--- R1: clasificación del delta (vivo vs canónico) ---"
+            echo "  CSP     : \$(printf '%s\n' "\$R1_CSP" | grep -c . || true)"
+            echo "  COMMENT : \$(printf '%s\n' "\$R1_COMMENT" | grep -c . || true)"
+            echo "  BLANK   : \$(printf '%s\n' "\$R1_BLANK" | grep -c . || true)"
+            echo "  REAL    : \$(printf '%s\n' "\$R1_REAL" | grep -c . || true)"
+            [ -n "\$R1_CSP" ] && { echo "  --- CSP (drift esperado) ---"; printf '%s\n' "\$R1_CSP" | head -10; }
+            [ -n "\$R1_COMMENT" ] && { echo "  --- COMMENT (no aborta) ---"; printf '%s\n' "\$R1_COMMENT" | head -10; }
+            [ -n "\$R1_BLANK" ] && { echo "  --- BLANK (no aborta) ---"; printf '%s\n' "\$R1_BLANK" | head -5; }
+            if [ -n "\$R1_REAL" ]; then
+              echo "ABORT install canónico: hay drift REAL (no CSP, no comentario, no línea vacía):"
+              printf '%s\n' "\$R1_REAL" | head -40
               echo "→ se comenta el drift EN SITIO (sin importar el resto del canónico)."
               SKIP_CANON=1
             else
-              echo "delta = sólo drift CSP → se instala el canónico"
+              echo "delta = sólo CSP / comentario / línea vacía → se instala el canónico"
               SKIP_CANON=0
             fi
           else
