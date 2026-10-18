@@ -713,23 +713,84 @@ pub fn resolve_flashloan_executor_address(chain_id: u64) -> Result<Address, Exec
     Ok(addr)
 }
 
+/// Aave V3 per-chain `PoolAddressesProvider` catalog — the address the chain's
+/// own ecosystem pins. The `Pool` itself is deliberately **NOT** a constant:
+/// it is resolved on-chain from the provider
+/// (`IPoolAddressesProvider.getPool()`), so a governance `setPool` upgrade is
+/// picked up without a code change. That is RULE 00 in the live-engineering
+/// doctrine (`.claude/skills/arbx-live-engineering/references/biblioteca/14-onchain-execution-contracts.md`:
+/// "resolver `getPool()` en vez de hardcodear").
+///
+/// This table therefore holds ONLY the provider (`(chain_id, provider)`), never
+/// a Pool address. A chain absent here has no canonical provider in the catalog
+/// and MUST fail closed upstream — there is no fallback and no default.
+///
+/// Well-known public contract addresses, NOT secrets; `gitleaks:allow` silences
+/// the generic-api-key heuristic at this one definition site.
+pub const AAVE_V3_POOL_ADDRESSES_PROVIDER: &[(u64, &str)] = &[
+    (1, "0x2f39d218133AFaB8F2B819B1066c7E434Ad94E9e"), // gitleaks:allow
+    (42161, "0xa97684ead0e402dC232d5A977953DF7ECBaB3CDb"), // gitleaks:allow
+    (10, "0xa97684ead0e402dC232d5A977953DF7ECBaB3CDb"), // gitleaks:allow
+    (137, "0xa97684ead0e402dC232d5A977953DF7ECBaB3CDb"), // gitleaks:allow
+    (43114, "0xa97684ead0e402dC232d5A977953DF7ECBaB3CDb"), // gitleaks:allow
+    (8453, "0xe20fCBdBfFC4Dd138cE8b2E6FBb6CB49777ad64D"), // gitleaks:allow
+    (56, "0xff75B6da14FfbbfD355Daf7a2731456b3562Ba6D"), // gitleaks:allow
+    (11155111, "0x012bAC54348C0E635dCAc9D5FB99f06F24136C9A"), // gitleaks:allow
+    (421614, "0xB25a5D144626a0D488e52AE717A051a2E9997076"), // gitleaks:allow
+    (11155420, "0x36616cf17557639614c1cdDb356b1B83fc0B2132"), // gitleaks:allow
+];
+
+/// Selector of Aave V3 `IPoolAddressesProvider.getPool()`
+/// (`cast sig "getPool()"` = `0x026b1d5f`). Kept next to the provider catalog so
+/// the on-chain Pool resolution has a single definition site.
+pub const AAVE_V3_GET_POOL_SELECTOR: [u8; 4] = [0x02, 0x6b, 0x1d, 0x5f];
+
+/// Resolve the canonical Aave V3 `PoolAddressesProvider` for `chain_id` from
+/// [`AAVE_V3_POOL_ADDRESSES_PROVIDER`].
+///
+/// `None` when the chain has no provider in the catalog — callers fail closed
+/// and never invent an address. The literals are pinned by
+/// `aave_v3_provider_catalog_is_eip55_and_unique`; a malformed entry can only
+/// degrade to `None` (fail-closed), never to a wrong address.
+pub fn aave_pool_addresses_provider(chain_id: u64) -> Option<Address> {
+    AAVE_V3_POOL_ADDRESSES_PROVIDER
+        .iter()
+        .find(|(id, _)| *id == chain_id)
+        .and_then(|(_, s)| Address::from_str(s).ok())
+}
+
 /// Resolve the Aave V3 pool address for a chain from the `AAVE_POOL_<chain_id>`
-/// environment variable, parsed to a non-zero `Address`.
+/// environment variable.
 ///
 /// PR-D1 (2026-10-18): the paper executor stack deploys a fresh
 /// `FlashLoanExecutor` whose `initialize(admin, aavePool, arbitrageExecutor)`
-/// needs the chain's REAL Aave V3 pool. That pool is the same protocol constant
-/// `DeployMainnet.s.sol` wires in production, but it is NOT a source-constant in
-/// this workspace, so — exactly like `EXECUTOR_<id>` / `FLASHLOAN_EXECUTOR_<id>`
-/// — it is operator-supplied and resolved fail-closed: NO hardcoded fallback,
-/// NO dummy default. Missing, invalid, or zero values each reject with a typed
-/// `ExecutorAddrError` variant (reused: its variants carry only `chain_id` /
-/// `value`, so they are env-key-agnostic).
+/// needs the chain's REAL Aave V3 pool. Exactly like `EXECUTOR_<id>` /
+/// `FLASHLOAN_EXECUTOR_<id>`, the override is resolved fail-closed: NO
+/// hardcoded fallback, NO dummy default. Missing, invalid, or zero values each
+/// reject with a typed `ExecutorAddrError` variant (reused: its variants carry
+/// only `chain_id` / `value`, so they are env-key-agnostic).
+///
+/// Pool-dynamics (2026-10-18): the env var is now an **explicit override**, not
+/// the only source. When it is absent the caller resolves the Pool on-chain
+/// from [`aave_pool_addresses_provider`] + [`AAVE_V3_GET_POOL_SELECTOR`]. Use
+/// [`resolve_aave_pool_address_optional`] to distinguish "no override" (`None`)
+/// from "malformed override" (`Err`); this function is its `None → Missing`
+/// projection, so its contract is unchanged.
 pub fn resolve_aave_pool_address(chain_id: u64) -> Result<Address, ExecutorAddrError> {
+    resolve_aave_pool_address_optional(chain_id)?.ok_or(ExecutorAddrError::Missing { chain_id })
+}
+
+/// Optional form of [`resolve_aave_pool_address`]: `Ok(None)` when
+/// `AAVE_POOL_<chain_id>` is unset or blank (the operator expressed no
+/// override), `Err(..)` when it is set but unparsable or zero — a malformed
+/// override is never silently discarded.
+pub fn resolve_aave_pool_address_optional(
+    chain_id: u64,
+) -> Result<Option<Address>, ExecutorAddrError> {
     let key = format!("AAVE_POOL_{chain_id}");
     let raw = match std::env::var(&key) {
         Ok(v) if !v.trim().is_empty() => v,
-        _ => return Err(ExecutorAddrError::Missing { chain_id }),
+        _ => return Ok(None),
     };
     let value = raw.trim();
     let addr = Address::from_str(value).map_err(|_| ExecutorAddrError::Invalid {
@@ -739,7 +800,7 @@ pub fn resolve_aave_pool_address(chain_id: u64) -> Result<Address, ExecutorAddrE
     if addr == Address::zero() {
         return Err(ExecutorAddrError::Zero { chain_id });
     }
-    Ok(addr)
+    Ok(Some(addr))
 }
 
 #[cfg(test)]
@@ -1264,5 +1325,119 @@ mod tests {
             Address::from_str("0x1234567890123456789012345678901234567890").unwrap()
         );
         std::env::remove_var("FLASHLOAN_EXECUTOR_8992");
+    }
+
+    /// Pool-dynamics: every provider literal must be a valid EIP-55 checksum
+    /// (a mistyped case would silently diverge from the canonical deployment),
+    /// no chain may be listed twice, and the anchors the doctrine pins are
+    /// exact. A `getPool()` against a wrong-but-well-formed address would
+    /// otherwise fail closed only at deploy time on a fork.
+    #[test]
+    fn aave_v3_provider_catalog_is_eip55_and_unique() {
+        let mut seen: Vec<u64> = Vec::new();
+        for (chain_id, literal) in AAVE_V3_POOL_ADDRESSES_PROVIDER {
+            let addr = Address::from_str(literal)
+                .unwrap_or_else(|_| panic!("chain {chain_id}: literal is not an address"));
+            assert_eq!(
+                &ethers::utils::to_checksum(&addr, None),
+                literal,
+                "chain {chain_id}: provider must be the EIP-55 checksum form"
+            );
+            assert!(
+                !seen.contains(chain_id),
+                "chain {chain_id} listed more than once"
+            );
+            seen.push(*chain_id);
+            assert_eq!(
+                aave_pool_addresses_provider(*chain_id),
+                Some(addr),
+                "chain {chain_id}: lookup must return the catalog entry"
+            );
+        }
+
+        // The doctrine's mainnet anchor (biblioteca §14) and the shared-V3
+        // provider used by Arbitrum / Optimism / Polygon / Avalanche.
+        assert_eq!(
+            aave_pool_addresses_provider(1),
+            Some(Address::from_str("0x2f39d218133AFaB8F2B819B1066c7E434Ad94E9e").unwrap())
+        );
+        assert_eq!(
+            aave_pool_addresses_provider(42161),
+            aave_pool_addresses_provider(10)
+        );
+        assert_eq!(
+            aave_pool_addresses_provider(10),
+            aave_pool_addresses_provider(137)
+        );
+        assert_eq!(
+            aave_pool_addresses_provider(137),
+            aave_pool_addresses_provider(43114)
+        );
+    }
+
+    /// A chain outside the catalog resolves to `None` — fail-closed, never a
+    /// default provider.
+    #[test]
+    fn aave_v3_provider_catalog_missing_chain_is_none() {
+        assert_eq!(aave_pool_addresses_provider(4_242_401), None);
+        assert_eq!(aave_pool_addresses_provider(0), None);
+    }
+
+    /// Pool-dynamics: with `AAVE_POOL_<id>` unset the optional resolver reports
+    /// "no override" (`Ok(None)`), while the legacy `resolve_aave_pool_address`
+    /// keeps its `Missing` projection — today's contract is unchanged.
+    #[test]
+    fn aave_pool_env_absent_is_none_and_legacy_still_missing() {
+        let chain = 4_242_402u64;
+        std::env::remove_var(format!("AAVE_POOL_{chain}"));
+        assert_eq!(resolve_aave_pool_address_optional(chain), Ok(None));
+        assert_eq!(
+            resolve_aave_pool_address(chain),
+            Err(ExecutorAddrError::Missing { chain_id: chain })
+        );
+    }
+
+    /// A set override wins and round-trips through the optional resolver; a
+    /// blank value is treated as "unset".
+    #[test]
+    fn aave_pool_env_present_wins_and_blank_is_unset() {
+        let chain = 4_242_403u64;
+        std::env::set_var(
+            format!("AAVE_POOL_{chain}"),
+            "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+        );
+        assert_eq!(
+            resolve_aave_pool_address_optional(chain),
+            Ok(Some(
+                Address::from_str("0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2").unwrap()
+            ))
+        );
+        std::env::set_var(format!("AAVE_POOL_{chain}"), "   ");
+        assert_eq!(resolve_aave_pool_address_optional(chain), Ok(None));
+        std::env::remove_var(format!("AAVE_POOL_{chain}"));
+    }
+
+    /// A malformed or zero override is NEVER silently discarded: it rejects,
+    /// even though the dynamic path could have resolved a Pool.
+    #[test]
+    fn aave_pool_env_invalid_or_zero_rejects() {
+        let chain = 4_242_404u64;
+        std::env::set_var(format!("AAVE_POOL_{chain}"), "0xnothex");
+        assert!(matches!(
+            resolve_aave_pool_address_optional(chain),
+            Err(ExecutorAddrError::Invalid {
+                chain_id: 4_242_404,
+                ..
+            })
+        ));
+        std::env::set_var(
+            format!("AAVE_POOL_{chain}"),
+            "0x0000000000000000000000000000000000000000",
+        );
+        assert_eq!(
+            resolve_aave_pool_address_optional(chain),
+            Err(ExecutorAddrError::Zero { chain_id: chain })
+        );
+        std::env::remove_var(format!("AAVE_POOL_{chain}"));
     }
 }
