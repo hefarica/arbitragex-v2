@@ -136,18 +136,38 @@ jobs:
       # FASE 3: ANCLAJE git (solo después de pre-flight + backup OK)
       # ─────────────────────────────────────────────────────────────────
       - name: 🎯 Anclar a SHA objetivo
+        id: anchor
         env:
           TARGET_SHA: ${{ github.event.inputs.target_sha }}
         run: |
-          SHA="${TARGET_SHA:-c815ef8c9048e8d6c6e97adc6865d884bfea6140}"
-          ssh arbx "bash -s" <<EOSSH
+          # ARBX-DEPLOY-FIX-03 (2026-10-18): el default NO puede ser un SHA fijo.
+          # Antes caía en `c815ef8c…`, así que quien despachaba sin `target_sha`
+          # desplegaba ESE commit antiguo y no `main` (HEAD era `c50b91bb`).
+          # Ahora, sin `target_sha`, se resuelve `origin/main` EN EL VPS tras el
+          # fetch, y ese SHA se publica como output para el resto del workflow.
+          SHA=$(ssh arbx "TARGET_SHA='${TARGET_SHA}' bash -s" <<'EOSSH'
           set -e
           cd /opt/arbitragex-v2
           git fetch --all --prune
-          git checkout -f $SHA
-          git log -1 --oneline
-          echo "✅ Anclado a $SHA"
+          if [ -n "${TARGET_SHA:-}" ]; then
+            SHA="$TARGET_SHA"
+          else
+            SHA="$(git rev-parse origin/main)"
+            echo "sin target_sha → origin/main = $SHA" >&2
+          fi
+          git checkout -f "$SHA"
+          git log -1 --oneline >&2
+          echo "✅ Anclado a $SHA" >&2
+          printf '%s\n' "$SHA"
           EOSSH
+          )
+          SHA=$(printf '%s\n' "$SHA" | tail -1 | tr -d '\r')
+          if [ -z "$SHA" ]; then
+            echo "::error::no se pudo resolver el SHA objetivo (ni target_sha ni origin/main)"
+            exit 1
+          fi
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "SHA anclado: $SHA"
 
       # ─────────────────────────────────────────────────────────────────
       # FASE 3b: CUARENTENA de fuentes sin trackear (ARBX-DEPLOY-CLEAN-01)
@@ -227,9 +247,20 @@ jobs:
       # ─────────────────────────────────────────────────────────────────
       - name: 🚀 Hot-swap containers
         run: |
-          ssh arbx "bash -s" <<'EOSSH'
+          # ARBX-DEPLOY-IDENTITY-01 (2026-10-18): estampa el stack con el commit
+          # exacto. Compose interpola estas variables desde el env del SHELL hacia
+          # el contenedor api-server (`environment:`), asi que `--env-file` solo NO
+          # basta; sin el export `/status` reporta deploy.sha='unknown' y la
+          # auditoria publica de navegador no puede identificar ni certificar la
+          # version servida (run 39126190606: status_before/after FAILED por
+          # 'unknown'). auto-deploy-vps.yml ya lo hacia; deploy.yml no.
+          # ARBX-DEPLOY-FIX-03: el SHA es el que el step de anclaje RESOLVIÓ
+          # (origin/main cuando no se pasó `target_sha`), nunca un default fijo.
+          SHA="${{ steps.anchor.outputs.sha }}"
+          ssh arbx "ARBX_DEPLOY_SHA='$SHA' ARBX_DEPLOY_ID='$GITHUB_RUN_ID' ARBX_DEPLOYED_AT='$(date -u +%Y-%m-%dT%H:%M:%SZ)' bash -s" <<'EOSSH'
           set -e
           cd /opt/arbitragex-v2
+          echo "deploy identity: sha=$ARBX_DEPLOY_SHA id=$ARBX_DEPLOY_ID at=$ARBX_DEPLOYED_AT"
           docker compose --env-file .env -f docker/compose.prod.yml up -d --remove-orphans \
             searcher-rs api-server frontend edge
           sleep 15
@@ -270,6 +301,24 @@ jobs:
           probe /apex/allocator 200
           probe /omega-s5/core  200
 
+          echo "=== Identidad del deploy: /api/status.deploy.sha == HEAD anclado ==="
+          # ARBX-DEPLOY-FIX-03 (2026-10-18): "deploy.sha poblado" y "deploy.sha
+          # correcto" son afirmaciones distintas; sin este probe el healthcheck no
+          # distingue la version servida. El VPS no tiene `jq`
+          # (ARBX-DEPLOY-FIX-02): se extrae con grep/sed.
+          DEPLOYED_SHA=$(git -C /opt/arbitragex-v2 rev-parse HEAD)
+          STATUS_JSON=$(curl -s --max-time 10 http://localhost/api/status || true)
+          SERVED_SHA=$(printf '%s' "$STATUS_JSON" | grep -o '"sha":"[0-9a-f]\{40\}"' | head -1 | sed 's/.*:"//; s/"$//')
+          if [ -z "$SERVED_SHA" ]; then
+            echo "  ❌ /api/status no reporta un deploy.sha de 40 hex (bloque deploy: $(printf '%s' "$STATUS_JSON" | grep -o '"deploy":{[^}]*}' | head -1))"
+            fail=$((fail+1))
+          elif [ "$SERVED_SHA" = "$DEPLOYED_SHA" ]; then
+            echo "  ✅ /api/status deploy.sha == HEAD anclado ($SERVED_SHA)"
+          else
+            echo "  ❌ /api/status deploy.sha=$SERVED_SHA ≠ HEAD anclado=$DEPLOYED_SHA"
+            fail=$((fail+1))
+          fi
+
           echo "=== Docker health ==="
           # ARBX-DEPLOY-FIX-02: el step corría sin `cd /opt/arbitragex-v2` (el path
           # relativo del compose no resolvía) y el VPS no tiene `jq` (exit 127). El
@@ -295,6 +344,10 @@ jobs:
           set -e
           source /root/last-deploy.env  # contiene PREV_SHA
           cd /opt/arbitragex-v2
+          # ARBX-DEPLOY-IDENTITY-01: el rollback tambien estampa su SHA real.
+          export ARBX_DEPLOY_SHA="$PREV_SHA"
+          export ARBX_DEPLOY_ID="${GITHUB_RUN_ID:-rollback}"
+          export ARBX_DEPLOYED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           echo "🔄 Rollback a $PREV_SHA"
           git checkout -f $PREV_SHA
           docker compose --env-file .env -f docker/compose.prod.yml up -d --remove-orphans \
