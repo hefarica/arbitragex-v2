@@ -1,0 +1,153 @@
+{
+  "schema": "reaintegration/ledger/1",
+  "generated_at": "2026-10-18T06:31:51Z",
+  "base_sha": "fe62cdceb6dc0b18afed8db03b7dc7ab64e38d6b",
+  "algorithm": "sha256",
+  "entries": [
+    {
+      "path": "docs/reaintegration/00-INVENTORY.json",
+      "sha256": "030286a13c0b9e8f2dddb91aad773e3173e1ef22b5bae3815767dc4c22ec0413",
+      "bytes": 6163
+    },
+    {
+      "path": "docs/reaintegration/FINAL-CLOSURE.md",
+      "sha256": "34bc3370b6c1b958854290229068a409c6b6d1f744cd5b2a1d2d6afda8944db2",
+      "bytes": 6004
+    },
+    {
+      "path": "docs/reaintegration/MANIFEST_SHA256.json",
+      "sha256": "4329e8ccd65edec46b76c8acd6c61e8a8f34731b9584532178f83d5d36827dca",
+      "bytes": 844
+    },
+    {
+      "path": "docs/reaintegration/README.md",
+      "sha256": "f81637f119f0111ec30c34bb46be74ecce1adbafdd84551a5c35d3e6568cde87",
+      "bytes": 2115
+    },
+    {
+      "path": "docs/reaintegration/adr/ADR-001-curve-duplicate.md",
+      "sha256": "b337494b7b955e3c431f453b39b6611cb21ae9a4f17fb7f22fea76adde6dfde5",
+      "bytes": 3826
+    },
+    {
+      "path": "docs/reaintegration/adr/ADR-002-admin-root-404.md",
+      "sha256": "5660402b7ea290ef1ff02b893757f0a8a63af962b90144c0e6b7b95adb88bfc7",
+      "bytes": 2033
+    },
+    {
+      "path": "docs/reaintegration/evidence/G-BACKUP-01.tracked.txt",
+      "sha256": "c30a67cb4490ec1af7072f06bae23befc8e4b05ee86a294f27470dd2965d2a19",
+      "bytes": 15422
+    },
+    {
+      "path": "docs/reaintegration/gates/G-ADMIN-ROOT-01.md",
+      "sha256": "70bb4985bb67d90823193f0f629b98e2c46278fd879f66703bd9fff6dccb78ce",
+      "bytes": 1604
+    },
+    {
+      "path": "docs/reaintegration/gates/G-BACKUP-01.md",
+      "sha256": "b81d32b0af8c1ddd6a8e927c9d76ff94e3caa7082d7c45828e6bfa5e2fc54f85",
+      "bytes": 3153
+    },
+    {
+      "path": "docs/reaintegration/ledger/LEDGER_SHA256.json",
+      "sha256": "1d57115ca7ac1312bde9298fe56c51fda7f0c9884742444f3c79149ad5b56a3b",
+      "bytes": 5071
+    },
+    {
+      "path": "docs/reaintegration/rea/01-cryptofeed.md",
+      "sha256": "cdc5dd85966c6e5e17960c79d9a24ffc5a8d340342e557b02b343dacb493b135",
+      "bytes": 2205
+    },
+    {
+      "path": "docs/reaintegration/rea/02-hftbacktest.md",
+      "sha256": "ae513cc90b6d7874b8b6012fa74c54dd191196d4f4cd3062195ce05b4550e726",
+      "bytes": 2143
+    },
+    {
+      "path": "docs/reaintegration/rea/03-nautilus_trader.md",
+      "sha256": "1515540cdf97982b0ea320df9a68ecc409c2ae5d9312b0fe92ec7504afc1b717",
+      "bytes": 2060
+    },
+    {
+      "path": "docs/reaintegration/rea/04-hummingbot.md",
+      "sha256": "0f8df4aebc5b463a22f0525711c289a8d3e4b620f78e8af51fa5a12c9152dc3c",
+      "bytes": 1791
+    },
+    {
+      "path": "docs/reaintegration/rea/05-freqtrade.md",
+      "sha256": "89f2a96efa2c8bc06966c5e5d9ad040fbcc9225cbaedf1fdd1cbc193be83d0fe",
+      "bytes": 1610
+    },
+    {
+      "path": "docs/reaintegration/rea/06-ccxt.md",
+      "sha256": "8fa0a74465d3bca300c5904fc5cee699ed4f50c83fdc5c671be6057aea8ad2b0",
+      "bytes": 1887
+    },
+    {
+      "path": "docs/reaintegration/rea/07-whack-a-mole.md",
+      "sha256": "32dc5925832c6c5dfe3ee823ebdd6f420d8dd6ee2bdffcb107c5ee5df548cdd7",
+      "bytes": 1801
+    },
+    {
+      "path": "docs/reaintegration/rea/08-btrader.md",
+      "sha256": "6a2c243f7fb09f5d941426a6560ee1c3465905227a441e072b3a06b8ef072167",
+      "bytes": 1590
+    },
+    {
+      "path": "docs/reaintegration/rea/09-dexcex-bot.md",
+      "sha256": "b48f6f418a978f5dcedb900b4c2b06fc36346115c719b0f7e3d997a5ea6a8d8f",
+      "bytes": 1649
+    },
+    {
+      "path": "docs/reaintegration/rea/10-kelp.md",
+      "sha256": "4aa9e531f0f7ca12b3cad496fd122ab0344f921b5500658a87c793569c9c3140",
+      "bytes": 1875
+    },
+    {
+      "path": "docs/reaintegration/rea/11-opentrader.md",
+      "sha256": "bcf0fa0f71abed1e9b94170c5fd22908876c7c927511c026c6b6c61847e734f5",
+      "bytes": 1590
+    },
+    {
+      "path": "docs/reaintegration/rea/12-simple-arbitrage.md",
+      "sha256": "c509555bc2b2e1bb6c0a0d21a1a3782ffb0f3e6c3653e1d61d32fa0de4ef1fbd",
+      "bytes": 1706
+    },
+    {
+      "path": "docs/reaintegration/rea/13-orderbook-rs.md",
+      "sha256": "88777c58082c94a726187203ea60d182b73d5a6a4fb4c4191d9883c77ea20822",
+      "bytes": 1780
+    },
+    {
+      "path": "docs/reaintegration/rea/14-alloy.md",
+      "sha256": "4867fbb57537694299eda87453f0e480f926a6006a249780db1f43b18c7d8c46",
+      "bytes": 1628
+    },
+    {
+      "path": "docs/reaintegration/rea/15-revm.md",
+      "sha256": "92d23319356b0dd7b6161ebc81dc9263d2e6c5cad030befdcde3cb2b34f3848d",
+      "bytes": 1623
+    },
+    {
+      "path": "docs/reaintegration/rea/16-ta-rs.md",
+      "sha256": "a4dbda2ed2627def3b12b67f226d9c42cc4e671c4b5d817049c60bc0d05cc869",
+      "bytes": 1815
+    },
+    {
+      "path": "scripts/gates/g-admin-root-01.sh",
+      "sha256": "b68e3dd284f57a541e87bde8bebb2709ef2672978e7d02ab9e119a78622d1c77",
+      "bytes": 1912
+    },
+    {
+      "path": "scripts/gates/g-backup-01.sh",
+      "sha256": "0180095ad2224b49930afb2e4ad0c31a9444eee92d8b897594bcbe3d8f989d17",
+      "bytes": 5208
+    },
+    {
+      "path": "scripts/gates/gen-ledger.py",
+      "sha256": "ee795afc032a408a1c48913fb6156992a6f46cf0f6a5cd9e43e7baad14e528ca",
+      "bytes": 1971
+    }
+  ]
+}

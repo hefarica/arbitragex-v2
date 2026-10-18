@@ -1,0 +1,226 @@
+{
+  "schema": "reaintegration/inventory/1",
+  "generated_at": "2026-10-18T06:28:59.586613Z",
+  "phase": "P0",
+  "repo": {
+    "url": "https://github.com/hefarica/arbitragex-v2.git",
+    "visibility": "public",
+    "head": "fe62cdceb6dc0b18afed8db03b7dc7ab64e38d6b",
+    "branch": "main",
+    "head_commit_date": "2026-10-14T01:48:48-05:00"
+  },
+  "destinations": {
+    "backend_crates": [
+      "searcher-rs",
+      "math-engine",
+      "sim-ctl",
+      "sim-core",
+      "simulator-v2",
+      "prioritization-spine",
+      "selector-api",
+      "relays-client",
+      "recon",
+      "sed-core",
+      "shared-rs",
+      "api-server",
+      "token-enricher",
+      "semiotic-bridge",
+      "omega-search",
+      "mcp-sim-engine"
+    ],
+    "rust_crate_manifests": [
+      "math-engine",
+      "mcp-sim-engine",
+      "omega-search",
+      "prioritization-spine",
+      "recon",
+      "relays-client",
+      "searcher-rs",
+      "sed-core",
+      "semiotic-bridge",
+      "shared-rs",
+      "sim-core",
+      "sim-ctl",
+      "simulator-v2",
+      "token-enricher"
+    ],
+    "ts_services": [
+      "api-server",
+      "selector-api"
+    ],
+    "workspace_members_declared": [
+      "shared-rs",
+      "searcher-rs",
+      "sim-ctl",
+      "relays-client",
+      "recon",
+      "math-engine",
+      "prioritization-spine",
+      "simulator-v2",
+      "sim-core",
+      "token-enricher",
+      "mcp-sim-engine",
+      "sed-core",
+      "semiotic-bridge"
+    ],
+    "crates_outside_workspace": [
+      "omega-search"
+    ],
+    "other": [
+      "contracts/",
+      "frontend/"
+    ]
+  },
+  "frontend": {
+    "app_router_page_tsx_live": 59,
+    "app_router_page_tsx_repo_wide": 111,
+    "page_tsx_backup_class": 52,
+    "layout_tsx_live": 4,
+    "apex_page_inventory_declared_count": 37,
+    "apex_page_inventory_array_entries": 39
+  },
+  "backup_class": {
+    "tracked_paths": 305,
+    "trees": [
+      "_recovery/",
+      "frontend/_recovery/",
+      "frontend/app_backup/",
+      "frontend/components_backup/",
+      "frontend/features_backup/"
+    ],
+    "files": [
+      "frontend/app/page.tsx.backup",
+      "package.json.bak"
+    ],
+    "gate": "G-BACKUP-01"
+  },
+  "drift": [
+    {
+      "id": "D-01",
+      "severity": "high",
+      "title": "Backup/recovery trees tracked and counted",
+      "evidence": {
+        "tracked_backup_paths": 305,
+        "repo_wide_page_tsx": 111,
+        "live_page_tsx": 59
+      },
+      "gate": "G-BACKUP-01",
+      "status": "closed_by_gate",
+      "fix": "canonical exclusion predicate in scripts/gates/g-backup-01.sh"
+    },
+    {
+      "id": "D-02",
+      "severity": "medium",
+      "title": "Bare /admin resolves to 404 (no page.tsx)",
+      "evidence": {
+        "admin_routes": [
+          "/admin/signin",
+          "/admin/chains",
+          "/admin/topology"
+        ],
+        "nav_refs_bare_admin": 0
+      },
+      "gate": "G-ADMIN-ROOT-01",
+      "status": "decided",
+      "decision": "ADR-002: keep 404 (no consumer)"
+    },
+    {
+      "id": "D-03",
+      "severity": "high",
+      "title": "Duplicate Curve adapters",
+      "evidence": {
+        "a": "contracts/src/adapters/CurveStableSwapAdapter.sol",
+        "b": "contracts/src/dexes/CurveAdapter.sol",
+        "a_refs_outside_self": 0,
+        "b_refs": [
+          "contracts/src/interfaces/IDEXAdapter.sol",
+          "contracts/test/FlashLoanAdapters.t.sol"
+        ]
+      },
+      "gate": "n/a",
+      "status": "adr_opened",
+      "decision": "ADR-001"
+    },
+    {
+      "id": "D-04",
+      "severity": "medium",
+      "title": "omega-search outside backend workspace -> not covered by --workspace gates",
+      "evidence": {
+        "crate": "omega-search",
+        "declares_own_workspace": true,
+        "covered_by": [
+          "cargo fmt --check",
+          "cargo clippy --workspace",
+          "cargo test --workspace"
+        ]
+      },
+      "gate": "pending P4",
+      "status": "open",
+      "fix": "promotion is a 2-line change to backend/Cargo.toml members"
+    },
+    {
+      "id": "D-05",
+      "severity": "medium",
+      "title": ".omega-base-sha pins a commit absent from history",
+      "evidence": {
+        "pinned": "BASE_SHA=70db818365101cc1083a9d178307afcab06f807f",
+        "head": "fe62cdceb6dc0b18afed8db03b7dc7ab64e38d6b",
+        "object_present": "absent"
+      },
+      "gate": "pending",
+      "status": "open",
+      "fix": "re-pin .omega-base-sha to the audited HEAD or drop the file"
+    },
+    {
+      "id": "D-06",
+      "severity": "high",
+      "title": "apex page_inventory.ts cardinality stale and internally inconsistent",
+      "evidence": {
+        "declared_EXPECTED_PAGE_COUNT": 37,
+        "array_entries": 39,
+        "live_page_tsx": 59
+      },
+      "gate": "pending P4 (INV-1)",
+      "status": "open",
+      "fix": "recount PAGES + EXPECTED_PAGE_COUNT to the live filtered set"
+    },
+    {
+      "id": "D-07",
+      "severity": "low",
+      "title": "Ambiguous root entrypoints: README-1..4 + 4 zero-byte doctrine .md + package.json.bak",
+      "evidence": {
+        "readme_variants": [
+          "README.md",
+          "README-1.md",
+          "README-2.md",
+          "README-3.md",
+          "README-4.md"
+        ],
+        "zero_byte_root_md": [
+          "03_EQUILIBRIO_MULTIVARIABLE_CIEGO.md",
+          "01_RESOLUCION_ESTADO_ASIMETRICO.md",
+          "02_INYECCION_ENTROPIA_TRANSITORIA.md",
+          "00_MANIFIESTO_DE_EFICIENCIA_ESTRUCTURAL.md"
+        ],
+        "stray": [
+          "package.json.bak",
+          "frontend/app/page.tsx.backup"
+        ]
+      },
+      "gate": "G-BACKUP-01 (partial)",
+      "status": "open",
+      "fix": "README-1..4 are unrelated docs -> rename by subject; zero-byte files are placeholder doctrine -> declare or remove"
+    }
+  ],
+  "invariants_observed": {
+    "no_unwrap_expect_in_prod_rust": "NOT VERIFIED (no cargo toolchain in this sandbox) \u2014 debt",
+    "relays_client_single_signer": "NOT VERIFIED at P0 (static only)",
+    "capital_zero_broadcast_false": "declared in README.md header; not re-verified at P0"
+  },
+  "toolchain": {
+    "cargo": "absent",
+    "forge": "absent",
+    "node": "v22.23.3",
+    "npm": "10.9.9"
+  }
+}

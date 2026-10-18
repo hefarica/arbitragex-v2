@@ -1,0 +1,26 @@
+{
+  "schema": "reaintegration/manifest/1",
+  "generated_at": "2026-10-18T06:31:51Z",
+  "base_sha": "fe62cdceb6dc0b18afed8db03b7dc7ab64e38d6b",
+  "artifacts": {
+    "inventory": "docs/reaintegration/00-INVENTORY.json",
+    "rea_fiches": 16,
+    "adrs": [
+      "docs/reaintegration/adr/ADR-001-curve-duplicate.md",
+      "docs/reaintegration/adr/ADR-002-admin-root-404.md"
+    ],
+    "gates": [
+      "docs/reaintegration/gates/G-ADMIN-ROOT-01.md",
+      "docs/reaintegration/gates/G-BACKUP-01.md",
+      "scripts/gates/g-backup-01.sh",
+      "scripts/gates/g-admin-root-01.sh"
+    ],
+    "ledger": "docs/reaintegration/ledger/LEDGER_SHA256.json",
+    "ledger_sha256": "8e2d6e85fb57dd8a795583e81e385eb6768b19cb263c6470ea535de626db8808"
+  },
+  "gates_result": {
+    "G-BACKUP-01": "PASS",
+    "G-ADMIN-ROOT-01": "PASS"
+  },
+  "files_hashed": 29
+}
