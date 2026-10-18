@@ -713,13 +713,22 @@ fn route_hash_is_deterministic() {
 #[test]
 fn pred_failure_reasons_are_named_per_route_not_dropped() {
     let mut hist = Histogram::default();
-    record_pred_failure(&mut hist, Some("multistep_paper_stack_failed:deploy_out_of_gas"));
-    record_pred_failure(&mut hist, Some("multistep_paper_stack_failed:deploy_out_of_gas"));
+    record_pred_failure(
+        &mut hist,
+        Some("multistep_paper_stack_failed:deploy_out_of_gas"),
+    );
+    record_pred_failure(
+        &mut hist,
+        Some("multistep_paper_stack_failed:deploy_out_of_gas"),
+    );
     record_pred_failure(&mut hist, Some("multistep_paper_stack_failed:pool_missing"));
     record_pred_failure(&mut hist, None);
     record_pred_failure(&mut hist, Some("   "));
 
-    assert_eq!(hist.pred_failed, 5, "every failed prediction is still counted");
+    assert_eq!(
+        hist.pred_failed, 5,
+        "every failed prediction is still counted"
+    );
     assert_eq!(
         hist.pred_reasons["multistep_paper_stack_failed:deploy_out_of_gas"], 2,
         "the same cause must aggregate under one tag"
@@ -739,5 +748,8 @@ fn pred_failure_reasons_are_named_per_route_not_dropped() {
 #[test]
 fn dominant_reason_is_none_when_nothing_failed() {
     let hist = Histogram::default();
-    assert_eq!(dominant_failure_reason(&hist.pred_reasons, hist.pred_failed), None);
+    assert_eq!(
+        dominant_failure_reason(&hist.pred_reasons, hist.pred_failed),
+        None
+    );
 }
