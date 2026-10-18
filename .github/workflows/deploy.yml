@@ -209,7 +209,7 @@ jobs:
           echo "=== Post-build resources ==="; free -h; df -h /
           EOSSH
 
-      - name: 🔥 Build frontend + nginx-gateway (Bóveda Visual)
+      - name: 🔥 Build frontend + edge (Bóveda Visual + API edge)
         env:
           SKIP_NO_CACHE: ${{ github.event.inputs.skip_no_cache }}
         run: |
@@ -218,7 +218,7 @@ jobs:
           set -e
           cd /opt/arbitragex-v2
           echo "=== Pre-build resources ==="; free -h; df -h /
-          time docker compose --env-file .env -f docker/compose.prod.yml build $CACHE_FLAG frontend nginx-gateway
+          time docker compose --env-file .env -f docker/compose.prod.yml build $CACHE_FLAG frontend edge
           echo "=== Post-build resources ==="; free -h; df -h /
           EOSSH
 
@@ -231,7 +231,7 @@ jobs:
           set -e
           cd /opt/arbitragex-v2
           docker compose --env-file .env -f docker/compose.prod.yml up -d --remove-orphans \
-            searcher-rs api-server frontend nginx-gateway
+            searcher-rs api-server frontend edge
           sleep 15
           docker compose --env-file .env -f docker/compose.prod.yml ps
           EOSSH
@@ -294,7 +294,7 @@ jobs:
           echo "🔄 Rollback a $PREV_SHA"
           git checkout -f $PREV_SHA
           docker compose --env-file .env -f docker/compose.prod.yml up -d --remove-orphans \
-            searcher-rs api-server frontend nginx-gateway
+            searcher-rs api-server frontend edge
           sleep 20
           curl -sf -o /dev/null -w "Rollback health: %{http_code}\n" http://localhost/api/health
           EOSSH
