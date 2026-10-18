@@ -43,9 +43,7 @@
 //! 50, un neto USD 0,20 puede verse positivo sin declararse objetivo cumplido ni
 //! autorizar ejecución."*
 
-use crate::cycles::{
-    enumerate_bounded, Cycle, EnumerateLimits, PruneAccounting, TruncationReason,
-};
+use crate::cycles::{enumerate_bounded, Cycle, EnumerateLimits, PruneAccounting, TruncationReason};
 use crate::eval::{evaluate_cycle, CycleEval, EvalError, ExternalCosts};
 use crate::graph::{EdgeId, GraphPolicy, MultiGraph, PoolIndex};
 use crate::units::Raw;
@@ -694,7 +692,11 @@ impl SearchEngine {
         let mut auto_added_families: Vec<FamilyId> = Vec::new();
         for hops in policy.hop_lengths.lengths() {
             let family = family_of_hop_count(hops as usize);
-            if !cfg.family_weights.iter().any(|(f, w)| *f == family && *w > 0) {
+            if !cfg
+                .family_weights
+                .iter()
+                .any(|(f, w)| *f == family && *w > 0)
+            {
                 cfg.family_weights.push((family, 1));
                 auto_added_families.push(family);
             }
@@ -884,12 +886,7 @@ impl SearchEngine {
 
         let mut seed_diagnosis: Option<ScoredCandidate> = None;
         if let Some(seed_cycle) = seed {
-            let scored = self.score_cycle(
-                seed_cycle,
-                generation,
-                snapshot,
-                CandidateOrigin::Seed,
-            );
+            let scored = self.score_cycle(seed_cycle, generation, snapshot, CandidateOrigin::Seed);
             ledger.admit(scored.clone());
             seed_diagnosis = Some(scored);
         }
@@ -1140,8 +1137,14 @@ mod tests {
             pool_ids: cycle.pool_ids(&g),
         };
         assert!(ledger.admit(winner));
-        assert_eq!(ledger.current_best().unwrap().net_raw(), Some(Raw::new(100)));
-        assert_eq!(ledger.historical_max().unwrap().net_raw(), Some(Raw::new(100)));
+        assert_eq!(
+            ledger.current_best().unwrap().net_raw(),
+            Some(Raw::new(100))
+        );
+        assert_eq!(
+            ledger.historical_max().unwrap().net_raw(),
+            Some(Raw::new(100))
+        );
 
         // New generation: current is invalidated, the record survives.
         ledger.open_generation(SnapshotId(2));

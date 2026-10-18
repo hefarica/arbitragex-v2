@@ -113,6 +113,19 @@ See [SOP.md](docs/SOP.md) + [HARDENING_AND_ROADMAP.md](docs/HARDENING_AND_ROADMA
 | [VAULT_SETUP.md](docs/operations/VAULT_SETUP.md) | Vault TLS + sealed guide |
 | [SECRETS_POLICY.md](docs/operations/SECRETS_POLICY.md) | Secrets T0-T2 |
 
+### Playwright VPS DApp scaffold series (root)
+
+The four `README-N.md` files at the repository root are **one series**, not
+alternative entry points: read them in order. Their names are kept as-is
+because the documents cross-reference each other by name.
+
+| Doc | Content |
+|---|---|
+| [README-1.md](README-1.md) | Resumen ejecutivo del scaffold |
+| [README-2.md](README-2.md) | Metodología: loop de 13 pasos |
+| [README-3.md](README-3.md) | Guía de ejecución con Playwright |
+| [README-4.md](README-4.md) | Reporting de 40 secciones |
+
 ---
 
 ## Security Posture

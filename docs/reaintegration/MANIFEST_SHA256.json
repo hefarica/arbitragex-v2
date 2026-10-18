@@ -1,26 +1,39 @@
 {
-  "schema": "reaintegration/manifest/1",
-  "generated_at": "2026-10-18T06:31:51Z",
-  "base_sha": "fe62cdceb6dc0b18afed8db03b7dc7ab64e38d6b",
+  "schema": "reaintegration/manifest/2",
+  "generated_at": "2026-10-18T07:23:28Z",
+  "base_sha": "b54d3babbebc35f566806a07d12c4a2e31a23cf6",
   "artifacts": {
     "inventory": "docs/reaintegration/00-INVENTORY.json",
     "rea_fiches": 16,
     "adrs": [
       "docs/reaintegration/adr/ADR-001-curve-duplicate.md",
-      "docs/reaintegration/adr/ADR-002-admin-root-404.md"
+      "docs/reaintegration/adr/ADR-002-admin-root-404.md",
+      "docs/reaintegration/adr/ADR-003-omega-search-workspace.md"
     ],
     "gates": [
       "docs/reaintegration/gates/G-ADMIN-ROOT-01.md",
       "docs/reaintegration/gates/G-BACKUP-01.md",
+      "docs/reaintegration/gates/G-OMEGA-01.md",
+      "docs/reaintegration/gates/G-OMEGA-BASE-01.md",
+      "docs/reaintegration/gates/G-PAGE-INV-01.md",
+      "docs/reaintegration/gates/G-ROOT-ENTRYPOINTS-01.md",
+      "scripts/gates/g-admin-root-01.sh",
       "scripts/gates/g-backup-01.sh",
-      "scripts/gates/g-admin-root-01.sh"
+      "scripts/gates/g-omega-01.sh",
+      "scripts/gates/g-omega-base-01.sh",
+      "scripts/gates/g-page-inv-01.sh",
+      "scripts/gates/g-root-entrypoints-01.sh"
     ],
     "ledger": "docs/reaintegration/ledger/LEDGER_SHA256.json",
-    "ledger_sha256": "8e2d6e85fb57dd8a795583e81e385eb6768b19cb263c6470ea535de626db8808"
+    "ledger_sha256": "6fc9332186bfd8ed99e7516d153741a888777cb34fe1705737471f33da785c35"
   },
   "gates_result": {
     "G-BACKUP-01": "PASS",
-    "G-ADMIN-ROOT-01": "PASS"
+    "G-ADMIN-ROOT-01": "PASS",
+    "G-OMEGA-01": "PASS",
+    "G-OMEGA-BASE-01": "PASS",
+    "G-PAGE-INV-01": "PASS",
+    "G-ROOT-ENTRYPOINTS-01": "PASS"
   },
-  "files_hashed": 29
+  "files_hashed": 38
 }

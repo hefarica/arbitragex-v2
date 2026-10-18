@@ -532,13 +532,19 @@ mod tests {
 
     #[test]
     fn each_pool_yields_two_directed_edges_with_its_version() {
-        let g = MultiGraph::build(vec![pool(7, 1, 2, 1_000, 2_000)], &GraphPolicy::permissive_2_to_7());
+        let g = MultiGraph::build(
+            vec![pool(7, 1, 2, 1_000, 2_000)],
+            &GraphPolicy::permissive_2_to_7(),
+        );
         assert_eq!(g.edges().len(), 2);
         assert_eq!(g.tokens(), &[1, 2]);
         assert_eq!(g.out_edges(1).len(), 1);
         assert_eq!(g.out_edges(2).len(), 1);
         let fwd = g.edge(g.out_edges(1)[0]);
-        assert_eq!((fwd.token_in, fwd.token_out, fwd.zero_for_one), (1, 2, true));
+        assert_eq!(
+            (fwd.token_in, fwd.token_out, fwd.zero_for_one),
+            (1, 2, true)
+        );
         assert_eq!(fwd.version, ProtocolVersion::V2);
         assert_eq!(fwd.reserve_in, Raw::new(1_000));
     }
@@ -608,7 +614,10 @@ mod tests {
         let pruned = MultiGraph::build(vec![shallow, mid, deep], &policy);
         assert_eq!(pruned.edges().len(), 4, "two survivors × two directions");
         assert_eq!(pruned.dominance_dropped(), 2);
-        assert!(pruned.edges().iter().all(|e| e.pool_id == 3 || e.pool_id == 4));
+        assert!(pruned
+            .edges()
+            .iter()
+            .all(|e| e.pool_id == 3 || e.pool_id == 4));
 
         // Determinism: rebuilding yields the same survivors in the same order.
         let again = MultiGraph::build(
@@ -644,8 +653,11 @@ mod tests {
             ],
             &policy,
         );
-        let (cycles, _) =
-            crate::cycles::enumerate_bounded(&g, &policy, crate::cycles::EnumerateLimits::unbounded());
+        let (cycles, _) = crate::cycles::enumerate_bounded(
+            &g,
+            &policy,
+            crate::cycles::EnumerateLimits::unbounded(),
+        );
         assert_eq!(cycles.len(), 2, "both orientations of the surviving pair");
     }
 

@@ -505,8 +505,13 @@ export const PAGES: ReadonlyArray<PageDescriptor> = [
 /**
  * Invariante de cardinalidad — INV-1 (Norm Preservation).
  * Si esta constante difiere de PAGES.length, la auditoría falla.
+ *
+ * 2026-10-18 (D-06): puesto a 38 = PAGES.length real, para que INV-1 vuelva a
+ * cumplirse. La brecha entre estos 38 descriptores y las 59 páginas reales del
+ * App Router se sigue aparte (D-08): el inventario está incompleto, no
+ * duplicado, y completarlo es un paso propio con su gate.
  */
-export const EXPECTED_PAGE_COUNT = 37 as const;
+export const EXPECTED_PAGE_COUNT = 38 as const;
 
 /**
  * Discriminantes para query/group-by tipados (no usar string libre).

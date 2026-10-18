@@ -1,1 +1,6 @@
-BASE_SHA=70db818365101cc1083a9d178307afcab06f807f
+BASE_SHA=fe62cdceb6dc0b18afed8db03b7dc7ab64e38d6b
+# Re-pinned 2026-10-18 (D-05 / ADR-less fix, gate G-OMEGA-BASE-01).
+# Previous value 70db818365101cc1083a9d178307afcab06f807f exists as an object
+# but is unreachable from main (history rewritten; no common ancestor with the
+# current tip), so it could never be used as a base. The pin now tracks the
+# audited HEAD of the reintegration programme.

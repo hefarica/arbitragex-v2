@@ -504,7 +504,11 @@ mod tests {
             ..GraphPolicy::permissive_2_to_7()
         };
         let (cycles, _) = enumerate_bounded(&g, &allowed, EnumerateLimits::unbounded());
-        assert_eq!(cycles.len(), 1, "the wash cycle exists when policy allows it");
+        assert_eq!(
+            cycles.len(),
+            1,
+            "the wash cycle exists when policy allows it"
+        );
     }
 
     #[test]
@@ -532,7 +536,10 @@ mod tests {
         let (cycles, acc) = enumerate_bounded(&g, &policy, EnumerateLimits::new(usize::MAX, 25));
         assert!(acc.work_units_used <= 26);
         assert_eq!(acc.truncated, Some(TruncationReason::WorkBudget));
-        assert!(!cycles.is_empty(), "some cycles are still published honestly");
+        assert!(
+            !cycles.is_empty(),
+            "some cycles are still published honestly"
+        );
     }
 
     #[test]

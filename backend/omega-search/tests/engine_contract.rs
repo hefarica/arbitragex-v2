@@ -106,7 +106,16 @@ fn losing_seed_is_kept_as_diagnosis_and_beaten_by_a_real_alternative() {
     let engine = engine_with(
         g.clone(),
         policy.clone(),
-        cfg(&[1_000], ExternalCosts::NONE, 0, 0, 1_000, 4, &policy, BTreeMap::new()),
+        cfg(
+            &[1_000],
+            ExternalCosts::NONE,
+            0,
+            0,
+            1_000,
+            4,
+            &policy,
+            BTreeMap::new(),
+        ),
     );
     let mut ledger = CandidateLedger::new(SnapshotId(1));
     let outcome = engine.run(&mut ledger, Some(&seed));
@@ -115,7 +124,10 @@ fn losing_seed_is_kept_as_diagnosis_and_beaten_by_a_real_alternative() {
     let best = outcome.best_computed.as_ref().expect("a computed best");
     assert_eq!(best.net_raw(), Some(Raw::new(102)));
     assert_eq!(best.cycle.edges, vec![0, 3]);
-    assert_ne!(best.cycle.edges, seed.edges, "the winner is a different route");
+    assert_ne!(
+        best.cycle.edges, seed.edges,
+        "the winner is a different route"
+    );
 
     // The loser is still visible as a diagnosis, with its provenance.
     let diag = outcome.seed_diagnosis.as_ref().expect("seed diagnosis");
@@ -142,7 +154,16 @@ fn size_choice_changes_the_sign_and_the_best_size_is_interior() {
     let small = engine_with(
         dislocation_graph(),
         policy.clone(),
-        cfg(&[1_000], ExternalCosts::NONE, 0, 0, 1_000, 4, &policy, BTreeMap::new()),
+        cfg(
+            &[1_000],
+            ExternalCosts::NONE,
+            0,
+            0,
+            1_000,
+            4,
+            &policy,
+            BTreeMap::new(),
+        ),
     );
     let mut l1 = CandidateLedger::new(SnapshotId(1));
     let o_small = small.run(&mut l1, None);
@@ -151,7 +172,16 @@ fn size_choice_changes_the_sign_and_the_best_size_is_interior() {
     let huge = engine_with(
         dislocation_graph(),
         policy.clone(),
-        cfg(&[500_000], ExternalCosts::NONE, 0, 0, 1_000, 4, &policy, BTreeMap::new()),
+        cfg(
+            &[500_000],
+            ExternalCosts::NONE,
+            0,
+            0,
+            1_000,
+            4,
+            &policy,
+            BTreeMap::new(),
+        ),
     );
     let mut l2 = CandidateLedger::new(SnapshotId(1));
     let o_huge = huge.run(&mut l2, None);
@@ -231,7 +261,16 @@ fn unreachable_target_publishes_the_gap_and_keeps_the_best_number() {
     let engine = engine_with(
         dislocation_graph(),
         policy.clone(),
-        cfg(&[1_000], ExternalCosts::NONE, 0, 1_000_000, 1_000, 4, &policy, BTreeMap::new()),
+        cfg(
+            &[1_000],
+            ExternalCosts::NONE,
+            0,
+            1_000_000,
+            1_000,
+            4,
+            &policy,
+            BTreeMap::new(),
+        ),
     );
     let mut ledger = CandidateLedger::new(SnapshotId(1));
     let outcome = engine.run(&mut ledger, None);
@@ -293,14 +332,26 @@ fn budget_exhaustion_publishes_scope_best_gap_and_reason() {
     let engine = engine_with(
         g,
         policy.clone(),
-        cfg(&[1_000], ExternalCosts::NONE, 0, 50, /* budget */ 0, 4, &policy, BTreeMap::new()),
+        cfg(
+            &[1_000],
+            ExternalCosts::NONE,
+            0,
+            50,
+            /* budget */ 0,
+            4,
+            &policy,
+            BTreeMap::new(),
+        ),
     );
     let mut ledger = CandidateLedger::new(SnapshotId(1));
     let outcome = engine.run(&mut ledger, Some(&seed));
 
     match outcome.stop.reason {
         StopReason::EvalBudgetExhausted { pending } => {
-            assert!(pending >= 2, "both enumerated cycles stay vigente, got {pending}");
+            assert!(
+                pending >= 2,
+                "both enumerated cycles stay vigente, got {pending}"
+            );
         }
         other => panic!("expected eval_budget_exhausted, got {other:?}"),
     }
@@ -415,12 +466,24 @@ fn bounded_engine_matches_exhaustive_oracle_on_a_small_graph() {
             }
         }
     }
-    assert!(oracle_best.is_some(), "the oracle evaluated at least one cycle");
+    assert!(
+        oracle_best.is_some(),
+        "the oracle evaluated at least one cycle"
+    );
 
     let engine = engine_with(
         g.clone(),
         policy.clone(),
-        cfg(&[1_000, 7_500], ExternalCosts::NONE, 0, 0, 100_000, 4, &policy, BTreeMap::new()),
+        cfg(
+            &[1_000, 7_500],
+            ExternalCosts::NONE,
+            0,
+            0,
+            100_000,
+            4,
+            &policy,
+            BTreeMap::new(),
+        ),
     );
     let mut ledger = CandidateLedger::new(SnapshotId(1));
     let outcome = engine.run(&mut ledger, None);
@@ -459,7 +522,11 @@ fn dominance_prune_is_identified_and_does_not_change_the_optimum_here() {
     assert_eq!(g_open.dominance_dropped(), 0);
     // Two survivors per (pair, direction, version, equal fee) are kept;
     // the third (shallowest) pool is dropped in each direction.
-    assert_eq!(g_pruned.dominance_dropped(), 2, "1 dropped pool × 2 directions");
+    assert_eq!(
+        g_pruned.dominance_dropped(),
+        2,
+        "1 dropped pool × 2 directions"
+    );
     assert!(g_pruned.edges().len() < g_open.edges().len());
 
     let oracle_cycles = enumerate_exhaustive(&g_open, &policy_open);
@@ -478,7 +545,16 @@ fn dominance_prune_is_identified_and_does_not_change_the_optimum_here() {
         engine_with(
             g,
             p.clone(),
-            cfg(&[1_000], ExternalCosts::NONE, 0, 0, 100_000, 4, p, BTreeMap::new()),
+            cfg(
+                &[1_000],
+                ExternalCosts::NONE,
+                0,
+                0,
+                100_000,
+                4,
+                p,
+                BTreeMap::new(),
+            ),
         )
     };
     let mut l_open = CandidateLedger::new(SnapshotId(1));
@@ -514,7 +590,16 @@ fn diverse_alternatives_avoid_shared_pools() {
     let engine = engine_with(
         g.clone(),
         policy.clone(),
-        cfg(&[1_000], ExternalCosts::NONE, 0, 0, 1_000, 4, &policy, BTreeMap::new()),
+        cfg(
+            &[1_000],
+            ExternalCosts::NONE,
+            0,
+            0,
+            1_000,
+            4,
+            &policy,
+            BTreeMap::new(),
+        ),
     );
     let mut ledger = CandidateLedger::new(SnapshotId(1));
     let outcome = engine.run(&mut ledger, None);
@@ -554,7 +639,16 @@ fn generation_turnover_invalidates_a_stale_positive_result() {
     let before = engine_with(
         dislocation_graph(),
         policy.clone(),
-        cfg(&[1_000], ExternalCosts::NONE, 0, 0, 1_000, 4, &policy, BTreeMap::new()),
+        cfg(
+            &[1_000],
+            ExternalCosts::NONE,
+            0,
+            0,
+            1_000,
+            4,
+            &policy,
+            BTreeMap::new(),
+        ),
     );
     let mut ledger = CandidateLedger::new(SnapshotId(1));
     let o1 = before.run(&mut ledger, None);
@@ -564,7 +658,10 @@ fn generation_turnover_invalidates_a_stale_positive_result() {
     // A relevant change arrives → new generation bound to a new snapshot.
     let g2 = ledger.open_generation(SnapshotId(2));
     assert_eq!(g2, GenerationId(2));
-    assert!(ledger.current().is_empty(), "current candidates are invalidated");
+    assert!(
+        ledger.current().is_empty(),
+        "current candidates are invalidated"
+    );
     // Both cycles of the old snapshot were current and are now invalidated.
     assert_eq!(ledger.invalidated_count(), 2);
 
@@ -579,7 +676,16 @@ fn generation_turnover_invalidates_a_stale_positive_result() {
     let after = engine_with(
         devalued,
         policy.clone(),
-        cfg(&[1_000], ExternalCosts::NONE, 0, 0, 1_000, 4, &policy, BTreeMap::new()),
+        cfg(
+            &[1_000],
+            ExternalCosts::NONE,
+            0,
+            0,
+            1_000,
+            4,
+            &policy,
+            BTreeMap::new(),
+        ),
     );
     let o2 = after.run(&mut ledger, None);
 
@@ -640,7 +746,16 @@ fn break_even_is_a_credited_zero_not_a_loss_and_not_absence() {
     let engine = engine_with(
         g.clone(),
         policy.clone(),
-        cfg(&[1_000], ExternalCosts::NONE, 0, 1, 1_000, 4, &policy, BTreeMap::new()),
+        cfg(
+            &[1_000],
+            ExternalCosts::NONE,
+            0,
+            1,
+            1_000,
+            4,
+            &policy,
+            BTreeMap::new(),
+        ),
     );
     let mut ledger = CandidateLedger::new(SnapshotId(1));
     let outcome = engine.run(&mut ledger, None);
@@ -659,7 +774,16 @@ fn break_even_is_a_credited_zero_not_a_loss_and_not_absence() {
     let silent = engine_with(
         g,
         empty_policy.clone(),
-        cfg(&[1_000], ExternalCosts::NONE, 0, 1, 1_000, 4, &empty_policy, BTreeMap::new()),
+        cfg(
+            &[1_000],
+            ExternalCosts::NONE,
+            0,
+            1,
+            1_000,
+            4,
+            &empty_policy,
+            BTreeMap::new(),
+        ),
     );
     let mut ledger2 = CandidateLedger::new(SnapshotId(1));
     let o_absent = silent.run(&mut ledger2, None);
@@ -686,7 +810,16 @@ fn empty_authorized_scope_is_reported_not_crashed() {
     let engine = engine_with(
         dislocation_graph(),
         policy.clone(),
-        cfg(&[1_000], ExternalCosts::NONE, 0, 0, 1_000, 4, &policy, BTreeMap::new()),
+        cfg(
+            &[1_000],
+            ExternalCosts::NONE,
+            0,
+            0,
+            1_000,
+            4,
+            &policy,
+            BTreeMap::new(),
+        ),
     );
     let mut ledger = CandidateLedger::new(SnapshotId(1));
     let outcome = engine.run(&mut ledger, None);
@@ -695,7 +828,10 @@ fn empty_authorized_scope_is_reported_not_crashed() {
     assert_eq!(outcome.scope.authorized_hops, Vec::<u8>::new());
     assert_eq!(outcome.best_computed_net(), None);
     assert_eq!(outcome.gap_to_target, None, "no number computed → no gap");
-    assert_eq!(outcome.every_candidate_negative, None, "absence is not 'all negative'");
+    assert_eq!(
+        outcome.every_candidate_negative, None,
+        "absence is not 'all negative'"
+    );
     assert!(outcome.is_no_opportunity());
     assert_eq!(outcome.label, BEST_FOUND_LABEL);
 }
@@ -710,7 +846,16 @@ fn a_policy_with_no_cycle_reports_no_candidate_in_scope() {
     let engine = engine_with(
         g,
         policy.clone(),
-        cfg(&[1_000], ExternalCosts::NONE, 0, 0, 1_000, 4, &policy, BTreeMap::new()),
+        cfg(
+            &[1_000],
+            ExternalCosts::NONE,
+            0,
+            0,
+            1_000,
+            4,
+            &policy,
+            BTreeMap::new(),
+        ),
     );
     let mut ledger = CandidateLedger::new(SnapshotId(1));
     let outcome = engine.run(&mut ledger, None);
@@ -732,7 +877,16 @@ fn unevaluable_cycle_keeps_its_named_reason_and_no_fake_number() {
     let engine = engine_with(
         g,
         policy.clone(),
-        cfg(&[1_000], ExternalCosts::NONE, 0, 0, 1_000, 4, &policy, BTreeMap::new()),
+        cfg(
+            &[1_000],
+            ExternalCosts::NONE,
+            0,
+            0,
+            1_000,
+            4,
+            &policy,
+            BTreeMap::new(),
+        ),
     );
     let mut ledger = CandidateLedger::new(SnapshotId(1));
     let outcome = engine.run(&mut ledger, None);
@@ -754,7 +908,16 @@ fn unevaluable_cycle_keeps_its_named_reason_and_no_fake_number() {
 fn fair_share_weights_are_required_to_cover_every_authorized_family() {
     let policy = GraphPolicy::permissive_2_to_7();
     // Deliberately configure only the 2-hop family.
-    let mut c = cfg(&[1_000], ExternalCosts::NONE, 0, 0, 1_000, 4, &policy, BTreeMap::new());
+    let mut c = cfg(
+        &[1_000],
+        ExternalCosts::NONE,
+        0,
+        0,
+        1_000,
+        4,
+        &policy,
+        BTreeMap::new(),
+    );
     c.family_weights = vec![(FamilyId::new(2), 4)];
     let engine = engine_with(dislocation_graph(), policy.clone(), c);
 
