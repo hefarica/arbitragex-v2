@@ -150,6 +150,36 @@ jobs:
           EOSSH
 
       # ─────────────────────────────────────────────────────────────────
+      # FASE 3b: CUARENTENA de fuentes sin trackear (ARBX-DEPLOY-CLEAN-01)
+      # ─────────────────────────────────────────────────────────────────
+      # Los ficheros SIN TRACKEAR dentro de los directorios de código entran en el
+      # contexto de Docker y rompen el build aunque main esté sano. Caso real
+      # (2026-10-18, run 39109011031): un test WIP huérfano en
+      # `shared-ts/src/logging/http-logger.test.ts` abortó el build de api-server
+      # con TS2305 (`accessReqSerializer` no exportado).
+      # NO se borra nada: los ficheros se MUEVEN a una cuarentena con timestamp en
+      # el propio VPS, recuperables con `mv`. El residuo que no es código
+      # (backups `.pre-*`, `archives/`, docs) no se toca.
+      - name: 🧹 Cuarentena de fuentes sin trackear
+        run: |
+          ssh arbx "bash -s" <<'EOSSH'
+          set -e
+          cd /opt/arbitragex-v2
+          TS=$(date -u +%Y%m%dT%H%M%SZ)
+          Q="/root/arbx-deploy-quarantine/$TS"
+          git ls-files --others --exclude-standard -- shared-ts/src backend frontend contracts > /tmp/arbx-stray.txt || true
+          COUNT=$(wc -l < /tmp/arbx-stray.txt | tr -d ' ')
+          echo "sin trackear en dirs de código: $COUNT"
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            mkdir -p "$Q/$(dirname "$f")"
+            mv "$f" "$Q/$f"
+            echo "  cuarentena: $f -> $Q/$f"
+          done < /tmp/arbx-stray.txt
+          echo "cuarentena=$Q"
+          EOSSH
+
+      # ─────────────────────────────────────────────────────────────────
       # FASE 4: BUILD SECUENCIAL (Crisol Termodinámico)
       # Cada build verifica recursos antes y después
       # ─────────────────────────────────────────────────────────────────
