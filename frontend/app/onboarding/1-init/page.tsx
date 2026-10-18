@@ -211,11 +211,11 @@ export default function Phase1InitPage() {
             </Alert>
           )}
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <Button type="button" onClick={submit} disabled={!canSubmit}>
               {alreadyDone ? "Re-record (after rotation)" : "Record phase 1 complete"}
             </Button>
-            {!allAcked && <Badge variant="outline">check all five confirmations</Badge>}
+            {!allAcked && <Badge variant="outline" className="h-auto whitespace-normal text-left">check all five confirmations</Badge>}
           </div>
         </CardContent>
       </Card>

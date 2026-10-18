@@ -3,13 +3,19 @@ import fs from "node:fs";
 
 const BASE = process.env.P5_BASE || "https://arbx.ape-tv.net";
 const OUT = process.env.P5_OUT || "/tmp/p5-live-scan.json";
-const VIEWPORTS = [
+const ALL_VIEWPORTS = [
   { name: "1440", width: 1440, height: 900 },
   { name: "1280", width: 1280, height: 800 },
   { name: "1024", width: 1024, height: 768 },
   { name: "390", width: 390, height: 844 },
 ];
-const routes = JSON.parse(fs.readFileSync("/tmp/routes.json", "utf8"));
+// Additive (PR-E): allow narrowing the sweep and pointing at the route list, so
+// the same scanner serves the live probe and the local G-NO-OVERFLOW-390-01 gate.
+const VIEWPORTS = process.env.P5_VIEWPORTS
+  ? ALL_VIEWPORTS.filter((v) => process.env.P5_VIEWPORTS.split(",").includes(v.name))
+  : ALL_VIEWPORTS;
+const ROUTES_FILE = process.env.P5_ROUTES || "/tmp/routes.json";
+const routes = JSON.parse(fs.readFileSync(ROUTES_FILE, "utf8"));
 
 function stripTags(html) {
   return html

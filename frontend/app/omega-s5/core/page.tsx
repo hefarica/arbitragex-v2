@@ -40,7 +40,8 @@ export default function CorePage() {
           Manifest hash: <code>{manifest.state_hash.slice(0, 16)}…</code>
         </div>
       )}
-      <table className="mt-4 w-full text-sm">
+      <div className="mt-4 overflow-x-auto">
+        <table className="w-full text-sm">
         <thead><tr className="border-b border-border text-left">
           <th className="py-2">Chain</th><th>Address</th><th>Impl</th><th>Version</th>
         </tr></thead>
@@ -55,6 +56,7 @@ export default function CorePage() {
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }

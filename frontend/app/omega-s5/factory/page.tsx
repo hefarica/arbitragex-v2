@@ -23,10 +23,11 @@ export default function FactoryPage() {
   }
 
   return (
-    <div>
+    <div className="min-w-0">
       <h1 className="text-xl font-semibold">DeterministicFactory Deployments</h1>
       <p className="text-sm text-muted-foreground">CREATE2 — salt = keccak(OMEGA_DOMAIN, chainId, version, label)</p>
-      <table className="mt-4 w-full text-sm">
+      <div className="mt-4 w-full min-w-0 overflow-x-auto">
+        <table className="w-full text-sm">
         <thead><tr className="border-b border-border text-left">
           <th className="py-2">Chain</th><th>Address</th><th>Salt</th><th>Verified</th><th>Hash</th>
         </tr></thead>
@@ -42,6 +43,7 @@ export default function FactoryPage() {
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }

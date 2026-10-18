@@ -150,7 +150,7 @@ function LegPanel({ row }: { row: QuantGridRow }) {
           </span>
         </span>
       </div>
-      <table className="w-full border-collapse">
+      <div className="w-full overflow-x-auto"><table className="w-full border-collapse">
         <thead>
           <tr className="border-b border-border">
             <Th>#</Th>
@@ -229,7 +229,7 @@ function LegPanel({ row }: { row: QuantGridRow }) {
             </tr>
           ))}
         </tbody>
-      </table>
+      </table></div>
       <p className="text-[10px] text-muted-foreground mt-2">
         fee_included_in_spot = true: el spot sale de amount_in/amount_out MEDIDOS (el AMM ya cobró el fee), por eso
         F_e = spot/fair sin volver a descontar (1 − fee).
@@ -477,7 +477,7 @@ export default function QuantClient({
           {/* ── 09_DASHBOARD · embudo por hops ───────────────────────────── */}
           <div data-testid="quant-by-hops" className="rounded-2xl border border-border bg-card p-4">
             <h2 className="text-sm font-semibold mb-2">Embudo por patas (hops)</h2>
-            <table className="w-full border-collapse">
+            <div className="w-full overflow-x-auto"><table className="w-full border-collapse">
               <thead>
                 <tr className="border-b border-border">
                   <Th>Hops</Th>
@@ -516,7 +516,7 @@ export default function QuantClient({
                   ))
                 )}
               </tbody>
-            </table>
+            </table></div>
           </div>
 
           {/* ── 08_ROUTE_PNL · grilla principal ─────────────────────────── */}
@@ -561,7 +561,7 @@ export default function QuantClient({
               </p>
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full border-collapse" data-testid="quant-grid">
+                <div className="w-full overflow-x-auto"><table className="w-full border-collapse" data-testid="quant-grid">
                   <thead>
                     <tr className="border-b border-border">
                       <Th>Ruta</Th>
@@ -676,7 +676,7 @@ export default function QuantClient({
                       </React.Fragment>
                     ))}
                   </tbody>
-                </table>
+                </table></div>
               </div>
             )}
           </div>
@@ -686,7 +686,7 @@ export default function QuantClient({
             <h2 className="text-sm font-semibold mb-2">
               Top {data.layers.dashboard.top.length} por net_bps (de {data.layers.dashboard.routes} rutas)
             </h2>
-            <table className="w-full border-collapse">
+            <div className="w-full overflow-x-auto"><table className="w-full border-collapse">
               <thead>
                 <tr className="border-b border-border">
                   <Th>#</Th>
@@ -729,7 +729,7 @@ export default function QuantClient({
                   ))
                 )}
               </tbody>
-            </table>
+            </table></div>
           </div>
 
           {/* ── R8 explícito: lo no computado, con su razón ─────────────── */}

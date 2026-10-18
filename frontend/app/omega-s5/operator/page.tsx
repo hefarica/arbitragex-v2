@@ -38,7 +38,8 @@ export default function OperatorPage() {
           <div className="text-xs">Hash: <code className="font-mono">{global.config_hash.slice(0, 16)}…</code></div>
         </div>
       )}
-      <table className="mt-4 w-full text-sm">
+      <div className="mt-4 overflow-x-auto">
+        <table className="w-full text-sm">
         <thead><tr className="border-b border-border text-left">
           <th className="py-2">Scope</th><th>Name</th><th>Cap USD</th><th>Max Drawdown</th><th>Status</th>
         </tr></thead>
@@ -54,6 +55,7 @@ export default function OperatorPage() {
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }

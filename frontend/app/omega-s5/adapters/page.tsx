@@ -32,7 +32,8 @@ export default function AdaptersPage() {
     <div>
       <h1 className="text-xl font-semibold">DEX Adapters</h1>
       <p className="text-sm text-muted-foreground">IDEXAdapter — agnostic to chain · polymorphic by contract_kind</p>
-      <table className="mt-4 w-full text-sm">
+      <div className="mt-4 overflow-x-auto">
+        <table className="w-full text-sm">
         <thead><tr className="border-b border-border text-left">
           <th className="py-2">Kind</th><th>Chain</th><th>Address</th><th>Status</th>
         </tr></thead>
@@ -47,6 +48,7 @@ export default function AdaptersPage() {
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }

@@ -21,11 +21,11 @@ export default function RegistryIndexPage() {
       <p className="text-sm text-muted-foreground">
         Schema-First. Hot-reload per resource. Idempotent CRUD. 7-Layer Coherence enforced.
       </p>
-      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+      <div className="mt-4 grid min-w-0 gap-3 sm:grid-cols-2">
         {REGISTRIES.map((r) => (
-          <Link key={r.path} href={r.path} className="rounded-lg border border-border p-4 hover:bg-muted">
+          <Link key={r.path} href={r.path} className="min-w-0 rounded-lg border border-border p-4 hover:bg-muted">
             <div className="text-sm font-medium">{r.name}</div>
-            <div className="mt-1 font-mono text-xs text-muted-foreground">{r.channel}:reload</div>
+            <div className="mt-1 break-all font-mono text-xs text-muted-foreground">{r.channel}:reload</div>
           </Link>
         ))}
       </div>

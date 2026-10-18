@@ -31,7 +31,8 @@ export default function WalletsPage() {
     <div>
       <h1 className="text-xl font-semibold">Wallet Topology</h1>
       <p className="text-sm text-muted-foreground">Ghost Protocol: ExecutionSigner.balance ≡ 0 (enforced at bytecode)</p>
-      <table className="mt-4 w-full text-sm">
+      <div className="mt-4 overflow-x-auto">
+        <table className="w-full text-sm">
         <thead><tr className="border-b border-border text-left">
           <th className="py-2">Role</th><th>Chain</th><th>Address</th><th>Status</th>
         </tr></thead>
@@ -46,6 +47,7 @@ export default function WalletsPage() {
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }

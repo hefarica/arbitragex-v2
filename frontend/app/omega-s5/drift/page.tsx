@@ -26,7 +26,8 @@ export default function DriftPage() {
         <span suppressHydrationWarning>{new Date(refreshedAt).toLocaleTimeString()}</span>
       </div>
       {error && <div className="mt-2 text-sm text-rose-500">{error}</div>}
-      <table className="mt-4 w-full text-sm">
+      <div className="mt-4 overflow-x-auto">
+        <table className="w-full text-sm">
         <thead><tr className="border-b border-border text-left">
           <th className="py-2">Resource</th><th>Chain</th><th>A → B</th><th>Hash A</th><th>Hash B</th><th>Sev</th>
         </tr></thead>
@@ -47,6 +48,7 @@ export default function DriftPage() {
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }

@@ -29,7 +29,7 @@ function ReadinessStepCard({ step }: { step: SystemReadinessStep }) {
   return (
     <Link
       href={step.href}
-      className={`group rounded-2xl border p-4 backdrop-blur-sm transition hover:-translate-y-0.5 hover:border-slate-300 ${STATUS_STYLES[step.status]}`}
+      className={`group min-w-0 overflow-hidden rounded-2xl border p-4 backdrop-blur-sm transition hover:-translate-y-0.5 hover:border-slate-300 ${STATUS_STYLES[step.status]}`}
       aria-label={`Paso ${step.index}: ${step.title}. Estado: ${statusLabel}`}
     >
       <div className="flex items-start gap-3">
@@ -80,7 +80,7 @@ export function ReadinessStepper({ readiness, className = "" }: Props) {
         </div>
       )}
 
-      <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <div className="mt-5 grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-4">
         {readiness.steps.map((step) => <ReadinessStepCard key={step.id} step={step} />)}
       </div>
 

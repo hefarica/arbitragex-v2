@@ -35,7 +35,8 @@ export default function CruciblePage() {
       <div className={`mt-2 inline-block rounded px-3 py-1 text-sm font-medium ${ok ? "bg-emerald-500/15 text-emerald-500" : "bg-amber-500/15 text-amber-500"}`}>
         {ok ? "CRUCIBLE PASSED" : rows.length === 0 ? "NOT STARTED — no crucible data yet" : "CRUCIBLE IN PROGRESS"}
       </div>
-      <table className="mt-4 w-full text-sm">
+      <div className="mt-4 overflow-x-auto">
+        <table className="w-full text-sm">
         <thead><tr className="border-b border-border text-left">
           <th className="py-2">Network</th><th>Success</th><th>Runtime</th><th>Reverts</th><th>Cap USD</th>
         </tr></thead>
@@ -51,6 +52,7 @@ export default function CruciblePage() {
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }

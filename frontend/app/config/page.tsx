@@ -60,7 +60,7 @@ export default async function ConfigPage() {
         showRefresh
       />
 
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         {paperOn ? (
           <Alert variant="success" className="flex-1 mr-4">
             <ShieldCheckIcon />
@@ -74,7 +74,7 @@ export default async function ConfigPage() {
             <AlertDescription>LIVE CAPITAL EXECUTION ENABLED. Opportunities will be sent to the mempool.</AlertDescription>
           </Alert>
         )}
-        <div className="flex-shrink-0 flex flex-col gap-3 p-4 border rounded-xl bg-card">
+        <div className="min-w-0 flex flex-col gap-3 p-4 border rounded-xl bg-card">
           <div className="flex items-center justify-between gap-2">
             <span className="text-xs font-medium text-muted-foreground">Paper mode</span>
             <ControlScopeBadge kind="RUNTIME_MUTATION" />
