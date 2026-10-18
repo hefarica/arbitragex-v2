@@ -470,14 +470,22 @@ jobs:
           ROLLBACK_GENS="$(docker ps -a --filter 'name=arbx-rollback-' --format '{{.Names}}' 2>/dev/null \
             | sed -nE 's/^arbx-rollback-.*-([0-9]{8}T[0-9]{6}Z)$/\1/p' | sort -u || true)"
           KEEP_LIST="$(printf '%s\n' "$ROLLBACK_GENS" | grep -v '^$' | tail -n "$ROLLBACK_KEEP" || true)"
+          # PIPE-ERREXIT HARDENING: the remote script runs `set -euo pipefail`, and
+          # EVERY `grep` below returns 1 when it matches nothing — which is the
+          # normal case on a first run (no generations yet) and on the last kept
+          # generation (no keeper left to release). Without the trailing `|| true`
+          # the pipeline's non-zero status would abort the deploy under
+          # `pipefail`, i.e. the capture would break the very deploy it protects.
+          # These are best-effort housekeeping steps: a failed cleanup must never
+          # fail the release.
           printf '%s\n' "$ROLLBACK_GENS" | grep -v '^$' | while read -r gen; do
             if printf '%s\n' "$KEEP_LIST" | grep -qx "$gen"; then continue; fi
             echo "    releasing rollback gen ${gen} (beyond keep=${ROLLBACK_KEEP})"
             docker ps -a --filter 'name=arbx-rollback-' --format '{{.Names}}' 2>/dev/null \
-              | grep -E -- "-${gen}$" | while read -r k; do docker rm -f "$k" >/dev/null 2>&1 || true; done
+              | grep -E -- "-${gen}$" | while read -r k; do docker rm -f "$k" >/dev/null 2>&1 || true; done || true
             docker image ls --format '{{.Repository}}:{{.Tag}}' 2>/dev/null \
-              | grep -E -- "^arbx-rollback/.*:${gen}$" | while read -r ref; do docker image rm "$ref" >/dev/null 2>&1 || true; done
-          done
+              | grep -E -- "^arbx-rollback/.*:${gen}$" | while read -r ref; do docker image rm "$ref" >/dev/null 2>&1 || true; done || true
+          done || true
           echo "    rollback generations kept: $(printf '%s\n' "$KEEP_LIST" | grep -c . || true)"
           # ══════════════════════════════════════════════════════════════════
 
