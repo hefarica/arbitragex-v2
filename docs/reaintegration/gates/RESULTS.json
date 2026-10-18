@@ -11,14 +11,17 @@
     "G-PAGE-INV-01": "PASS",
     "G-ROOT-ENTRYPOINTS-01": "PASS"
   },
-  "not_executed": {
-    "cargo fmt --check --workspace": "DEBT — requires the full backend workspace build",
-    "cargo clippy --workspace --all-targets -D warnings": "DEBT — same",
-    "cargo test --workspace": "DEBT — same",
-    "tsc --noEmit (api-server/frontend/selector-api)": "DEBT — requires node_modules (npm ci)",
-    "vitest run": "DEBT — same",
-    "forge fmt/test/invariant": "DEBT — forge absent",
-    "gitleaks / npm-audit": "DEBT — tools absent",
-    "E2E 3 planos (repo/dominio/Chromium)": "DEBT — P5, not reached"
+  "superseded_by": {
+    "record": "docs/reaintegration/gates/RESULTS-P4.json",
+    "iteration": "P4 (iteration 3, base 4f2c88a3)",
+    "what_it_covers": "cargo fmt --check, cargo clippy --workspace --all-targets -D warnings (PASS after the clippy repair), cargo test --workspace, tsc --noEmit x3, vitest x4, forge fmt/test"
+  },
+  "still_pending": {
+    "P5 plano 1 (repo vivo)": "DEBT — docker absent in the executor sandbox (planos 2 y 3 no intentados)",
+    "gitleaks": "RED — 345 findings, all generic-api-key, concentrated in repo-vps-audits/ (triage, not a secret verdict)",
+    "npm audit --omit=dev": "RED — 38 vulnerabilities (1 critical next, 7 high)",
+    "invariantes de runtime (relays-client único firmante, capital $0/broadcast=false, kill-switch <10ms)": "NOT VERIFIED",
+    "P6/P7/P8": "NOT REACHED",
+    "sim-core fixture vs forge artifact (metadata-hash divergence)": "OPEN — decision owned by Hector"
   }
 }

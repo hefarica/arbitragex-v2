@@ -1532,8 +1532,11 @@ mod simctl_bound_01_tests {
         assert_ne!(sanitize_key(f64::NAN), f64::max(f64::NAN, 0.0));
         // And the disagreement is not cosmetic: max() would ADMIT the NaN.
         assert!(f64::max(f64::NAN, 0.0) >= 0.0, "max() would admit the NaN");
+        // `!(x > 0.0)` es EXACTAMENTE "no estrictamente mayor" para TODO valor,
+        // incluido NaN (donde `x <= 0.0` sería falso). Se escribe con
+        // `partial_cmp` para no cambiar la semántica NaN.
         assert!(
-            !(sanitize_key(f64::NAN) > 0.0),
+            sanitize_key(f64::NAN).partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater),
             "the sanitised key rejects it"
         );
     }
@@ -1688,12 +1691,15 @@ mod simctl_bound_01_tests {
         // sequential consumer can physically reach at the measured ~2.084 s per
         // simulation (1/2.084 ≈ 0.48/s), so it does not throttle real work...
         const MEASURED_PIPELINE_LATENCY_S: f64 = 2.084;
-        assert!(
+        // Invariante de COMPILACIÓN (no de runtime): `assert!` sobre constantes
+        // lo optimiza el compilador y clippy lo marca; `const _: () = assert!(..)`
+        // lo evalúa en compile-time y conserva la intención.
+        const _: () = assert!(
             DEFAULT_MAX_SIMS_PER_SEC > 1.0 / MEASURED_PIPELINE_LATENCY_S,
             "the cap must not bind the sequential ceiling"
         );
         // ...and it must be nowhere near the unmeasured row rate:
-        assert!(DEFAULT_MAX_SIMS_PER_SEC < 68.0 / 10.0);
+        const _: () = assert!(DEFAULT_MAX_SIMS_PER_SEC < 68.0 / 10.0);
         assert_eq!(DEFAULT_MAX_IN_FLIGHT, 1, "conservative = today's reality");
     }
 

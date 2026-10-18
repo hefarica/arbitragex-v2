@@ -1,7 +1,7 @@
 {
   "schema": "reaintegration/manifest/2",
-  "generated_at": "2026-10-18T07:23:28Z",
-  "base_sha": "b54d3babbebc35f566806a07d12c4a2e31a23cf6",
+  "generated_at": "2026-10-18T08:28:28Z",
+  "base_sha": "4f2c88a33eeb31b23bc516a8bc35ccfbd2036a71",
   "artifacts": {
     "inventory": "docs/reaintegration/00-INVENTORY.json",
     "rea_fiches": 16,
@@ -25,7 +25,7 @@
       "scripts/gates/g-root-entrypoints-01.sh"
     ],
     "ledger": "docs/reaintegration/ledger/LEDGER_SHA256.json",
-    "ledger_sha256": "6fc9332186bfd8ed99e7516d153741a888777cb34fe1705737471f33da785c35"
+    "ledger_sha256": "ca074a3961d220e1b8ff209cd6d6cb12a5cdfb49494f1f007670f35168b7c610"
   },
   "gates_result": {
     "G-BACKUP-01": "PASS",
@@ -35,5 +35,5 @@
     "G-PAGE-INV-01": "PASS",
     "G-ROOT-ENTRYPOINTS-01": "PASS"
   },
-  "files_hashed": 38
+  "files_hashed": 40
 }

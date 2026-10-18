@@ -1,0 +1,92 @@
+{
+  "schema": "reaintegration/gate-results/2",
+  "generated_at": "2026-10-18T08:25:25Z",
+  "base_branch": "REAINTEGRATION-P3-D04-D07-01",
+  "base_commit": "4f2c88a33eeb31b23bc516a8bc35ccfbd2036a71",
+  "environment": {
+    "cargo": "1.85.0 (default) / 1.91.0 (per rust-toolchain.toml)",
+    "forge": "1.8.5",
+    "node": "v22.23.3",
+    "docker": "ABSENT",
+    "build_flags": "CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0"
+  },
+  "results": {
+    "cargo_fmt_check_workspace": "PASS",
+    "cargo_clippy_workspace_all_targets_D_warnings": "PASS_AFTER_REPAIR (was FAIL: 11 errors in 3 crates)",
+    "cargo_test_workspace": "FAIL 1/4440 (4416 passed, 1 failed, 23 ignored, 28 suites)",
+    "tsc_noEmit_frontend": "PASS",
+    "tsc_noEmit_api_server": "PASS",
+    "tsc_noEmit_selector_api": "PASS",
+    "vitest_frontend": "PASS (155 files, 1639 tests)",
+    "vitest_api_server": "PASS (77 files, 1020 tests)",
+    "vitest_selector_api": "PASS (9 files, 85 tests)",
+    "vitest_shared_ts": "PASS (51 tests)",
+    "forge_fmt_check": "PASS",
+    "forge_test_including_invariants": "PASS (240 tests, 0 failed, 9 skipped)",
+    "forge_invariant_subcommand": "NOT_A_COMMAND in forge 1.8.5 \u2014 invariants run inside forge test",
+    "gitleaks": "FAIL (345 findings, all generic-api-key, 36 files)",
+    "npm_audit_omit_dev": "FAIL (38 vulns: 1 critical, 7 high, 30 moderate)",
+    "determinism_replay_2x": "PARTIAL (omega-search suite hash identical across 2 runs)"
+  },
+  "clippy_repair": {
+    "crates": [
+      {
+        "crate": "sim-ctl",
+        "errors": 3,
+        "file": "src/consumer.rs",
+        "lines": [
+          1536,
+          1691,
+          1696
+        ]
+      },
+      {
+        "crate": "recon",
+        "errors": 2,
+        "file": "src/drift_tracker.rs",
+        "lines": [
+          1018,
+          1019
+        ]
+      },
+      {
+        "crate": "sed-core",
+        "errors": 6,
+        "files": [
+          "src/types/errors.rs",
+          "src/types/infrastructure.rs",
+          "src/types/kill_switch.rs"
+        ]
+      }
+    ],
+    "all_in_test_code": true,
+    "semantics_preserved": true
+  },
+  "test_failure": {
+    "test": "sim-core::paper_executors::tests::fixtures_match_forge_output_when_present",
+    "location": "sim-core/src/paper_executors.rs:549",
+    "cause": "committed ArbitrageExecutor bytecode fixture differs from freshly built contracts/out ONLY in the trailing solc metadata hash",
+    "evidence": {
+      "len_hex_both": 19152,
+      "first_diff_char_offset": 19066,
+      "first_diff_byte": 9532,
+      "fixture_tail": "a264697066735822122039b0c7ae...64736f6c63430008180033",
+      "fresh_tail": "a26469706673582212207d06463f...64736f6c63430008180033"
+    },
+    "self_skips_without_contracts_out": true,
+    "fix_options": [
+      "regenerate fixture via scripts/gen_executor_fixtures.sh",
+      "make the guard metadata-hash-insensitive",
+      "document the guard as local-only"
+    ],
+    "action_taken": "none (changing a committed fixture is a product decision)"
+  },
+  "debt": {
+    "P5_plano1_repo_vivo": "DEBT \u2014 docker/docker-compose absent in sandbox (not simulated)",
+    "P5_plano2_dominio_vivo": "NOT ATTEMPTED",
+    "P5_plano3_chromium": "NOT ATTEMPTED",
+    "P6_P7_P8": "NOT REACHED",
+    "runtime_invariants": "NOT VERIFIED (require E2E)",
+    "npm_ci": "requires writable cache: npm ci --cache /tmp/npmcache"
+  }
+}

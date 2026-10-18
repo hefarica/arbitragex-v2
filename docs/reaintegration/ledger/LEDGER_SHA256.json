@@ -1,7 +1,7 @@
 {
   "schema": "reaintegration/ledger/2",
-  "generated_at": "2026-10-18T07:23:28Z",
-  "base_sha": "b54d3babbebc35f566806a07d12c4a2e31a23cf6",
+  "generated_at": "2026-10-18T08:28:28Z",
+  "base_sha": "4f2c88a33eeb31b23bc516a8bc35ccfbd2036a71",
   "algorithm": "sha256",
   "excluded_self_referential": [
     "docs/reaintegration/MANIFEST_SHA256.json",
@@ -22,6 +22,11 @@
       "path": "docs/reaintegration/FINAL-CLOSURE.md",
       "sha256": "34bc3370b6c1b958854290229068a409c6b6d1f744cd5b2a1d2d6afda8944db2",
       "bytes": 6004
+    },
+    {
+      "path": "docs/reaintegration/P4-RESULTS.md",
+      "sha256": "68ea4023f7b38f7dfeb72b07623b6ce6a49674581fea6de58385d3710f04eb43",
+      "bytes": 7873
     },
     {
       "path": "docs/reaintegration/README.md",
@@ -79,9 +84,14 @@
       "bytes": 2422
     },
     {
+      "path": "docs/reaintegration/gates/RESULTS-P4.json",
+      "sha256": "56506c6ff35f23798402f1e65925b86a4f14b5f07e945a30bf0a5b3b8b93c984",
+      "bytes": 3409
+    },
+    {
       "path": "docs/reaintegration/gates/RESULTS.json",
-      "sha256": "88ba5515f6067cc35a75ea7600712c5d211642cb50e8c08d3e9b5063b31eda63",
-      "bytes": 999
+      "sha256": "5309c2211927e49355a342aaa44a0d5fda4d368c027488c4d9813c263b519d7f",
+      "bytes": 1383
     },
     {
       "path": "docs/reaintegration/rea/01-cryptofeed.md",
