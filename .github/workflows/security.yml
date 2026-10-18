@@ -228,6 +228,45 @@ jobs:
           # The gate was blocking advisories that are already remediated.
           # smartstring 1.0.1 (RUSTSEC-2026-0249) is STILL in the lock (via
           # sqlx 0.8.1 subtree) — that ignore stays.
+          #
+          # ── ADDITION 2026-10-18 (P3 cargo-audit · REA loop · main a14dd9e6) ──
+          # Gate RED on main: `cargo audit` reported 9 vulnerabilities
+          # (rustls 0.23.45 ×4, rustls 0.21.12 ×2, zip 0.6.6 ×3). Each entry
+          # below re-verified against backend/Cargo.lock (815 pkgs) on 2026-10-18.
+          # REMEDIATED in the same step (Cargo.lock, 13-line lock-only diff):
+          #   rustls 0.23.45 -> 0.23.46 clears RUSTSEC-2026-0346/0347/0348/0349
+          #   for the 0.23 line (patched >= 0.23.46).
+          # The five below have NO in-line fix. Exposure analysis:
+          #   RUSTSEC-2026-0346  rustls 0.21.12 (4.0 medium) — Debug impls of client
+          #     session values expose TLS secrets. Affects ONLY a custom
+          #     ClientSessionStore that Debug-formats session values. The repo
+          #     defines NONE (grep ClientSessionStore backend/*/src = 0) and uses the
+          #     built-in store (whose Debug output is redacted). NOT reachable.
+          #     Plan: dies with the ethers-rs 2.0.14 removal sprint (drops
+          #     reqwest 0.11 / tokio-rustls 0.24 / tungstenite 0.20).
+          #   RUSTSEC-2026-0349  rustls 0.21.12 (3.7 low) — unauthenticated ServerHello
+          #     can downgrade later connections to classical KEX (post-quantum
+          #     downgrade; NO key compromise, NO auth bypass). Requires the
+          #     X25519MLKEM768 hybrid group, which the 0.21 line does not implement
+          #     (PQ support is 0.23+) and a stored session; flagged by version range,
+          #     effectively NOT reachable on this version. Same ethers-rs sprint.
+          #   RUSTSEC-2026-0369  zip 0.6.6 (9.1 critical) — ZipStreamReader::extract /
+          #   RUSTSEC-2026-0367  zip 0.6.6 (7.3 high)       ZipArchive::extract apply
+          #   RUSTSEC-2026-0368  zip 0.6.6 (category priv-esc) Unix perms / SUID-SGID
+          #      and symlink targets without confining them (privilege escalation on
+          #      extraction of an attacker-controlled archive). zip is a LOCKFILE-ONLY
+          #      dependency: `cargo tree --target all` has ZERO svm/zip/ethers-solc
+          #      nodes — ethers-solc sits behind ethers's `solc`/`svm-solc` feature,
+          #      which is OFF (workspace ethers = default-features=false,
+          #      features=["ws","rustls"]; abigen does not pull solc). Even if it were
+          #      on, zip is gated cfg(all(target_os="windows",target_arch="x86_64"))
+          #      in svm-rs 0.3.5, so it is never compiled on the Linux CI/prod; the
+          #      repo has no zip usage (grep 'use zip'/'zip::' = 0). NOT reachable.
+          #      zip fix is a MAJOR (>=9.0.0) and svm-rs pins `zip = "0.6"`
+          #      (API-incompatible, no valid in-line bump). Plan: dies with the
+          #      ethers-rs 2.0.14 removal sprint.
+          # Expiry unchanged (2030-12-31, enforced by the fail-honest step above);
+          # these entries were added/re-justified 2026-10-18.
           RUSTSEC_IGNORES: >-
             --ignore RUSTSEC-2026-0002
             --ignore RUSTSEC-2024-0388
@@ -247,6 +286,11 @@ jobs:
             --ignore RUSTSEC-2026-0249
             --ignore RUSTSEC-2026-0253
             --ignore RUSTSEC-2026-0258
+            --ignore RUSTSEC-2026-0346
+            --ignore RUSTSEC-2026-0349
+            --ignore RUSTSEC-2026-0367
+            --ignore RUSTSEC-2026-0368
+            --ignore RUSTSEC-2026-0369
 
   gitleaks:
     name: gitleaks (secrets scan)
