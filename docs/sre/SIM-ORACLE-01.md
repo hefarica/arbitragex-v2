@@ -128,6 +128,32 @@ USDC `0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48`; WETH `0xC02aaA39b223FE8D0A0e5
 fee 500 → `0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640`; fee 3000 → `0x8ad599c3A0ff1De082011EFDDc58f1908eB6e6D8`;
 RPC de fork `https://eth.drpc.org` **sirve archivo** (bloque 20.578.304 OK).
 
+## 5-bis. La receta, VERIFICADA en un fork real
+
+`scripts/oracle/whale_funding_recipe.sh` implementa el setup determinista y **se corrió
+contra un fork de mainnet** (`anvil --fork-url https://eth.drpc.org --fork-block-number
+26197506`), con lecturas independientes en cada paso:
+
+```
+0) inicial:        balanceOf(signer)=0 · eth(signer)=0
+1) anvil_setBalance(signer, 2 ETH)          -> override de CUENTA (el nativo no tiene slot)
+2) impersonate(ballena) + transfer REAL     -> balanceOf(signer)=40 000 000 (40 USDC)
+3) approve(signer -> spender)               -> allowance=40 000 000
+4) aserciones: ETH >= 2*gas_cost · balanceOf >= size · allowance >= size  -> OK
+```
+
+Nada aquí adivina un índice de storage: el nativo va por override de cuenta y el ERC20 por
+una transferencia real desde una ballena impersonada. **Falta cablearlo en
+`sim-ctl/src/signer_funding.rs`** detrás de un flag (ver §7) — la receta ya está probada,
+el cableado no.
+
+**Decisión pendiente para el cableado — de dónde sale la ballena.** El guion la recibe por
+parámetro (`WHALE=...`), pero el proceso de sim no la sabe de antemano. Opciones:
+(a) mapa por token en config/env (`ARBX_SIM_FUND_WHALE_<token>`), fail-closed si falta;
+(b) la **propia piscina** que el sim ya conoce (tiene los tokens y es impersonable en un
+fork); (c) un holder descubierto en el bloque. La (b) no necesita config nueva y es
+determinista; la (a) es la más explícita. **No la elijo yo: cambia el contrato operativo.**
+
 ## 6. Uso
 
 ```bash
