@@ -85,6 +85,10 @@ pub enum SequenceError {
     AmountsOutReverted(String),
     #[error("getAmountsOut halted: {0}")]
     AmountsOutHalted(String),
+    #[error("read_call reverted: {0}")]
+    CallReadReverted(String),
+    #[error("read_call halted: {0}")]
+    CallReadHalted(String),
     #[error("deploy() init_code is empty — a CREATE with no bytecode")]
     CreateInitCodeEmpty,
     #[error("create succeeded but REVM returned no created address")]
@@ -104,6 +108,8 @@ impl SequenceError {
             Self::AmountsOutEmptyArray => "amounts_out_empty_array",
             Self::AmountsOutReverted(_) => "amounts_out_reverted",
             Self::AmountsOutHalted(_) => "amounts_out_halted",
+            Self::CallReadReverted(_) => "call_read_reverted",
+            Self::CallReadHalted(_) => "call_read_halted",
             Self::CreateInitCodeEmpty => "create_init_code_empty",
             Self::CreateAddressMissing => "create_address_missing",
         }
@@ -662,6 +668,66 @@ impl SequenceContext {
         Ok(amount)
     }
 
+    /// Generic read-only call against `to` with `calldata` — the
+    /// `eth_call`-equivalent of [`read_balance`] / [`read_amounts_out`].
+    ///
+    /// MIRRORS both: a non-committing `transact()` — it does NOT bump
+    /// `gas_used_total`, does NOT increment `successful_calls`, does NOT touch
+    /// the trace hash, and does NOT mutate the CacheDB (no nonce bump on any
+    /// real account: the canonical `eth_call` sender `Address::ZERO` is used).
+    /// It can therefore be issued mid-sequence without perturbing later
+    /// committed steps, and returns the RAW return data (the caller decodes).
+    ///
+    /// Returns `Ok(None)` when the call SUCCEEDS with EMPTY return data — the
+    /// canonical "no contract at `to`" signal. Callers fail closed on `None`;
+    /// a revert or halt is a typed error instead.
+    pub fn read_call(
+        &mut self,
+        to: Address,
+        calldata: Vec<u8>,
+        label: &str,
+    ) -> Result<Option<Vec<u8>>, SequenceError> {
+        // Code-less view caller: revm has EIP-3607 hard-enabled, so a caller
+        // with on-chain code is rejected at validation (RejectCallerWithCode);
+        // `Address::ZERO` is the canonical eth_call sender.
+        let tx = TxEnv {
+            caller: Address::ZERO,
+            kind: TransactTo::Call(to),
+            data: Bytes::copy_from_slice(&calldata),
+            value: U256::ZERO,
+            gas_price: 0,
+            gas_limit: 5_000_000,
+            ..TxEnv::default()
+        };
+
+        let result = self.view(tx)?;
+
+        let output = match result {
+            ExecutionResult::Success { output, .. } => output.into_data().to_vec(),
+            ExecutionResult::Revert { output, .. } => {
+                return Err(SequenceError::CallReadReverted(decode_revert_reason(
+                    &output,
+                )));
+            }
+            ExecutionResult::Halt { reason, .. } => {
+                return Err(SequenceError::CallReadHalted(format!("{reason:?}")));
+            }
+        };
+
+        debug!(
+            event = "sequence_runner.read_call",
+            label = %label,
+            to = ?to,
+            output_len = output.len(),
+        );
+
+        if output.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(output))
+        }
+    }
+
     /// Consume the context and return a `SequenceResult` summary. The
     /// trace hash is `[0; 32]` if zero successful calls were committed —
     /// the caller treats that as a structural failure (no SIM_SUCCESS).
@@ -903,6 +969,92 @@ mod tests {
         assert_eq!(ctx.finalize().successful_calls, 0);
     }
 
+    /// Pool-dynamics read primitive: `read_call` returns the RAW return data of
+    /// a read-only call, commits NOTHING (no gas, no `successful_calls`, no
+    /// nonce bump on the sender), reports `None` for a code-less target (the
+    /// "no contract" signal) and surfaces a revert as a typed error.
+    #[test]
+    fn read_call_returns_raw_output_and_commits_nothing() {
+        let lazy = lazy_offline();
+        let returns_word = Address::from([0xb3; 20]);
+        let code_less = Address::from([0xb4; 20]);
+        let reverts = Address::from([0xb5; 20]);
+        for address in [Address::ZERO, code_less] {
+            seed_account(
+                &lazy,
+                address,
+                AccountInfo {
+                    code_hash: KECCAK_EMPTY,
+                    code: Some(Bytecode::new()),
+                    ..Default::default()
+                },
+            );
+        }
+        // Returns the 32-byte word 42.
+        let word_code = Bytecode::new_raw(Bytes::from(vec![
+            0x60, 42, 0x60, 0, 0x52, 0x60, 32, 0x60, 0, 0xf3,
+        ]));
+        seed_account(
+            &lazy,
+            returns_word,
+            AccountInfo {
+                code_hash: word_code.hash_slow(),
+                code: Some(word_code),
+                ..Default::default()
+            },
+        );
+        // Reverts unconditionally.
+        let revert_code = Bytecode::new_raw(Bytes::from(vec![0x60, 0, 0x60, 0, 0xfd]));
+        seed_account(
+            &lazy,
+            reverts,
+            AccountInfo {
+                code_hash: revert_code.hash_slow(),
+                code: Some(revert_code),
+                ..Default::default()
+            },
+        );
+
+        let mut ctx = SequenceContext::new(lazy, 1, 100);
+        ctx.evm.ctx.block.basefee = 10;
+
+        let out = ctx
+            .read_call(returns_word, vec![0xde, 0xad, 0xbe, 0xef], "get_pool")
+            .unwrap()
+            .expect("contract returns data");
+        assert_eq!(out.len(), 32);
+        assert_eq!(out[31], 42);
+
+        // Code-less target → None (canonical eth_call empty-return signal).
+        assert_eq!(
+            ctx.read_call(code_less, vec![0x02, 0x6b, 0x1d, 0x5f], "no_code")
+                .unwrap(),
+            None
+        );
+
+        // Revert → typed error, never a silent None.
+        assert!(matches!(
+            ctx.read_call(reverts, vec![], "revert").unwrap_err(),
+            SequenceError::CallReadReverted(_)
+        ));
+
+        // No commit side effects and the view restored validation.
+        assert!(!ctx.evm.ctx.cfg.disable_base_fee);
+        assert_eq!(
+            ctx.evm
+                .db_mut()
+                .load_account(Address::ZERO)
+                .unwrap()
+                .info
+                .nonce,
+            0
+        );
+        let summary = ctx.finalize();
+        assert_eq!(summary.successful_calls, 0);
+        assert_eq!(summary.gas_used_total, 0);
+        assert_eq!(summary.trace_hash, [0u8; 32]);
+    }
+
     /// `apply_storage` succeeds without touching the chain when the
     /// account is already seeded in the cache.
     #[test]
@@ -1108,6 +1260,14 @@ mod tests {
         assert_eq!(
             SequenceError::AmountsOutHalted("x".into()).reason_tag(),
             "amounts_out_halted"
+        );
+        assert_eq!(
+            SequenceError::CallReadReverted("x".into()).reason_tag(),
+            "call_read_reverted"
+        );
+        assert_eq!(
+            SequenceError::CallReadHalted("x".into()).reason_tag(),
+            "call_read_halted"
         );
     }
 
