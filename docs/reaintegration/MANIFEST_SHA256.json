@@ -1,7 +1,7 @@
 {
   "schema": "reaintegration/manifest/2",
-  "generated_at": "2026-10-18T12:23:18Z",
-  "base_sha": "3b97274576852e8ea20139bdf75bb238a9cc654b",
+  "generated_at": "2026-10-18T13:34:45Z",
+  "base_sha": "2e02ebe7bfe412e975e1e31787a688a402e79d51",
   "artifacts": {
     "inventory": "docs/reaintegration/00-INVENTORY.json",
     "rea_fiches": 16,
@@ -21,13 +21,15 @@
       "scripts/gates/g-admin-root-01.sh",
       "scripts/gates/g-backup-01.sh",
       "scripts/gates/g-fixture-metadata-01.sh",
+      "scripts/gates/g-no-overflow-390-01.sh",
       "scripts/gates/g-omega-01.sh",
       "scripts/gates/g-omega-base-01.sh",
       "scripts/gates/g-page-inv-01.sh",
-      "scripts/gates/g-root-entrypoints-01.sh"
+      "scripts/gates/g-root-entrypoints-01.sh",
+      "scripts/gates/g-wallet-projectid-01.sh"
     ],
     "ledger": "docs/reaintegration/ledger/LEDGER_SHA256.json",
-    "ledger_sha256": "775f82febdde8627459037ab69ef5a7c96c9268fc96b46a0e7394df8674b9eda"
+    "ledger_sha256": "f8d0010becc6b1189baf854a8cc6b13f7fdd2adb4fe259595defee56e0b20e1d"
   },
   "gates_result": {
     "G-BACKUP-01": "PASS",
@@ -37,5 +39,5 @@
     "G-PAGE-INV-01": "PASS",
     "G-ROOT-ENTRYPOINTS-01": "PASS"
   },
-  "files_hashed": 47
+  "files_hashed": 56
 }

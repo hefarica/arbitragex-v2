@@ -21,10 +21,18 @@
       "branch": "REAINTEGRATION-P5-PLANO3-01",
       "commit": "see the branch tip",
       "status": "APLICADO LOCAL — no PR yet"
+    },
+    {
+      "iteration": "P5 FAILs batch (PR-A wallet, PR-D fixtures, PR-E overflow, P5-F6)",
+      "branch": "REAINTEGRATION-P5-FAILS-01",
+      "commit": "see the branch tip",
+      "status": "APLICADO LOCAL — no PR yet; PR-A and PR-D gates PASS, PR-E gate RED (1 route left: /omega-s5/factory 26px)"
     }
   ],
   "gates_not_in_main": [
-    "G-FIXTURE-METADATA-01 (this branch)",
+    "G-FIXTURE-METADATA-01 (in REAINTEGRATION-P5-PLANO3-01 / -P5-FAILS-01)",
+    "G-WALLET-PROJECTID-01 (in REAINTEGRATION-P5-FAILS-01)",
+    "G-NO-OVERFLOW-390-01 (in REAINTEGRATION-P5-FAILS-01, RED)",
     "G-OMEGA-01 / G-OMEGA-BASE-01 / G-PAGE-INV-01 / G-ROOT-ENTRYPOINTS-01 (in main via a14dd9e6)"
   ]
 }
