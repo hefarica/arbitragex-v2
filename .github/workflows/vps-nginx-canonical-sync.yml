@@ -1,0 +1,156 @@
+# NGINX-CONF-DRIFT-01 (2026-10-18) — reconciliación del nginx del VPS por GitHub Actions.
+#
+# Motivo: el sitio `sites-enabled/arbitragex` del VPS arrastra un `add_header`
+# de CSP driftado (una de las dos cabeceras `content-security-policy` que salen
+# por el edge, con `connect-src ... http://127.0.0.1:8080 http://127.0.0.1:8787`),
+# mientras que el repo ya no lo emite. El canónico versionado es
+# `config/nginx/arbitragex.conf` (0 `add_header`) y el instalador es
+# `scripts/vps/install-nginx-canonical.sh` (backup + `nginx -t` + rollback + reload
+# + smoke). Ningún workflow lo ejecutaba: este lo hace, con confirmación explícita.
+#
+# Garantías: no toca tracked del checkout del VPS (instala desde copias del runner),
+# backup fechado antes de cada escritura, `nginx -t` obligatorio, rollback si falla,
+# y verificación de cabeceras al final. NO hace `compose up` (el redeploy va por
+# `deploy.yml`, que es el que puebla `deploy.sha`).
+name: VPS nginx canonical sync (NGINX-CONF-DRIFT-01)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Escribe SYNC para confirmar la reconciliación del nginx del VPS"
+        required: true
+        type: string
+      remove_csp_drift:
+        description: "Comentar también el add_header CSP driftado de nginx.conf / conf.d (con backup fechado)"
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-vps
+  cancel-in-progress: false # nunca pisar un deploy en curso
+
+jobs:
+  sync:
+    name: Reconciliar nginx con el canónico del repo
+    if: ${{ inputs.confirm == 'SYNC' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Guard de confirmación
+        if: ${{ inputs.confirm != 'SYNC' }}
+        run: |
+          echo "::error::confirm debe ser SYNC (recibido: '${{ inputs.confirm }}')"
+          exit 1
+
+      - name: Checkout repository (fuente de verdad del canónico)
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Setup SSH (clave efímera)
+        env:
+          VPS_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
+          VPS_USER: ${{ secrets.VPS_SSH_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$VPS_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -T 10 -p "$VPS_PORT" -H "$VPS_HOST" >> ~/.ssh/known_hosts
+          test -s ~/.ssh/known_hosts
+          echo "VPS_HOST=$VPS_HOST" >> "$GITHUB_ENV"
+          echo "VPS_USER=$VPS_USER" >> "$GITHUB_ENV"
+          echo "VPS_PORT=$VPS_PORT" >> "$GITHUB_ENV"
+
+      - name: Evidencia ANTES (dónde vive la CSP driftada)
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" \
+            -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
+            -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            "$VPS_USER@$VPS_HOST" "bash -s" <<'EOSSH'
+          set -uo pipefail
+          echo "=== [antes] grep CSP en /etc/nginx ==="
+          grep -rn "Content-Security-Policy" /etc/nginx/ 2>/dev/null || echo "(ninguna)"
+          echo "=== [antes] L0: vivo vs canónico del checkout ==="
+          if [ -f /etc/nginx/sites-enabled/arbitragex ] && [ -f /opt/arbitragex-v2/config/nginx/arbitragex.conf ]; then
+            diff -u /etc/nginx/sites-enabled/arbitragex /opt/arbitragex-v2/config/nginx/arbitragex.conf && echo "L0: idénticos" || echo "L0: DIVERGEN (arriba)"
+          else
+            echo "L0: no comparable (falta alguno de los dos ficheros)"
+          fi
+          echo "=== [antes] cabeceras en :80 (Host del dominio) ==="
+          curl -sD - -o /dev/null -m 10 -H 'Host: arbx.ape-tv.net' http://127.0.0.1/ 2>/dev/null | grep -i "content-security-policy" || echo "(sin CSP en :80)"
+          EOSSH
+
+      - name: Instalar sitio canónico (config/nginx/arbitragex.conf del repo)
+        run: |
+          # Se estagean las copias del runner en /tmp (no se toca el checkout del VPS):
+          # el instalador deriva REPO_ROOT de su propia ruta, así que con esta
+          # disposición instala exactamente el canónico de ESTE commit.
+          STAGE="/tmp/nginx-canon-${{ github.run_id }}"
+          ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" \
+            -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
+            -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            "$VPS_USER@$VPS_HOST" "install -m 700 -d $STAGE/scripts/vps $STAGE/config/nginx"
+          scp -i ~/.ssh/deploy_key -P "$VPS_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            scripts/vps/install-nginx-canonical.sh "$VPS_USER@$VPS_HOST:$STAGE/scripts/vps/"
+          scp -i ~/.ssh/deploy_key -P "$VPS_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            config/nginx/arbitragex.conf "$VPS_USER@$VPS_HOST:$STAGE/config/nginx/"
+          ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" \
+            -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
+            -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            "$VPS_USER@$VPS_HOST" "bash $STAGE/scripts/vps/install-nginx-canonical.sh"
+
+      - name: Quitar el CSP driftado de nginx.conf / conf.d (backup + rollback)
+        if: ${{ inputs.remove_csp_drift == 'true' }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" \
+            -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
+            -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            "$VPS_USER@$VPS_HOST" "bash -s" <<'EOSSH'
+          set -euo pipefail
+          TS=$(date -u +%Y%m%dT%H%M%SZ)
+          BAKDIR="/etc/nginx/csp-drift-backup-$TS"
+          TARGETS=$(grep -rl "add_header[^;]*Content-Security-Policy" /etc/nginx/nginx.conf /etc/nginx/conf.d 2>/dev/null || true)
+          if [ -z "$TARGETS" ]; then
+            echo "sin add_header CSP driftado en nginx.conf/conf.d — nada que comentar"
+            exit 0
+          fi
+          install -m 700 -d "$BAKDIR"
+          for f in $TARGETS; do
+            cp -a "$f" "$BAKDIR/$(basename "$f")"
+            # Comentar (no borrar) las líneas de CSP: queda visible y revertible.
+            sed -i -E "s|^([[:space:]]*)(add_header[^;]*Content-Security-Policy.*)$|\1# DRIFT-REMOVED $TS (NGINX-CONF-DRIFT-01): \2|" "$f"
+            echo "comentado en: $f (backup: $BAKDIR/$(basename "$f"))"
+          done
+          if ! nginx -t 2>&1; then
+            echo "ROLLBACK: nginx -t falló — restaurando backups de $BAKDIR"
+            for f in $TARGETS; do cp -a "$BAKDIR/$(basename "$f")" "$f"; done
+            nginx -t || true
+            exit 1
+          fi
+          systemctl reload nginx
+          echo "reload OK · backups en $BAKDIR"
+          EOSSH
+
+      - name: Verificación DESPUÉS (cabeceras + nginx -t)
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" \
+            -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
+            -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            "$VPS_USER@$VPS_HOST" "bash -s" <<'EOSSH'
+          set -uo pipefail
+          echo "=== nginx -t ==="
+          nginx -t 2>&1
+          echo "=== CSP viva en :80 (Host arbx.ape-tv.net) ==="
+          N=$(curl -sD - -o /dev/null -m 10 -H 'Host: arbx.ape-tv.net' http://127.0.0.1/ 2>/dev/null | grep -ci "content-security-policy" || true)
+          echo "cabeceras CSP en :80 → $N (esperado 0 en el origen; la del edge la pone el worker)"
+          curl -sD - -o /dev/null -m 10 -H 'Host: arbx.ape-tv.net' http://127.0.0.1/ 2>/dev/null | grep -i "content-security-policy" || true
+          echo "=== grep CSP residual en /etc/nginx ==="
+          grep -rn "Content-Security-Policy" /etc/nginx/ 2>/dev/null || echo "(ninguna)"
+          EOSSH
