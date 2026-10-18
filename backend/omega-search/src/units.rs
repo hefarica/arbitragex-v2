@@ -231,8 +231,14 @@ mod tests {
         assert_eq!(Bps::new(10_001), None);
         assert_eq!(Bps::new(10_000).unwrap(), Bps::FULL);
         assert_eq!(Bps::FULL.apply_floor(Raw::new(999)).unwrap(), Raw::ZERO);
-        assert_eq!(display_units(Raw::new(1_234_567), Decimals::new(6)), "1.234567");
-        assert_eq!(display_units(Raw::new(-1_500_000), Decimals::new(6)), "-1.500000");
+        assert_eq!(
+            display_units(Raw::new(1_234_567), Decimals::new(6)),
+            "1.234567"
+        );
+        assert_eq!(
+            display_units(Raw::new(-1_500_000), Decimals::new(6)),
+            "-1.500000"
+        );
         assert_eq!(display_units(Raw::new(42), Decimals::new(0)), "42");
     }
 }

@@ -1,0 +1,202 @@
+{
+  "schema": "reaintegration/ledger/2",
+  "generated_at": "2026-10-18T07:23:28Z",
+  "base_sha": "b54d3babbebc35f566806a07d12c4a2e31a23cf6",
+  "algorithm": "sha256",
+  "excluded_self_referential": [
+    "docs/reaintegration/MANIFEST_SHA256.json",
+    "docs/reaintegration/ledger/LEDGER_SHA256.json"
+  ],
+  "entries": [
+    {
+      "path": "docs/reaintegration/00-INVENTORY.json",
+      "sha256": "87bd699b7dbf23673d30a12ef6a63154d692e01b82880da3b59334052715b163",
+      "bytes": 8522
+    },
+    {
+      "path": "docs/reaintegration/FINAL-CLOSURE-ITER2.md",
+      "sha256": "5c7485b4fcd6f35991795af3025e578d786b38b23cecf6524ac9c61f61c4bab8",
+      "bytes": 5377
+    },
+    {
+      "path": "docs/reaintegration/FINAL-CLOSURE.md",
+      "sha256": "34bc3370b6c1b958854290229068a409c6b6d1f744cd5b2a1d2d6afda8944db2",
+      "bytes": 6004
+    },
+    {
+      "path": "docs/reaintegration/README.md",
+      "sha256": "f81637f119f0111ec30c34bb46be74ecce1adbafdd84551a5c35d3e6568cde87",
+      "bytes": 2115
+    },
+    {
+      "path": "docs/reaintegration/adr/ADR-001-curve-duplicate.md",
+      "sha256": "b337494b7b955e3c431f453b39b6611cb21ae9a4f17fb7f22fea76adde6dfde5",
+      "bytes": 3826
+    },
+    {
+      "path": "docs/reaintegration/adr/ADR-002-admin-root-404.md",
+      "sha256": "5660402b7ea290ef1ff02b893757f0a8a63af962b90144c0e6b7b95adb88bfc7",
+      "bytes": 2033
+    },
+    {
+      "path": "docs/reaintegration/adr/ADR-003-omega-search-workspace.md",
+      "sha256": "8518d7bb72372520a9659c56110d17eb15d7d9609f00b01117c35a4f24ea7717",
+      "bytes": 3483
+    },
+    {
+      "path": "docs/reaintegration/evidence/G-BACKUP-01.tracked.txt",
+      "sha256": "c30a67cb4490ec1af7072f06bae23befc8e4b05ee86a294f27470dd2965d2a19",
+      "bytes": 15422
+    },
+    {
+      "path": "docs/reaintegration/gates/G-ADMIN-ROOT-01.md",
+      "sha256": "70bb4985bb67d90823193f0f629b98e2c46278fd879f66703bd9fff6dccb78ce",
+      "bytes": 1604
+    },
+    {
+      "path": "docs/reaintegration/gates/G-BACKUP-01.md",
+      "sha256": "b81d32b0af8c1ddd6a8e927c9d76ff94e3caa7082d7c45828e6bfa5e2fc54f85",
+      "bytes": 3153
+    },
+    {
+      "path": "docs/reaintegration/gates/G-OMEGA-01.md",
+      "sha256": "8077236794c65191a3cc9ce72952b18a8f912eb5bc45597c27787e524dad6d61",
+      "bytes": 2328
+    },
+    {
+      "path": "docs/reaintegration/gates/G-OMEGA-BASE-01.md",
+      "sha256": "a48baa5843a786e9b37fb7610cb107ae1ad06580d4b7c7f1a515d758afffc557",
+      "bytes": 1922
+    },
+    {
+      "path": "docs/reaintegration/gates/G-PAGE-INV-01.md",
+      "sha256": "9c48156638cc5d20501358cefe1b1fc31557cfb4c4e4f39f472a529028f13023",
+      "bytes": 1938
+    },
+    {
+      "path": "docs/reaintegration/gates/G-ROOT-ENTRYPOINTS-01.md",
+      "sha256": "80e5d9c65ca17856dfcdf87b5701dd32baa2fbdd4a6716c7da862678d12990a9",
+      "bytes": 2422
+    },
+    {
+      "path": "docs/reaintegration/gates/RESULTS.json",
+      "sha256": "88ba5515f6067cc35a75ea7600712c5d211642cb50e8c08d3e9b5063b31eda63",
+      "bytes": 999
+    },
+    {
+      "path": "docs/reaintegration/rea/01-cryptofeed.md",
+      "sha256": "cdc5dd85966c6e5e17960c79d9a24ffc5a8d340342e557b02b343dacb493b135",
+      "bytes": 2205
+    },
+    {
+      "path": "docs/reaintegration/rea/02-hftbacktest.md",
+      "sha256": "ae513cc90b6d7874b8b6012fa74c54dd191196d4f4cd3062195ce05b4550e726",
+      "bytes": 2143
+    },
+    {
+      "path": "docs/reaintegration/rea/03-nautilus_trader.md",
+      "sha256": "1515540cdf97982b0ea320df9a68ecc409c2ae5d9312b0fe92ec7504afc1b717",
+      "bytes": 2060
+    },
+    {
+      "path": "docs/reaintegration/rea/04-hummingbot.md",
+      "sha256": "0f8df4aebc5b463a22f0525711c289a8d3e4b620f78e8af51fa5a12c9152dc3c",
+      "bytes": 1791
+    },
+    {
+      "path": "docs/reaintegration/rea/05-freqtrade.md",
+      "sha256": "89f2a96efa2c8bc06966c5e5d9ad040fbcc9225cbaedf1fdd1cbc193be83d0fe",
+      "bytes": 1610
+    },
+    {
+      "path": "docs/reaintegration/rea/06-ccxt.md",
+      "sha256": "8fa0a74465d3bca300c5904fc5cee699ed4f50c83fdc5c671be6057aea8ad2b0",
+      "bytes": 1887
+    },
+    {
+      "path": "docs/reaintegration/rea/07-whack-a-mole.md",
+      "sha256": "32dc5925832c6c5dfe3ee823ebdd6f420d8dd6ee2bdffcb107c5ee5df548cdd7",
+      "bytes": 1801
+    },
+    {
+      "path": "docs/reaintegration/rea/08-btrader.md",
+      "sha256": "6a2c243f7fb09f5d941426a6560ee1c3465905227a441e072b3a06b8ef072167",
+      "bytes": 1590
+    },
+    {
+      "path": "docs/reaintegration/rea/09-dexcex-bot.md",
+      "sha256": "b48f6f418a978f5dcedb900b4c2b06fc36346115c719b0f7e3d997a5ea6a8d8f",
+      "bytes": 1649
+    },
+    {
+      "path": "docs/reaintegration/rea/10-kelp.md",
+      "sha256": "4aa9e531f0f7ca12b3cad496fd122ab0344f921b5500658a87c793569c9c3140",
+      "bytes": 1875
+    },
+    {
+      "path": "docs/reaintegration/rea/11-opentrader.md",
+      "sha256": "bcf0fa0f71abed1e9b94170c5fd22908876c7c927511c026c6b6c61847e734f5",
+      "bytes": 1590
+    },
+    {
+      "path": "docs/reaintegration/rea/12-simple-arbitrage.md",
+      "sha256": "c509555bc2b2e1bb6c0a0d21a1a3782ffb0f3e6c3653e1d61d32fa0de4ef1fbd",
+      "bytes": 1706
+    },
+    {
+      "path": "docs/reaintegration/rea/13-orderbook-rs.md",
+      "sha256": "88777c58082c94a726187203ea60d182b73d5a6a4fb4c4191d9883c77ea20822",
+      "bytes": 1780
+    },
+    {
+      "path": "docs/reaintegration/rea/14-alloy.md",
+      "sha256": "4867fbb57537694299eda87453f0e480f926a6006a249780db1f43b18c7d8c46",
+      "bytes": 1628
+    },
+    {
+      "path": "docs/reaintegration/rea/15-revm.md",
+      "sha256": "92d23319356b0dd7b6161ebc81dc9263d2e6c5cad030befdcde3cb2b34f3848d",
+      "bytes": 1623
+    },
+    {
+      "path": "docs/reaintegration/rea/16-ta-rs.md",
+      "sha256": "a4dbda2ed2627def3b12b67f226d9c42cc4e671c4b5d817049c60bc0d05cc869",
+      "bytes": 1815
+    },
+    {
+      "path": "scripts/gates/g-admin-root-01.sh",
+      "sha256": "b68e3dd284f57a541e87bde8bebb2709ef2672978e7d02ab9e119a78622d1c77",
+      "bytes": 1912
+    },
+    {
+      "path": "scripts/gates/g-backup-01.sh",
+      "sha256": "0180095ad2224b49930afb2e4ad0c31a9444eee92d8b897594bcbe3d8f989d17",
+      "bytes": 5208
+    },
+    {
+      "path": "scripts/gates/g-omega-01.sh",
+      "sha256": "dd25cd05010be9b30b4e4abbaf210a05eda9f0d3a31ec53093dd58baffc54efc",
+      "bytes": 2971
+    },
+    {
+      "path": "scripts/gates/g-omega-base-01.sh",
+      "sha256": "d8d483822fc325afde71e43bcd538178c63f51d289a627af1fe6078f663f83da",
+      "bytes": 2136
+    },
+    {
+      "path": "scripts/gates/g-page-inv-01.sh",
+      "sha256": "41c813f956b59d955e0c03568b535dfee2d487ab785a325137a0cbdc07cb8cb4",
+      "bytes": 2483
+    },
+    {
+      "path": "scripts/gates/g-root-entrypoints-01.sh",
+      "sha256": "af8778fa20c1defe6d1408e24da7c6d09cab590e901b163a299bebfe09f7f4fd",
+      "bytes": 3043
+    },
+    {
+      "path": "scripts/gates/gen-ledger.py",
+      "sha256": "9c9a018a0cf6ea93f7d5453aac07b5e5e39f02339cff62bd810468f54ae3c038",
+      "bytes": 2789
+    }
+  ]
+}

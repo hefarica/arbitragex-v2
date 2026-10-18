@@ -1,0 +1,261 @@
+{
+  "schema": "reaintegration/inventory/1",
+  "generated_at": "2026-10-18T06:28:59.586613Z",
+  "updated_at": "2026-10-18T07:30:00Z",
+  "iteration": "P3 (D-04..D-07 closed by gate; D-08/D-09 declared)",
+  "phase": "P0",
+  "repo": {
+    "url": "https://github.com/hefarica/arbitragex-v2.git",
+    "visibility": "public",
+    "head": "fe62cdceb6dc0b18afed8db03b7dc7ab64e38d6b",
+    "branch": "main",
+    "head_commit_date": "2026-10-14T01:48:48-05:00"
+  },
+  "destinations": {
+    "backend_crates": [
+      "searcher-rs",
+      "math-engine",
+      "sim-ctl",
+      "sim-core",
+      "simulator-v2",
+      "prioritization-spine",
+      "selector-api",
+      "relays-client",
+      "recon",
+      "sed-core",
+      "shared-rs",
+      "api-server",
+      "token-enricher",
+      "semiotic-bridge",
+      "omega-search",
+      "mcp-sim-engine"
+    ],
+    "rust_crate_manifests": [
+      "math-engine",
+      "mcp-sim-engine",
+      "omega-search",
+      "prioritization-spine",
+      "recon",
+      "relays-client",
+      "searcher-rs",
+      "sed-core",
+      "semiotic-bridge",
+      "shared-rs",
+      "sim-core",
+      "sim-ctl",
+      "simulator-v2",
+      "token-enricher"
+    ],
+    "ts_services": [
+      "api-server",
+      "selector-api"
+    ],
+    "workspace_members_declared": [
+      "shared-rs",
+      "searcher-rs",
+      "sim-ctl",
+      "relays-client",
+      "recon",
+      "math-engine",
+      "prioritization-spine",
+      "simulator-v2",
+      "sim-core",
+      "token-enricher",
+      "mcp-sim-engine",
+      "sed-core",
+      "semiotic-bridge"
+    ],
+    "crates_outside_workspace": [
+      "omega-search"
+    ],
+    "other": [
+      "contracts/",
+      "frontend/"
+    ]
+  },
+  "frontend": {
+    "app_router_page_tsx_live": 59,
+    "app_router_page_tsx_repo_wide": 111,
+    "page_tsx_backup_class": 52,
+    "layout_tsx_live": 4,
+    "apex_page_inventory_declared_count": 38,
+    "apex_page_inventory_array_entries": 38
+  },
+  "backup_class": {
+    "tracked_paths": 304,
+    "trees": [
+      "_recovery/",
+      "frontend/_recovery/",
+      "frontend/app_backup/",
+      "frontend/components_backup/",
+      "frontend/features_backup/"
+    ],
+    "files": [
+      "frontend/app/page.tsx.backup",
+      "package.json.bak"
+    ],
+    "gate": "G-BACKUP-01"
+  },
+  "drift": [
+    {
+      "id": "D-01",
+      "severity": "high",
+      "title": "Backup/recovery trees tracked and counted",
+      "evidence": {
+        "tracked_backup_paths": 304,
+        "repo_wide_page_tsx": 111,
+        "live_page_tsx": 59
+      },
+      "gate": "G-BACKUP-01",
+      "status": "closed_by_gate",
+      "fix": "canonical exclusion predicate in scripts/gates/g-backup-01.sh",
+      "note": "304 is the canonical predicate count from the gate (the SSOT). Broader regexes give 305-306 by also matching names that merely contain 'backup'."
+    },
+    {
+      "id": "D-02",
+      "severity": "medium",
+      "title": "Bare /admin resolves to 404 (no page.tsx)",
+      "evidence": {
+        "admin_routes": [
+          "/admin/signin",
+          "/admin/chains",
+          "/admin/topology"
+        ],
+        "nav_refs_bare_admin": 0
+      },
+      "gate": "G-ADMIN-ROOT-01",
+      "status": "decided",
+      "decision": "ADR-002: keep 404 (no consumer)"
+    },
+    {
+      "id": "D-03",
+      "severity": "high",
+      "title": "Duplicate Curve adapters",
+      "evidence": {
+        "a": "contracts/src/adapters/CurveStableSwapAdapter.sol",
+        "b": "contracts/src/dexes/CurveAdapter.sol",
+        "a_refs_outside_self": 0,
+        "b_refs": [
+          "contracts/src/interfaces/IDEXAdapter.sol",
+          "contracts/test/FlashLoanAdapters.t.sol"
+        ]
+      },
+      "gate": "n/a",
+      "status": "adr_opened",
+      "decision": "ADR-001"
+    },
+    {
+      "id": "D-04",
+      "severity": "medium",
+      "title": "omega-search outside backend workspace -> not covered by --workspace gates",
+      "evidence": {
+        "crate": "omega-search",
+        "declares_own_workspace": true,
+        "external_dependencies": 0,
+        "not_covered_by": [
+          "cargo fmt --check",
+          "cargo clippy --workspace",
+          "cargo test --workspace"
+        ]
+      },
+      "gate": "G-OMEGA-01",
+      "status": "closed_by_gate",
+      "decision": "ADR-003: keep the crate standalone and close the hole with a dedicated standalone gate; promotion into the shared manifest is deferred (the manifest is contested by live fix/* branches and promotion needs a full workspace build to verify)"
+    },
+    {
+      "id": "D-05",
+      "severity": "medium",
+      "title": ".omega-base-sha pinned a commit unreachable from main",
+      "evidence": {
+        "previous_pin": "BASE_SHA=70db818365101cc1083a9d178307afcab06f807f",
+        "object_present": "present in the repository but with no common ancestor with main (history rewritten; GitHub compare 404 in both directions)",
+        "misdiagnosis": "a shallow/single-branch clone reports 'Not a valid object name', which reads as 'absent from history'",
+        "new_pin": "BASE_SHA=fe62cdceb6dc0b18afed8db03b7dc7ab64e38d6b"
+      },
+      "gate": "G-OMEGA-BASE-01",
+      "status": "closed_by_gate",
+      "fix": "re-pinned to the audited programme base; the gate keeps it equal to inventory.repo.head"
+    },
+    {
+      "id": "D-06",
+      "severity": "high",
+      "title": "apex page_inventory.ts cardinality stale and internally inconsistent",
+      "evidence": {
+        "declared_EXPECTED_PAGE_COUNT_before": 37,
+        "array_entries": 38,
+        "live_page_tsx": 59
+      },
+      "gate": "G-PAGE-INV-01",
+      "status": "closed_by_gate",
+      "fix": "EXPECTED_PAGE_COUNT set to 38 = PAGES.length so INV-1 holds again; the descriptors-vs-live gap is tracked separately as D-08",
+      "note": "iteration 1 reported 39 array entries; recounted at object depth on the same HEAD: 38"
+    },
+    {
+      "id": "D-07",
+      "severity": "low",
+      "title": "Ambiguous root entrypoints: README-1..4 + 4 zero-byte doctrine .md + package.json.bak",
+      "evidence": {
+        "readme_variants": [
+          "README.md",
+          "README-1.md",
+          "README-2.md",
+          "README-3.md",
+          "README-4.md"
+        ],
+        "zero_byte_root_md": [
+          "03_EQUILIBRIO_MULTIVARIABLE_CIEGO.md",
+          "01_RESOLUCION_ESTADO_ASIMETRICO.md",
+          "02_INYECCION_ENTROPIA_TRANSITORIA.md",
+          "00_MANIFIESTO_DE_EFICIENCIA_ESTRUCTURAL.md"
+        ],
+        "stray": [
+          "package.json.bak",
+          "frontend/app/page.tsx.backup"
+        ]
+      },
+      "gate": "G-ROOT-ENTRYPOINTS-01 (+ G-BACKUP-01 for the stray files)",
+      "status": "closed_by_gate",
+      "fix": "README.md now indexes README-1..4 as ONE ordered series (names kept because the documents cross-reference each other by name); the empty doctrine files and the stray backups are pinned by declared allowlists so new ones cannot appear silently"
+    },
+    {
+      "id": "D-08",
+      "severity": "high",
+      "title": "apex page inventory is incomplete: 38 descriptors vs 59 live App Router pages",
+      "evidence": {
+        "descriptors": 38,
+        "live_page_tsx": 59,
+        "gap": 21
+      },
+      "gate": "G-PAGE-INV-01 (reports the gap and requires it to stay declared)",
+      "status": "open",
+      "fix": "complete the descriptor set page by page (route/file/category/purpose/auth/role/gates/mutations/stream/criticalActions), then re-pin EXPECTED_PAGE_COUNT"
+    },
+    {
+      "id": "D-09",
+      "severity": "low",
+      "title": "Four doctrine .md files are tracked at 0 bytes",
+      "evidence": {
+        "files": [
+          "00_MANIFIESTO_DE_EFICIENCIA_ESTRUCTURAL.md",
+          "01_RESOLUCION_ESTADO_ASIMETRICO.md",
+          "02_INYECCION_ENTROPIA_TRANSITORIA.md",
+          "03_EQUILIBRIO_MULTIVARIABLE_CIEGO.md"
+        ]
+      },
+      "gate": "G-ROOT-ENTRYPOINTS-01 (allowlist)",
+      "status": "declared_debt",
+      "fix": "content cannot be written without inventing doctrine (R8); the owner decides: write them or drop them from the tree"
+    }
+  ],
+  "invariants_observed": {
+    "no_unwrap_expect_in_prod_rust": "NOT VERIFIED (no cargo toolchain in this sandbox) \u2014 debt",
+    "relays_client_single_signer": "NOT VERIFIED at P0 (static only)",
+    "capital_zero_broadcast_false": "declared in README.md header; not re-verified at P0"
+  },
+  "toolchain": {
+    "cargo": "1.99.1 (rustup minimal) — present in the P3 executor sandbox",
+    "forge": "absent",
+    "node": "v22.23.3",
+    "npm": "10.9.9"
+  }
+}

@@ -59,7 +59,10 @@ pub enum EvalError {
     NoSizeDomain,
     /// This version's swap curve is not implemented here and must be quoted by
     /// the protocol's own quoter (V3 ticks, StableSwap `D`, weighted vault).
-    CurveNotImplemented { pool_id: u64, version: ProtocolVersion },
+    CurveNotImplemented {
+        pool_id: u64,
+        version: ProtocolVersion,
+    },
 }
 
 impl fmt::Display for EvalError {
@@ -78,7 +81,11 @@ impl fmt::Display for EvalError {
             EvalError::EmptyCycle => write!(f, "empty_cycle"),
             EvalError::NoSizeDomain => write!(f, "no_size_domain"),
             EvalError::CurveNotImplemented { pool_id, version } => {
-                write!(f, "curve_not_implemented:pool={pool_id}:{}", version.as_str())
+                write!(
+                    f,
+                    "curve_not_implemented:pool={pool_id}:{}",
+                    version.as_str()
+                )
             }
         }
     }
@@ -196,11 +203,7 @@ pub struct PoolLedger<'a> {
 impl<'a> PoolLedger<'a> {
     /// Start from the graph's own (snapshot) reserves.
     pub fn new(g: &'a MultiGraph) -> Self {
-        let reserves = g
-            .pools()
-            .iter()
-            .map(|p| (p.reserve0, p.reserve1))
-            .collect();
+        let reserves = g.pools().iter().map(|p| (p.reserve0, p.reserve1)).collect();
         PoolLedger { g, reserves }
     }
 
@@ -247,17 +250,21 @@ impl<'a> PoolLedger<'a> {
         let (r0, r1) = self.reserves[e.pool];
         let updated = if e.zero_for_one {
             (
-                r0.checked_add(amount_in)
-                    .ok_or(EvalError::Overflow { stage: "reserve_in" })?,
-                r1.checked_sub(out)
-                    .ok_or(EvalError::Overflow { stage: "reserve_out" })?,
+                r0.checked_add(amount_in).ok_or(EvalError::Overflow {
+                    stage: "reserve_in",
+                })?,
+                r1.checked_sub(out).ok_or(EvalError::Overflow {
+                    stage: "reserve_out",
+                })?,
             )
         } else {
             (
-                r0.checked_sub(out)
-                    .ok_or(EvalError::Overflow { stage: "reserve_out" })?,
-                r1.checked_add(amount_in)
-                    .ok_or(EvalError::Overflow { stage: "reserve_in" })?,
+                r0.checked_sub(out).ok_or(EvalError::Overflow {
+                    stage: "reserve_out",
+                })?,
+                r1.checked_add(amount_in).ok_or(EvalError::Overflow {
+                    stage: "reserve_in",
+                })?,
             )
         };
         self.reserves[e.pool] = updated;
@@ -277,10 +284,7 @@ impl<'a> PoolLedger<'a> {
         if amount_in.is_negative() {
             return Err(EvalError::NegativeAmount { stage: "cycle_in" });
         }
-        let start = self
-            .g
-            .edge(cycle.edges[0])
-            .token_in;
+        let start = self.g.edge(cycle.edges[0]).token_in;
         let mut expected = start;
         let mut amount = amount_in;
         for edge_id in &cycle.edges {
@@ -304,15 +308,19 @@ impl<'a> PoolLedger<'a> {
         let gross_raw = amount
             .checked_sub(amount_in)
             .ok_or(EvalError::Overflow { stage: "gross" })?;
-        let financing_raw = costs
-            .financing_premium_bps
-            .of_floor(amount_in)
-            .ok_or(EvalError::Overflow {
-                stage: "financing_premium",
-            })?;
-        let costs_raw = financing_raw
-            .checked_add(costs.unconditional_raw)
-            .ok_or(EvalError::Overflow { stage: "costs_total" })?;
+        let financing_raw =
+            costs
+                .financing_premium_bps
+                .of_floor(amount_in)
+                .ok_or(EvalError::Overflow {
+                    stage: "financing_premium",
+                })?;
+        let costs_raw =
+            financing_raw
+                .checked_add(costs.unconditional_raw)
+                .ok_or(EvalError::Overflow {
+                    stage: "costs_total",
+                })?;
         let net_raw = gross_raw
             .checked_sub(costs_raw)
             .ok_or(EvalError::Overflow { stage: "net" })?;
@@ -373,9 +381,7 @@ pub fn evaluate_split_joint(
         let one = evaluate_cycle(g, cycle, *size, costs)?;
         naive = naive
             .checked_add(one.net_raw)
-            .ok_or(EvalError::Overflow {
-                stage: "naive_sum",
-            })?;
+            .ok_or(EvalError::Overflow { stage: "naive_sum" })?;
     }
 
     let mut ledger = PoolLedger::new(g);
@@ -457,14 +463,8 @@ mod tests {
         .unwrap();
         assert_eq!(out, Raw::new(999));
         // A zero reserve is a named failure, not a zero output.
-        let err = quote_constant_product(
-            7,
-            Bps::ZERO,
-            Raw::ZERO,
-            Raw::new(1_000),
-            Raw::new(1_000),
-        )
-        .unwrap_err();
+        let err = quote_constant_product(7, Bps::ZERO, Raw::ZERO, Raw::new(1_000), Raw::new(1_000))
+            .unwrap_err();
         assert_eq!(
             err,
             EvalError::ZeroReserve {
@@ -491,7 +491,10 @@ mod tests {
     fn non_v2_curves_fail_with_a_named_reason_never_a_fake_number() {
         let mut v3 = pool(8, 1, 2, 1_000, 1_000);
         v3.version = ProtocolVersion::V3;
-        let g = MultiGraph::build(vec![pool(7, 1, 2, 1_000, 1_000), v3], &GraphPolicy::permissive_2_to_7());
+        let g = MultiGraph::build(
+            vec![pool(7, 1, 2, 1_000, 1_000), v3],
+            &GraphPolicy::permissive_2_to_7(),
+        );
         let cycle = Cycle { edges: vec![0, 1] };
         // Edges 0,1 belong to pool 7 (V2) → evaluable.
         assert!(evaluate_cycle(&g, &cycle, Raw::new(100), &ExternalCosts::NONE).is_ok());
@@ -519,7 +522,10 @@ mod tests {
         assert_eq!(e.financing_raw, Raw::new(9)); // floor(10_000·9/10_000)
         assert_eq!(e.unconditional_raw, Raw::new(5));
         assert_eq!(e.costs_raw, Raw::new(14));
-        assert_eq!(e.gross_raw, e.amount_out.checked_sub(Raw::new(10_000)).unwrap());
+        assert_eq!(
+            e.gross_raw,
+            e.amount_out.checked_sub(Raw::new(10_000)).unwrap()
+        );
         assert_eq!(e.net_raw, e.gross_raw.checked_sub(Raw::new(14)).unwrap());
         assert!(e.fees_embedded_in_quote);
     }
@@ -542,10 +548,17 @@ mod tests {
     fn shared_pool_split_overstates_when_summed_independently() {
         // Two pools over (1,2): a cycle that buys on 20 and sells on 21.
         let g = MultiGraph::build(
-            vec![pool(20, 1, 2, 1_000_000, 1_000_000), pool(21, 1, 2, 1_000_000, 1_000_000)],
+            vec![
+                pool(20, 1, 2, 1_000_000, 1_000_000),
+                pool(21, 1, 2, 1_000_000, 1_000_000),
+            ],
             &GraphPolicy::permissive_2_to_7(),
         );
-        let (cycles, _) = enumerate_bounded(&g, &GraphPolicy::permissive_2_to_7(), EnumerateLimits::unbounded());
+        let (cycles, _) = enumerate_bounded(
+            &g,
+            &GraphPolicy::permissive_2_to_7(),
+            EnumerateLimits::unbounded(),
+        );
         assert_eq!(cycles.len(), 2, "one cycle per direction");
 
         let c = cycles[0].clone();
@@ -587,8 +600,16 @@ mod tests {
             .into_iter()
             .collect();
         assert_eq!(pair_a, [20u64, 21].into_iter().collect::<BTreeSet<_>>());
-        let leg_a = cycles.iter().find(|c| c.touches_pool(&g, 20)).unwrap().clone();
-        let leg_b = cycles.iter().find(|c| c.touches_pool(&g, 30)).unwrap().clone();
+        let leg_a = cycles
+            .iter()
+            .find(|c| c.touches_pool(&g, 20))
+            .unwrap()
+            .clone();
+        let leg_b = cycles
+            .iter()
+            .find(|c| c.touches_pool(&g, 30))
+            .unwrap()
+            .clone();
         let split = evaluate_split_joint(
             &g,
             &[(leg_a, Raw::new(10_000)), (leg_b, Raw::new(10_000))],

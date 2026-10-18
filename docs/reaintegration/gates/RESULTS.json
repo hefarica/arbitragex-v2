@@ -1,0 +1,24 @@
+{
+  "schema": "reaintegration/gate-results/1",
+  "generated_at": "2026-10-18T07:32:00Z",
+  "head": "fe62cdceb6dc0b18afed8db03b7dc7ab64e38d6b",
+  "environment": "P3 executor sandbox (cargo 1.99.1 via rustup minimal; node v22.23.3; forge absent)",
+  "results": {
+    "G-BACKUP-01": "PASS",
+    "G-ADMIN-ROOT-01": "PASS",
+    "G-OMEGA-01": "PASS",
+    "G-OMEGA-BASE-01": "PASS",
+    "G-PAGE-INV-01": "PASS",
+    "G-ROOT-ENTRYPOINTS-01": "PASS"
+  },
+  "not_executed": {
+    "cargo fmt --check --workspace": "DEBT — requires the full backend workspace build",
+    "cargo clippy --workspace --all-targets -D warnings": "DEBT — same",
+    "cargo test --workspace": "DEBT — same",
+    "tsc --noEmit (api-server/frontend/selector-api)": "DEBT — requires node_modules (npm ci)",
+    "vitest run": "DEBT — same",
+    "forge fmt/test/invariant": "DEBT — forge absent",
+    "gitleaks / npm-audit": "DEBT — tools absent",
+    "E2E 3 planos (repo/dominio/Chromium)": "DEBT — P5, not reached"
+  }
+}
