@@ -235,20 +235,38 @@ export function buildTokenTopRouter(deps: Deps): Router {
       const poolIds = poolsQ.rows.map((p) => p.id);
 
       // 2) Latest reserves now, and latest ≤ 24h ago (same query, two cutoffs).
+      //    ARBX-F13 (2026-10-18): `DISTINCT ON (pool_id) … ORDER BY pool_id,
+      //    block_number DESC` se degradaba a Parallel Bitmap Heap Scan sobre
+      //    pool_reserves (404.372 tids, 375.117 filas; 26 s medidos y 74–174 s
+      //    en vivo), agotando /dev/shm con dos peticiones concurrentes y
+      //    colgando el endpoint >30 s (500 en el edge). El LATERAL con LIMIT 1
+      //    usa un index scan por pool (≤50 sondas) y devuelve EL MISMO
+      //    registro: la fila de mayor block_number por pool, con el mismo
+      //    filtro de timestamp en la variante de 24 h.
       const cutoff = new Date(Date.now() - 24 * 3_600_000);
       const [nowQ, agoQ] = await Promise.all([
         deps.pool.query<ReserveRow>(
-          `SELECT DISTINCT ON (pool_id) pool_id, reserve0, reserve1
-             FROM pool_reserves
-            WHERE pool_id = ANY($1::uuid[])
-            ORDER BY pool_id, block_number DESC`,
+          `SELECT p.pool_id, r.reserve0, r.reserve1
+             FROM unnest($1::uuid[]) AS p(pool_id)
+             CROSS JOIN LATERAL (
+               SELECT rr.reserve0, rr.reserve1
+                 FROM pool_reserves rr
+                WHERE rr.pool_id = p.pool_id
+                ORDER BY rr.block_number DESC
+                LIMIT 1
+             ) r`,
           [poolIds],
         ),
         deps.pool.query<ReserveRow>(
-          `SELECT DISTINCT ON (pool_id) pool_id, reserve0, reserve1
-             FROM pool_reserves
-            WHERE pool_id = ANY($1::uuid[]) AND "timestamp" <= $2
-            ORDER BY pool_id, block_number DESC`,
+          `SELECT p.pool_id, r.reserve0, r.reserve1
+             FROM unnest($1::uuid[]) AS p(pool_id)
+             CROSS JOIN LATERAL (
+               SELECT rr.reserve0, rr.reserve1
+                 FROM pool_reserves rr
+                WHERE rr.pool_id = p.pool_id AND rr."timestamp" <= $2
+                ORDER BY rr.block_number DESC
+                LIMIT 1
+             ) r`,
           [poolIds, cutoff],
         ),
       ]);
