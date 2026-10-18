@@ -130,7 +130,7 @@ PY
 # fabricate a pass). The export still runs so the row carries the real number of
 # available candidate rows at attempt time.
 MISSING_PREREQS=()
-for var_name in ARBITRAGE_EXECUTOR FLASHLOAN_EXECUTOR_1 ARBX_ADMIN_TOKEN; do
+for var_name in ARBITRAGE_EXECUTOR FLASHLOAN_EXECUTOR_1 AAVE_POOL_1 ARBX_ADMIN_TOKEN; do
   val=$(grep -E "^${var_name}=" "$DEPLOY_PATH/.env" | cut -d= -f2- || true)
   if [ -z "$val" ]; then
     MISSING_PREREQS+=("$var_name")
@@ -209,6 +209,12 @@ MIN_SAMPLES="${VARIANCE_MIN_SAMPLES:-$ROWS}"
 echo "sample floor for this run: ${MIN_SAMPLES} (population ${ROWS})"
 
 # ---- 2. Run the harness in a pinned rust container ---------------------------
+# G-SIM-1 labelability (2026-10-18): the env executors named by
+# ARBITRAGE_EXECUTOR / FLASHLOAN_EXECUTOR_1 have NO code on mainnet, so the
+# harness MUST take the paper-stack fork-deploy path to label anything —
+# otherwise every route reverts at the FLE dispatch and the row records
+# pred_failed=N with samples_labeled=0 (the defect this change closes). The
+# Aave pool is resolved fail-closed from AAVE_POOL_1 (see prereqs above).
 cd "$DEPLOY_PATH"
 HARNESS_RC=0
 docker run --rm \
@@ -220,6 +226,8 @@ docker run --rm \
   -e GAS_PRICE_WEI="$GAS_PRICE_WEI" \
   -e VARIANCE_INPUT=/work/input.jsonl \
   -e VARIANCE_MIN_SAMPLES="$MIN_SAMPLES" \
+  -e PAPER_STACK_DEPLOY=1 \
+  -e AAVE_POOL_1="$AAVE_POOL_1" \
   rust:1.91 \
   cargo test -p sim-core --test variance_benchmark --locked -- --ignored --nocapture \
   2>&1 | tee "$LOG" || HARNESS_RC=$?

@@ -476,7 +476,32 @@ async fn variance_benchmark_predicted_vs_settled_block() {
             // market viability (documented in the evidence detail).
             require_positive_net_profit: false,
             max_steps: 8,
-            paper_stack: None,
+            // PR-D1/PR-D2 parity (2026-10-18): the executors named by the
+            // `ARBITRAGE_EXECUTOR` / `FLASHLOAN_EXECUTOR_1` env vars have NO
+            // code on mainnet (eth_getCode = "0x"; see the module doc of
+            // `sim_core::paper_executors`), so every dispatch through them
+            // reverts at the `ExecuteCall caller -> FLE` step and this harness
+            // could never label a single pair — measured
+            // attempted=27, pred_failed=27, samples_labeled=0 on the live
+            // readiness row. Wire the SAME paper-only fork-deploy the
+            // production call sites use (`paper_stack_for_round_trip`,
+            // `PAPER_STACK_DEPLOY`-gated, Aave pool resolved fail-closed from
+            // `AAVE_POOL_<chain>`): the REAL committed AE+FLE bytecode is
+            // CREATE'd inside the in-process fork, so the wrapped-flash path
+            // actually executes instead of reverting on an empty account.
+            //
+            // The deploy gas is the module's own OSAKA-safe cap: the previous
+            // `500_000` step value is BELOW the measured paper-stack deploy
+            // floor (>2_000_000 — the AE creation code alone deposits ~9.5 KB),
+            // so a deploy at that gas fails with OutOfGas regardless of the
+            // EIP-7825 cap. `PAPER_STACK_MAX_TX_GAS` is deploy-capable and
+            // under the cap by construction.
+            paper_stack: sim_core::paper_executors::paper_stack_for_round_trip(
+                &ctx,
+                row.chain_id,
+                gas_price_wei.low_u128(),
+                sim_core::paper_executors::PAPER_STACK_MAX_TX_GAS,
+            ),
         };
 
         let pred = sim_at_block(&rpc, block_b, &ctx, &exec_cfg);
