@@ -27,6 +27,14 @@ name: G2 Simulations Tally (read-only)
 #
 # No firma, no broadcast, no capital. No hay DDL ni DML en ninguna ruta.
 # El mecanismo de acceso es el MISMO ya probado por t37: VPS_SSH_* + ssh.
+#
+# t0 (2026-10-18) — DISCRIMINADOR DE CONTADORES. La clave `t0_discriminator` corre
+# el control + `COUNT(*) FROM simulations` + `pg_stat_user_tables` de `simulations`
+# (n_tup_ins/n_tup_del, contadores DE POR VIDA) en UNA corrida y UNA ventana. Es la
+# vara que resuelve la disputa 0-vs-+40.958 entre R80 y SIMCTL-BOUND-01: si el
+# contador de por vida no ve inserciones, no hay productor — hay un ACK.
+# (La mitad Redis —`XINFO GROUPS arbx:opps:validated` para `entries-read`— necesita
+# un paso aparte porque este job solo habla con PostgreSQL; se declara, no se finge.)
 
 on:
   workflow_dispatch:
@@ -37,6 +45,9 @@ on:
         options:
           - g2_simulations_passed
           - control_select_1
+          - simulations_total
+          - simulations_pgstat
+          - t0_discriminator
         required: true
         default: g2_simulations_passed
   pull_request:
@@ -74,12 +85,23 @@ jobs:
             case "$1" in
               control_select_1)      printf '%s' "SELECT 1 AS control;" ;;
               g2_simulations_passed) printf '%s' "SELECT COUNT(*)::bigint AS simulations_passed FROM simulations WHERE passed;" ;;
+              simulations_total)     printf '%s' "SELECT COUNT(*)::bigint AS simulations_total FROM simulations;" ;;
+              simulations_pgstat)    printf '%s' "SELECT n_tup_ins::bigint AS n_ins, n_tup_del::bigint AS n_del FROM pg_stat_user_tables WHERE relname = 'simulations';" ;;
               *) echo "::error::unknown tally key '$1' — refusing to build SQL"; return 1 ;;
             esac
           }
 
           keys=""
-          if [ "$TALLY_KEY" = "both" ]; then keys="control_select_1 g2_simulations_passed"; else keys="$TALLY_KEY"; fi
+          case "$TALLY_KEY" in
+            both)
+              # PR self-test: control + los CUATRO tallies, en una sola ventana.
+              keys="control_select_1 g2_simulations_passed simulations_total simulations_pgstat" ;;
+            t0_discriminator)
+              # t0: control + total + contadores de por vida, MISMA ventana y MISMA
+              # corrida. Responde la disputa 0-vs-+40.958 (un ACK no inserta filas).
+              keys="control_select_1 simulations_total simulations_pgstat" ;;
+            *) keys="$TALLY_KEY" ;;
+          esac
 
           : > g2-evidence/sql.txt
           for k in $keys; do
@@ -88,7 +110,13 @@ jobs:
             words="$(printf '%s' "$s" | tr '[:lower:]' '[:upper:]' | tr -cs 'A-Z' '\n' | sort -u | tr '\n' ' ')"
             for w in $words; do
               case "$w" in
-                SELECT|COUNT|FROM|WHERE|AS|BIGINT|SIMULATIONS|PASSED|CONTROL|1|"") ;;
+                # NOTA: el tokenizador parte por todo lo que no sea A-Z, asi que los
+                # identificadores se fragmentan por `_`: `simulations_total` -> SIMULATIONS
+                # TOTAL, `n_tup_ins` -> N TUP INS, `pg_stat_user_tables` -> PG STAT USER
+                # TABLES. Ninguno es un verbo de escritura: el inventario sigue sin
+                # INSERT/UPDATE/DELETE/DROP/ALTER/TRUNCATE/GRANT y por eso el canal es
+                # read-only por construccion.
+                SELECT|COUNT|FROM|WHERE|AS|BIGINT|SIMULATIONS|PASSED|CONTROL|1|TOTAL|N|TUP|INS|DEL|PG|STAT|USER|TABLES|RELNAME|"") ;;
                 *) echo "::error::tally '$k' uses SQL token '$w' outside the read-only whitelist — refusing to run against the host"; exit 1 ;;
               esac
             done
