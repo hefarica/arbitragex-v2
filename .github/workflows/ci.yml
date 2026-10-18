@@ -117,6 +117,31 @@ jobs:
         run: forge fmt --check
         working-directory: contracts
 
+  # R-2 (PR-D2, 2026-10-18): before this job the fixture-vs-contracts/out gate
+  # never ran in CI — the image had no `forge`, `contracts/out` was absent and
+  # the Rust test self-skipped, so the gate was local-only. This job installs
+  # BOTH toolchains (foundry-rs/foundry-toolchain + Rust) on a checkout that
+  # materialises the contracts submodules, and runs the real gate script end to
+  # end. It is part of the `ci-gate` required set: a red gate blocks the PR, it
+  # is not advisory.
+  fixture-metadata-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.91.0
+        with:
+          toolchain: 1.91.0
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: foundry-rs/foundry-toolchain@b00af27efadbc7b4ca8b82abbd903b17cc874d2a # v1
+        with:
+          version: nightly
+      - name: G-FIXTURE-METADATA-01 (fixture vs contracts/out, metadata excluded)
+        run: bash scripts/gates/g-fixture-metadata-01.sh
+
   retention-vacuum-regression:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -162,7 +187,7 @@ jobs:
   ci-gate:
     if: always()
     runs-on: ubuntu-latest
-    needs: [lint-and-test-node, lint-and-test-rust, lint-and-test-frontend, lint-and-test-contracts, retention-vacuum-regression, liquidity-catalog-contract]
+    needs: [lint-and-test-node, lint-and-test-rust, lint-and-test-frontend, lint-and-test-contracts, fixture-metadata-gate, retention-vacuum-regression, liquidity-catalog-contract]
     steps:
       - name: All checks must actually succeed, including the catalog
         env:
@@ -172,7 +197,8 @@ jobs:
           import json, os
           results = json.loads(os.environ['REQUIRED_RESULTS'])
           required = {'lint-and-test-node', 'lint-and-test-rust', 'lint-and-test-frontend',
-                      'lint-and-test-contracts', 'retention-vacuum-regression', 'liquidity-catalog-contract'}
+                      'lint-and-test-contracts', 'fixture-metadata-gate',
+                      'retention-vacuum-regression', 'liquidity-catalog-contract'}
           if set(results) != required or any(v.get('result') != 'success' for v in results.values()):
               raise SystemExit('CI gate failed: missing, skipped, cancelled or failed required job')
           print('CI gate passed: every required job succeeded')

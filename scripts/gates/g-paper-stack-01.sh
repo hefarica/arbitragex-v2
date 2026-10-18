@@ -1,11 +1,19 @@
 #!/usr/bin/env bash
-# G-PAPER-STACK-01 — deploy del paper stack vía ERC1967Proxy (PR-D1, 0xf92ee8a9).
+# G-PAPER-STACK-01 — deploy del paper stack vía ERC1967Proxy Y por el camino
+# CABLEADO con el gas real de cada call site (PR-D1 = 0xf92ee8a9; PR-D2 = gas).
 #
 # This gate EXECUTES the deploy. Before PR-D1 no test did: the only caller was
 # `run_multistep`, so the InvalidInitialization revert (0xf92ee8a9) survived in
-# `main` untouched. The gate builds a PaperStackSpec, deploys impl + ERC1967Proxy
-# (the proxy constructor initializes the implementation in the same tx) and
-# requires `Ok` — that is the reachability the impl-only path never had.
+# `main` untouched.
+#
+# PR-D2 (2026-10-18): the gate ran ONLY the hand-built spec at 15_000_000, so it
+# stayed green while the REAL wire was broken — `searcher-rs::scanner` passed
+# `gas_limit_per_step = 30_000_000`, which exceeds the OSAKA per-tx cap
+# (EIP-7825, 2^24 = 16_777_216); the transactor rejected the deploy tx before
+# executing it. The gate now ALSO runs `paper_stack_wired_path_deploys_ok_at_call_site_gas`,
+# which builds the spec through `PaperStackSpec::for_round_trip` (the exact
+# builder the five production call sites use) at each call site's REAL gas —
+# `30_000_000` included — and requires `Ok`.
 #
 # Needs an RPC (fork or bare anvil) in PAPER_STACK_RPC. Without one the gate
 # SKIPs (exit 2): a gate that cannot measure is never reported as green, and a
@@ -28,11 +36,42 @@ if [ -z "${PAPER_STACK_RPC:-}" ]; then
 fi
 
 export CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0
-echo "G-PAPER-STACK-01 — deploy real del paper stack vía ERC1967Proxy (RPC=$PAPER_STACK_RPC)"
-if cargo test -p sim-core --lib -- --ignored --nocapture paper_stack_deploy_initializes_via_erc1967_proxy_ok; then
-  echo "G-PAPER-STACK-01 — PASS (deploy del stack = Ok)"
+# The real gas of the DEPLOY-CAPABLE production call sites (PR-D2):
+#   searcher-rs/scanner.rs ................... 30_000_000  (the broken one)
+#   searcher-rs/candidate_simulation.rs ...... 16_000_000
+#   relays-client/execution_admission.rs ..... 16_000_000
+# sim-ctl's 500_000 default is OUT of this list on purpose: it is below the
+# paper-stack DEPLOY FLOOR (measured >2_000_000; the AE creation code alone
+# deposits ~9.5 KB), so a deploy there always fails with OutOfGas — a separate,
+# declared limitation of enabling PAPER_STACK_DEPLOY via sim-ctl with defaults,
+# NOT the cap defect. The offline unit test still covers 500_000's cap no-op.
+export PAPER_STACK_GAS_VALUES="${PAPER_STACK_GAS_VALUES:-30000000,16000000}"
+
+rc=0
+
+echo "G-PAPER-STACK-01 — paso 1/3: camino CABLEADO (for_round_trip) con el gas real de cada call site"
+echo "  PAPER_STACK_GAS_VALUES=$PAPER_STACK_GAS_VALUES  (RPC=$PAPER_STACK_RPC)"
+if ! cargo test -p sim-core --lib -- --ignored --nocapture paper_stack_wired_path_deploys_ok_at_call_site_gas; then
+  echo "  FAIL  el camino cableado no llega a Ok con el gas real de algún call site"
+  rc=1
+fi
+
+echo "G-PAPER-STACK-01 — paso 2/3: la causa raíz — un gas SIN capar de 30M lo rechaza el tope OSAKA"
+if ! cargo test -p sim-core --lib -- --ignored --nocapture paper_stack_uncapped_gas_is_rejected_by_the_osaka_tx_cap; then
+  echo "  FAIL  el tope por-tx OSAKA (EIP-7825) NO rechazó el gas sin capar"
+  rc=1
+fi
+
+echo "G-PAPER-STACK-01 — paso 3/3: deploy vía ERC1967Proxy (spec construida a mano, 15M)"
+if ! cargo test -p sim-core --lib -- --ignored --nocapture paper_stack_deploy_initializes_via_erc1967_proxy_ok; then
+  echo "  FAIL  el deploy del stack no llega a Ok"
+  rc=1
+fi
+
+if [ "$rc" = "0" ]; then
+  echo "G-PAPER-STACK-01 — PASS (camino cableado con gas real de cada call site + proxy deploy = Ok)"
   exit 0
 else
-  echo "G-PAPER-STACK-01 — FAIL (el deploy no llega a Ok; ver salida arriba)"
+  echo "G-PAPER-STACK-01 — FAIL (ver salida arriba)"
   exit 1
 fi

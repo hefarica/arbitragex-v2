@@ -165,6 +165,47 @@ pub fn decode_fixture(
     hex::decode(stripped).map_err(|e| PaperStackError::FixtureDecode(format!("{name}: {e}")))
 }
 
+/// Split a solc creation-code blob into `(executable code, trailing metadata)`.
+///
+/// solc appends a CBOR metadata section at the very END of the code, preceded
+/// by a 2-byte big-endian length. That section carries the compiler version and
+/// the ipfs/keccak hash of the metadata — i.e. **build artifacts, not
+/// executable semantics**. Two builds of the SAME source can differ there
+/// (toolchain, absolute paths, settings) while every executable byte is
+/// identical.
+///
+/// Fail-honest (R8) — this NEVER guesses. If `code.len() < 2`, or the declared
+/// length does not fit (`L + 2 > code.len()`), **or the declared length would
+/// consume the whole blob** (`L + 2 == code.len()`, i.e. no executable bytes
+/// would be left), the whole blob is returned as executable code with an empty
+/// metadata slice and the caller compares **every byte**, i.e. strictly. There
+/// is no "assume it is metadata" branch.
+///
+/// R-1 (2026-10-18): the `L + 2 == code.len()` case used to fall through and
+/// return `executable = &[]` with the entire blob as metadata. A caller that
+/// split BOTH sides could then compare two empty slices and pass trivially —
+/// exactly the hollow pass the exclusion is not allowed to create. Treating a
+/// whole-blob "metadata" as *not* a well-formed split (compare everything,
+/// strictly) removes the degenerate branch; a real creation blob always keeps
+/// non-empty executable code.
+///
+/// Invariants: `executable.len() + metadata.len() == code.len()`, and for any
+/// non-empty input `!executable.is_empty()` (pinned by
+/// `solc_metadata_split_is_explicit_and_fail_closed`).
+pub fn split_solc_metadata(code: &[u8]) -> (&[u8], &[u8]) {
+    if code.len() < 2 {
+        return (code, &[]);
+    }
+    let declared = u16::from_be_bytes([code[code.len() - 2], code[code.len() - 1]]) as usize;
+    // `>=` (not `>`): `declared + 2 == code.len()` would leave zero executable
+    // bytes — a whole-blob "metadata" is never a valid split.
+    if declared + 2 >= code.len() {
+        return (code, &[]);
+    }
+    let start = code.len() - (declared + 2);
+    (&code[..start], &code[start..])
+}
+
 // ---------------------------------------------------------------------------
 // ABI encoders (hand-built, same style as sequence_runner helpers)
 // ---------------------------------------------------------------------------
@@ -298,6 +339,20 @@ pub struct PaperExecutorStack {
 /// flash dispatch to pay gas.
 pub const PAPER_ADMIN_ETH_SEED_WEI: u128 = 1_000_000_000_000_000_000; // 1 ETH
 
+/// PR-D2 (2026-10-18): maximum per-transaction gas the paper stack will ask
+/// for. EIP-7825 caps a single transaction's gas limit at `2^24 = 16_777_216`
+/// from the OSAKA fork on, and the REVM transactor REJECTS a transaction whose
+/// gas limit exceeds that cap *before* executing it (`transaction gas limit
+/// (30000000) is greater than the cap (16777216)`). The paper `SequenceContext`
+/// pins `SpecId::OSAKA` regardless of the forked block, so the cap always
+/// applies. `searcher-rs::scanner` passed `gas_limit_per_step = 30_000_000`,
+/// which made a wired `PAPER_STACK_DEPLOY` unusable — the defect PR-D2 fixes.
+///
+/// Every spec built through [`PaperStackSpec::for_round_trip`] is capped here,
+/// one notch below the consensus cap (the same margin the verified path keeps:
+/// `verified_simulation` caps at `min(gas_limit, 16_777_216)`).
+pub const PAPER_STACK_MAX_TX_GAS: u64 = 16_000_000;
+
 /// Environment flag that turns the paper-stack deploy ON for the sim paths.
 /// Absent, or any value other than `1`/`true`/`yes`/`on`, leaves the spec
 /// `None`, so the default behaviour of every call site is unchanged
@@ -365,7 +420,13 @@ impl PaperStackSpec {
             flashloan_callers: vec![ctx.caller],
             admin_eth_seed_wei: U256::from(PAPER_ADMIN_ETH_SEED_WEI),
             gas_price_wei,
-            gas_limit,
+            // PR-D2: never ask for more than the OSAKA per-tx gas cap
+            // (EIP-7825). The `scanner` call site passes `30_000_000`; uncapped,
+            // the transactor rejects the deploy tx with
+            // `transaction gas limit (30000000) is greater than the cap
+            // (16777216)` before executing — a wired `PAPER_STACK_DEPLOY` could
+            // never turn on. The cap is a no-op for call sites already under it.
+            gas_limit: gas_limit.min(PAPER_STACK_MAX_TX_GAS),
         })
     }
 }
@@ -707,11 +768,21 @@ mod tests {
     }
 
     /// Drift guard: when `contracts/out` exists (local forge build), the
-    /// committed fixtures MUST byte-match the freshly compiled creation code.
-    /// `contracts/out` is untracked build output (VPS image rust:1.91 has no
-    /// forge), so the check self-skips where the artifacts are absent — but
-    /// any machine that DID build the contracts can never ship a stale
-    /// fixture. Regenerate with `scripts/gen_executor_fixtures.sh`.
+    /// committed fixtures MUST match the freshly compiled creation code.
+    ///
+    /// METADATA POLICY (PR-D2 / ADR-004, 2026-10-18): the trailing solc CBOR
+    /// metadata section is a **build artifact** (compiler version + ipfs/keccak
+    /// of the metadata), not executable semantics, so it is EXCLUDED from the
+    /// comparison — and the exclusion is **explicit, never silent**: the guard
+    /// asserts that every byte BEFORE that section is identical and names, in
+    /// the failure message, the exact byte ranges it ignores. If
+    /// [`split_solc_metadata`] cannot find a well-formed trailing section it
+    /// strips nothing and the comparison is byte-for-byte over the whole blob.
+    ///
+    /// `contracts/out` is untracked build output (the VPS image has no
+    /// `forge`), so the check self-skips where the artifacts are absent — but
+    /// any machine that DID build the contracts can never ship a stale fixture.
+    /// Regenerate with `scripts/gen_executor_fixtures.sh`.
     #[test]
     fn fixtures_match_forge_output_when_present() {
         for (name, fixture) in [
@@ -741,12 +812,108 @@ mod tests {
             } else {
                 format!("0x{object}")
             };
+
+            let fixture_bytes = decode_fixture(fixture, "fixture").expect("fixture must decode");
+            let want_bytes = hex::decode(want.trim_start_matches("0x")).expect("forge object hex");
+
+            let (fixture_code, fixture_meta) = split_solc_metadata(&fixture_bytes);
+            let (want_code, want_meta) = split_solc_metadata(&want_bytes);
+
+            // R-1: the executable side of a real creation blob is NEVER empty.
+            // Without this, a degenerate `declared + 2 == code.len()` split on
+            // BOTH sides would compare two empty slices and PASS trivially.
+            assert!(
+                !fixture_code.is_empty(),
+                "{name}: fixture split produced an EMPTY executable slice \
+                 ({} bytes total) — refusing a hollow pass",
+                fixture_bytes.len()
+            );
+            assert!(
+                !want_code.is_empty(),
+                "{name}: contracts/out split produced an EMPTY executable slice \
+                 ({} bytes total) — refusing a hollow pass",
+                want_bytes.len()
+            );
+
+            // The split must be lossless — a guard that silently drops bytes
+            // would be worse than no guard.
             assert_eq!(
-                fixture.trim(),
-                want,
-                "fixture {name} drifted from contracts/out — regenerate via scripts/gen_executor_fixtures.sh"
+                fixture_code.len() + fixture_meta.len(),
+                fixture_bytes.len(),
+                "{name}: split_solc_metadata lost bytes on the fixture"
+            );
+            assert_eq!(
+                want_code.len() + want_meta.len(),
+                want_bytes.len(),
+                "{name}: split_solc_metadata lost bytes on contracts/out"
+            );
+
+            // The ONE declared exclusion, spelled out for every failure below.
+            let ignored = format!(
+                "DECLARED EXCLUSION — ignoring only the trailing solc CBOR metadata: \
+                 fixture {} bytes at [{}, {}), contracts/out {} bytes at [{}, {})",
+                fixture_meta.len(),
+                fixture_code.len(),
+                fixture_bytes.len(),
+                want_meta.len(),
+                want_code.len(),
+                want_bytes.len(),
+            );
+
+            assert_eq!(
+                fixture_code, want_code,
+                "{ignored} — fixture {name} EXECUTABLE code drifted from contracts/out \
+                 (the exclusion covers metadata only, so this is a real byte drift). \
+                 Regenerate via scripts/gen_executor_fixtures.sh"
             );
         }
+    }
+
+    /// The exclusion above is only legitimate if the splitter is exact and
+    /// fail-closed. This pins: boundaries, losslessness, and the fallbacks
+    /// (R-1: including the whole-blob `declared + 2 == code.len()` case).
+    #[test]
+    fn solc_metadata_split_is_explicit_and_fail_closed() {
+        // Well-formed: tail length 0x0033 = 51 bytes of CBOR after it.
+        let mut code = vec![0x60, 0x80, 0x60, 0x40];
+        code.extend_from_slice(&[0xaa; 51]);
+        code.extend_from_slice(&[0x00, 0x33]);
+        let (exec, meta) = split_solc_metadata(&code);
+        assert_eq!(exec, &[0x60, 0x80, 0x60, 0x40]);
+        assert_eq!(meta.len(), 53, "metadata section = 51 payload + 2 length");
+        assert_eq!(exec.len() + meta.len(), code.len());
+
+        // Fallback 1: nothing to read a length from ⇒ compare everything.
+        let short = vec![0x60u8];
+        let (e, m) = split_solc_metadata(&short);
+        assert_eq!(e, short.as_slice());
+        assert!(m.is_empty(), "short input must not be treated as metadata");
+
+        // Fallback 2: declared length does not fit ⇒ compare everything.
+        let bogus = vec![0x60u8, 0x80, 0xff, 0xff];
+        let (e2, m2) = split_solc_metadata(&bogus);
+        assert_eq!(e2, bogus.as_slice());
+        assert!(m2.is_empty(), "oversized length must not strip anything");
+
+        // R-1 pin: the 2-byte blob `0x0000` declares 0 bytes of metadata. It
+        // must stay EXECUTABLE — returning an empty executable slice here is
+        // the hollow-pass bug (two such splits would match).
+        let two = vec![0x00u8, 0x00];
+        let (e3, m3) = split_solc_metadata(&two);
+        assert_eq!(e3, two.as_slice(), "0x0000 must not become empty metadata");
+        assert!(m3.is_empty(), "0x0000 declares no metadata");
+
+        // R-1 pin: `declared + 2 == code.len()` claims the WHOLE blob as
+        // metadata ⇒ not a well-formed split, compare everything strictly.
+        let mut whole = vec![0xaau8; 4];
+        whole.extend_from_slice(&[0x00, 0x04]);
+        let (e4, m4) = split_solc_metadata(&whole);
+        assert_eq!(
+            e4,
+            whole.as_slice(),
+            "whole-blob metadata is not a valid split — must compare everything"
+        );
+        assert!(m4.is_empty(), "whole-blob metadata must strip nothing");
     }
 
     #[test]
@@ -885,6 +1052,140 @@ mod tests {
         );
     }
 
+    /// PR-D2 root-cause pin: an UNCAPPED spec at the scanner's `30_000_000`
+    /// must be REJECTED by the OSAKA per-tx cap (EIP-7825) before it executes.
+    /// This is the defect PR-D2 fixes, pinned so a future change that drops the
+    /// cap in `for_round_trip` cannot pass unnoticed. The spec is built
+    /// literally (bypassing the cap) — the cap is exercised by the wired test.
+    #[test]
+    #[ignore = "requires an RPC at PAPER_STACK_RPC (default http://127.0.0.1:8545); run with --ignored"]
+    fn paper_stack_uncapped_gas_is_rejected_by_the_osaka_tx_cap() {
+        let rpc = std::env::var("PAPER_STACK_RPC")
+            .unwrap_or_else(|_| "http://127.0.0.1:8545".to_string());
+        let block = std::env::var("PAPER_STACK_BLOCK")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok());
+
+        let lazy = simulator_v2::LazyDb::new(&rpc, block).expect("connect PAPER_STACK_RPC");
+        let mut sctx =
+            simulator_v2::sequence_runner::SequenceContext::new(lazy, 1, block.unwrap_or(1));
+
+        let admin = Address::from([0x11u8; 20]);
+        let spec = PaperStackSpec {
+            admin,
+            aave_pool: Address::from([0x22u8; 20]),
+            tokens: vec![],
+            routers: vec![],
+            router_selectors: vec![],
+            flashloan_callers: vec![admin],
+            admin_eth_seed_wei: U256::from(1_000_000_000_000_000_000u128),
+            gas_price_wei: 1_000_000_000,
+            // Deliberately UNCAPPED: the scanner's real value.
+            gas_limit: 30_000_000,
+        };
+        let err = deploy_paper_executor_stack(&mut sctx, &spec)
+            .expect_err("30_000_000 must be rejected by the OSAKA per-tx cap, not executed");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("16777216") || msg.to_lowercase().contains("cap"),
+            "expected the EIP-7825 per-tx-cap rejection, got: {msg}"
+        );
+        eprintln!("PAPER_STACK_UNCAPPED_30M_REJECTED={msg}");
+    }
+
+    /// PR-D2 gate: run the WIRED path with the REAL gas each call site passes —
+    /// `searcher-rs::scanner`'s `30_000_000` included — and require the deploy
+    /// to be `Ok`. The spec comes from `PaperStackSpec::for_round_trip`, the
+    /// exact builder behind `paper_stack_for_round_trip`, i.e. production.
+    ///
+    /// Before the PR-D2 cap this FAILS: the paper `SequenceContext` pins
+    /// `SpecId::OSAKA`, EIP-7825 caps a transaction at `2^24 = 16_777_216`, and
+    /// the transactor rejects the deploy tx BEFORE executing it
+    /// (`transaction gas limit (30000000) is greater than the cap (16777216)`).
+    /// `G-PAPER-STACK-01` stayed green with the wire broken only because it
+    /// deployed a HAND-BUILT spec at `15_000_000` — the real gas of the call
+    /// sites was never exercised. This test closes that gap.
+    ///
+    /// Requires an RPC at `PAPER_STACK_RPC` (bare `anvil` works). Gas values:
+    /// `PAPER_STACK_GAS_VALUES` (comma-separated; default the real
+    /// DEPLOY-CAPABLE call-site values `30000000,16000000`). `PAPER_STACK_CHAIN_ID`
+    /// overrides the fork chain (default 1).
+    ///
+    /// The sim-ctl call sites pass a `500_000` default, which is below the
+    /// paper-stack DEPLOY FLOOR (measured >2_000_000: the AE creation code alone
+    /// deposits ~9.5 KB) — a deploy there fails with `OutOfGas` regardless of
+    /// the cap. That is a separate, declared limitation of enabling
+    /// `PAPER_STACK_DEPLOY` through sim-ctl with defaults, so 500_000 is covered
+    /// by the offline cap test (`…caps_gas_below_osaka_tx_cap_for_every_call_site`)
+    /// instead of here.
+    #[test]
+    #[ignore = "requires an RPC at PAPER_STACK_RPC (default http://127.0.0.1:8545); run with --ignored"]
+    fn paper_stack_wired_path_deploys_ok_at_call_site_gas() {
+        let rpc = std::env::var("PAPER_STACK_RPC")
+            .unwrap_or_else(|_| "http://127.0.0.1:8545".to_string());
+        let block = std::env::var("PAPER_STACK_BLOCK")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok());
+        let chain_id = std::env::var("PAPER_STACK_CHAIN_ID")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(1);
+        // `for_round_trip` resolves the Aave pool fail-closed from
+        // `AAVE_POOL_<chain_id>`; mainnet's real pool keeps the fork honest.
+        std::env::set_var(
+            format!("AAVE_POOL_{chain_id}"),
+            "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+        );
+
+        let gas_values = std::env::var("PAPER_STACK_GAS_VALUES")
+            .unwrap_or_else(|_| "30000000,16000000".to_string());
+        let ctx = diag_ctx();
+
+        let mut checked = 0usize;
+        for raw in gas_values.split(',') {
+            let raw = raw.trim();
+            if raw.is_empty() {
+                continue;
+            }
+            let gas: u64 = raw.parse().expect("PAPER_STACK_GAS_VALUES: not a u64");
+            // The wired spec — the same builder every call site uses.
+            let spec = PaperStackSpec::for_round_trip(&ctx, chain_id, 1_000_000_000, gas)
+                .expect("wired spec must build");
+            assert!(
+                spec.gas_limit <= 16_777_216,
+                "wired spec gas_limit {} exceeds the OSAKA per-tx cap for requested {gas}",
+                spec.gas_limit
+            );
+            assert_eq!(
+                spec.gas_limit,
+                gas.min(PAPER_STACK_MAX_TX_GAS),
+                "cap mismatch for requested gas {gas}"
+            );
+
+            let lazy = simulator_v2::LazyDb::new(&rpc, block).expect("connect PAPER_STACK_RPC");
+            let mut sctx = simulator_v2::sequence_runner::SequenceContext::new(
+                lazy,
+                chain_id,
+                block.unwrap_or(1),
+            );
+            let stack = deploy_paper_executor_stack(&mut sctx, &spec).unwrap_or_else(|e| {
+                panic!(
+                    "WIRED deploy must be Ok at call-site gas {gas} (capped {}): {e}",
+                    spec.gas_limit
+                )
+            });
+            assert_ne!(stack.arbitrage_executor, Address::zero());
+            assert_ne!(stack.flashloan_executor, Address::zero());
+            eprintln!(
+                "PAPER_STACK_WIRED_AT_CALL_SITE_GAS requested={gas} capped={} OUTCOME=OK ae={:?} fle={:?}",
+                spec.gas_limit, stack.arbitrage_executor, stack.flashloan_executor
+            );
+            checked += 1;
+        }
+        assert!(checked > 0, "no gas values exercised");
+        std::env::remove_var(format!("AAVE_POOL_{chain_id}"));
+    }
+
     fn diag_ctx() -> prioritization_spine::round_trip_executor::RoundTripContext {
         prioritization_spine::round_trip_executor::RoundTripContext {
             caller: Address::from([0x11u8; 20]),
@@ -937,6 +1238,51 @@ mod tests {
         assert_eq!(spec.flashloan_callers, vec![Address::from([0x11u8; 20])]);
         assert_eq!(spec.gas_price_wei, 7);
         assert_eq!(spec.gas_limit, 16_000_000);
+        std::env::remove_var(format!("AAVE_POOL_{chain}"));
+    }
+
+    /// PR-D2: `for_round_trip` caps the per-tx gas below the OSAKA cap
+    /// (EIP-7825, `2^24 = 16_777_216`) for EVERY wired call site, using each
+    /// call site's real `gas_limit_per_step`. The scanner passes `30_000_000`
+    /// — the value that made a wired `PAPER_STACK_DEPLOY` unusable (the
+    /// transactor rejected the deploy tx before executing). Below the cap the
+    /// value is untouched (no behaviour change for the 500k/16M call sites).
+    #[test]
+    fn paper_stack_spec_caps_gas_below_osaka_tx_cap_for_every_call_site() {
+        const OSAKA_TX_CAP: u64 = 16_777_216; // EIP-7825, revm 42 SpecId::OSAKA
+        let chain = 4_242_428u64; // test-only chain id, no other test touches it
+        std::env::set_var(
+            format!("AAVE_POOL_{chain}"),
+            "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+        );
+        let ctx = diag_ctx();
+
+        // (call site, the real gas it passes today)
+        for (site, gas) in [
+            ("searcher-rs/scanner.rs", 30_000_000u64),
+            ("searcher-rs/candidate_simulation.rs", 16_000_000),
+            ("relays-client/execution_admission.rs", 16_000_000),
+            (
+                "sim-ctl/sim_runner.rs (SIM_GAS_LIMIT_PER_STEP default)",
+                500_000,
+            ),
+            (
+                "sim-ctl/canonical_plan_consumer.rs (same env default)",
+                500_000,
+            ),
+        ] {
+            let spec = PaperStackSpec::for_round_trip(&ctx, chain, 7, gas).expect(site);
+            assert!(
+                spec.gas_limit <= OSAKA_TX_CAP,
+                "{site}: gas_limit {} exceeds the OSAKA per-tx cap {OSAKA_TX_CAP}",
+                spec.gas_limit
+            );
+            assert_eq!(
+                spec.gas_limit,
+                gas.min(PAPER_STACK_MAX_TX_GAS),
+                "{site}: the cap must be exactly min(gas, {PAPER_STACK_MAX_TX_GAS})"
+            );
+        }
         std::env::remove_var(format!("AAVE_POOL_{chain}"));
     }
 
