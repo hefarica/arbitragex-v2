@@ -58,3 +58,45 @@ Barrido propio (48 filas = 12 rutas × 4 viewports) contra el sitio vivo; eviden
 - Las 12 entidades salen del registro real (`chain, rpc, dex, token, pool, wallet, strategy,
   contract, risk_gate, capital_gate, relay, agent`), el mismo listado que usa
   `frontend/e2e/operator_sovereignty.spec.ts` (matriz C9.4), no inventadas.
+
+---
+
+# CIERRE (2026-10-18, segunda pasada) — **GATE VERDE sobre las 70 rutas**
+
+## El origen era UNO, no trece
+
+`app/omega-s5/layout.tsx` montaba la fila como `flex gap-6` con una `aside.w-44.shrink-0` (176 px) y
+un `gap` de 24 px: a 390 px le dejaba **~190 px** a la columna de contenido, y las tarjetas/tablas de
+dentro tienen un `min-content` mayor que eso → la **página** desplazaba en horizontal.
+`body{overflow-x:hidden}` no lo evitaba porque el desplazamiento ocurre en `documentElement`.
+
+**Arreglo (una línea):** `flex flex-col gap-6 lg:flex-row`. Por debajo de `lg` la fila se apila
+(la `aside` ocupa su propia fila, 176 px < 390); en `lg+` el layout es **idéntico** al de antes.
+Sin `overflow-x:hidden`, sin ocultar nada.
+
+Eso cierra **de golpe** el `/omega-s5/factory` (26 px) y las **12 rutas de entidad** (93 px locales
+/ 152 px en el vivo), que era la hipótesis "es un arreglo de layout, no once".
+
+## Evidencia (salida real)
+
+```
+$ scripts/gates/g-no-overflow-390-01.sh http://127.0.0.1:3166 /tmp/pre70.json
+G-NO-OVERFLOW-390-01 — 390px overflow + text-parity anti-cheat
+  PASS  (sweep) scanner completed
+  PASS  (sweep) result file written
+  info  routes compared: 70 (baseline 70, sweep 70)
+  PASS  (1) every route has scrollWidth - clientWidth <= 2 at 390
+  PASS  (2) no route lost >5% of its text vs the pre-fix baseline
+G-NO-OVERFLOW-390-01: PASS
+```
+
+- **Baseline pre-fix, mismo entorno** (build local, 70 rutas a 390): **13 rutas** con overflow
+  (12 de entidad a 93 px + `/omega-s5/factory` 26 px). **Después: 0.**
+- La matriz del gate pasa de **58 a 70 rutas** (`docs/reaintegration/evidence/routes.json`), así que
+  al cerrar el cluster se cierra también **P5-F6**.
+- `npx tsc --noEmit` **PASS**; `npx vitest run` **155 archivos / 1639 tests, 0 fallos**.
+
+## Estado
+
+**PR-E y P5-F6 CERRADOS.** Revert de un paso: revertir este commit devuelve la fila a `flex gap-6`
+y el overflow medido vuelve exactamente a 13 rutas.

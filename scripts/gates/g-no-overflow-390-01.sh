@@ -39,7 +39,7 @@ done
 command -v node >/dev/null 2>&1 || { say "  SKIP  node absent"; exit 2; }
 [ -d "$ROOT/tests/e2e/node_modules/playwright" ] || { say "  SKIP  playwright absent in tests/e2e"; exit 2; }
 
-say "  ... sweeping 58 routes at 390 (reusing scripts/p5/p5-live-scan.mjs)"
+say "  ... sweeping the committed route matrix at 390 (reusing scripts/p5/p5-live-scan.mjs)"
 # The scanner is the single source of truth in scripts/p5/; it is COPIED into
 # tests/e2e for the run so `playwright` resolves from that node_modules (ESM
 # resolves relative to the script file, not the cwd).
