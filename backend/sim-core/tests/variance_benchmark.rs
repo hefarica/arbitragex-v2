@@ -102,6 +102,36 @@ struct Histogram {
     obs_failed: usize,
     zero_predicted: usize,
     labeled: usize,
+    /// G-SIM1-CAUSE-01: WHY each prediction failed, tagged. The harness already
+    /// received `SimulationOutcome.fail_reason` and used to discard it, so the
+    /// evidence row could only report `pred_failed=N` — a number nobody can act
+    /// on. This map is the per-cause breakdown of that N.
+    pred_reasons: std::collections::BTreeMap<String, usize>,
+}
+
+/// Count one failed prediction under its MEASURED cause. A missing reason is
+/// not dropped: it becomes the explicit `unlabeled_pred` bucket, because "the
+/// harness could not name it" is itself a measurement (R8 — nothing silent).
+fn record_pred_failure(hist: &mut Histogram, reason: Option<&str>) {
+    hist.pred_failed += 1;
+    let tag = reason
+        .map(str::trim)
+        .filter(|tag| !tag.is_empty())
+        .unwrap_or("unlabeled_pred");
+    *hist.pred_reasons.entry(tag.to_string()).or_insert(0) += 1;
+}
+
+/// The cause that explains most failures, with its weight (`tag (n of N)`), or
+/// `None` when no prediction failed. Ties break deterministically so the same
+/// run always prints the same line.
+fn dominant_failure_reason(
+    reasons: &std::collections::BTreeMap<String, usize>,
+    failed: usize,
+) -> Option<String> {
+    reasons
+        .iter()
+        .max_by(|a, b| a.1.cmp(b.1).then_with(|| b.0.cmp(a.0)))
+        .map(|(tag, count)| format!("{tag} ({count} of {failed})"))
 }
 
 /// route_metadata carries display names; the encoder accepts semantic labels
@@ -506,7 +536,9 @@ async fn variance_benchmark_predicted_vs_settled_block() {
 
         let pred = sim_at_block(&rpc, block_b, &ctx, &exec_cfg);
         if !pred.passed {
-            hist.pred_failed += 1;
+            // G-SIM1-CAUSE-01: attribute the failure BEFORE skipping, so the
+            // row names the cause instead of only counting it.
+            record_pred_failure(&mut hist, pred.fail_reason.as_deref());
             continue;
         }
         let obs = sim_at_block(&rpc, block_b + 1, &ctx, &exec_cfg);
@@ -583,6 +615,11 @@ async fn variance_benchmark_predicted_vs_settled_block() {
         // dedup/DISTINCT): the denominator of the sample floor.
         "distinct_topologies_exported": hist.attempted - hist.dedup,
         "pass_reason": pass_reason,
+        // G-SIM1-CAUSE-01 (instrumentation, NOT a fix): the readiness verifier
+        // quotes `detail.fail_reason` verbatim, so the dominant tag becomes the
+        // row's blocker text; the full per-route breakdown travels beside it.
+        "fail_reason": dominant_failure_reason(&hist.pred_reasons, hist.pred_failed),
+        "fail_reasons": &hist.pred_reasons,
         "skips": {
             "attempted": hist.attempted,
             "dedup": hist.dedup,
@@ -660,4 +697,47 @@ fn route_hash_is_deterministic() {
     assert_eq!(h1, h2);
     assert_ne!(h1, [0u8; 32]);
     assert_ne!(H256::from(h1), H256::zero());
+}
+
+// ---------------------------------------------------------------------------
+// G-SIM1-CAUSE-01 — the cause of a failed prediction must be NAMED, not counted
+// ---------------------------------------------------------------------------
+
+/// POSITIVE control: two routes failing for the same known cause and one for a
+/// different cause must produce a per-cause histogram whose dominant tag names
+/// the first one, with its weight.
+///
+/// NEGATIVE control: a failed prediction with NO reason must land in the
+/// explicit `unlabeled_pred` bucket — never be silently folded into `pred_failed`
+/// and left unexplained.
+#[test]
+fn pred_failure_reasons_are_named_per_route_not_dropped() {
+    let mut hist = Histogram::default();
+    record_pred_failure(&mut hist, Some("multistep_paper_stack_failed:deploy_out_of_gas"));
+    record_pred_failure(&mut hist, Some("multistep_paper_stack_failed:deploy_out_of_gas"));
+    record_pred_failure(&mut hist, Some("multistep_paper_stack_failed:pool_missing"));
+    record_pred_failure(&mut hist, None);
+    record_pred_failure(&mut hist, Some("   "));
+
+    assert_eq!(hist.pred_failed, 5, "every failed prediction is still counted");
+    assert_eq!(
+        hist.pred_reasons["multistep_paper_stack_failed:deploy_out_of_gas"], 2,
+        "the same cause must aggregate under one tag"
+    );
+    assert_eq!(
+        hist.pred_reasons["unlabeled_pred"], 2,
+        "a missing/blank reason is an explicit bucket, not a silent drop"
+    );
+    assert_eq!(
+        dominant_failure_reason(&hist.pred_reasons, hist.pred_failed).as_deref(),
+        Some("multistep_paper_stack_failed:deploy_out_of_gas (2 of 5)"),
+        "the dominant tag names the cause with its weight"
+    );
+}
+
+/// No failed prediction => no fabricated cause (`null`, not an empty string).
+#[test]
+fn dominant_reason_is_none_when_nothing_failed() {
+    let hist = Histogram::default();
+    assert_eq!(dominant_failure_reason(&hist.pred_reasons, hist.pred_failed), None);
 }
