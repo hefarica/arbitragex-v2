@@ -1,7 +1,7 @@
 {
   "schema": "reaintegration/manifest/2",
-  "generated_at": "2026-10-18T08:28:28Z",
-  "base_sha": "4f2c88a33eeb31b23bc516a8bc35ccfbd2036a71",
+  "generated_at": "2026-10-18T14:43:31Z",
+  "base_sha": "62afc49e09e383959614d1a79b4a6c0392724ca9",
   "artifacts": {
     "inventory": "docs/reaintegration/00-INVENTORY.json",
     "rea_fiches": 16,
@@ -13,19 +13,25 @@
     "gates": [
       "docs/reaintegration/gates/G-ADMIN-ROOT-01.md",
       "docs/reaintegration/gates/G-BACKUP-01.md",
+      "docs/reaintegration/gates/G-FIXTURE-METADATA-01.md",
       "docs/reaintegration/gates/G-OMEGA-01.md",
       "docs/reaintegration/gates/G-OMEGA-BASE-01.md",
       "docs/reaintegration/gates/G-PAGE-INV-01.md",
+      "docs/reaintegration/gates/G-PAPER-STACK-01-GAS.md",
+      "docs/reaintegration/gates/G-PAPER-STACK-PROXY-01.md",
       "docs/reaintegration/gates/G-ROOT-ENTRYPOINTS-01.md",
       "scripts/gates/g-admin-root-01.sh",
       "scripts/gates/g-backup-01.sh",
+      "scripts/gates/g-edge-csp-single-01.sh",
+      "scripts/gates/g-fixture-metadata-01.sh",
       "scripts/gates/g-omega-01.sh",
       "scripts/gates/g-omega-base-01.sh",
       "scripts/gates/g-page-inv-01.sh",
+      "scripts/gates/g-paper-stack-01.sh",
       "scripts/gates/g-root-entrypoints-01.sh"
     ],
     "ledger": "docs/reaintegration/ledger/LEDGER_SHA256.json",
-    "ledger_sha256": "ca074a3961d220e1b8ff209cd6d6cb12a5cdfb49494f1f007670f35168b7c610"
+    "ledger_sha256": "511bd0a8b0e4413d9b35923a7177ff808c3dd00717ea24b723c22a744e41f25e"
   },
   "gates_result": {
     "G-BACKUP-01": "PASS",
@@ -35,5 +41,5 @@
     "G-PAGE-INV-01": "PASS",
     "G-ROOT-ENTRYPOINTS-01": "PASS"
   },
-  "files_hashed": 40
+  "files_hashed": 48
 }

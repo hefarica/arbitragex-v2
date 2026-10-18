@@ -1,0 +1,79 @@
+{
+  "schema": "reaintegration/evidence/pr-d2-fixture-regen/1",
+  "generated_at": "2026-10-18T15:10:00Z",
+  "program": "REA / arbitragex-v2",
+  "pr": "PR-D2 — fixture regeneration + R-1 + R-2",
+  "base_sha": "d3087b84b1737bd2767a919291c0c994eae38e95",
+  "decision": "regenerate — contracts/src is the source of truth (no on-chain deployment to consult: no contracts/broadcast/, no contracts/deployments/, no EXECUTOR_ADDRESS constant; contracts/DEPLOY.md is a runbook with placeholders)",
+  "toolchain": {
+    "forge": "1.8.5",
+    "cargo": "1.91.0 (rust-toolchain.toml)"
+  },
+  "regeneration": {
+    "script": "scripts/gen_executor_fixtures.sh",
+    "fixtures": {
+      "ArbitrageExecutor": {
+        "path": "backend/sim-core/src/fixtures/ArbitrageExecutor.bytecode.hex",
+        "sha256_before": "86b0a5a18fb0d7f75821378d77938f546297888497557c1782dd1a7955155e0c",
+        "sha256_after": "024723065d2d8afa2e4a204e48f75199b0c4bea9216da5a3ad914468cccf268d",
+        "bytes_before": 9575,
+        "bytes_after": 9575,
+        "executable_before": 9522,
+        "executable_after": 9522,
+        "note": "executable code identical (9522 == 9522): the diff was the trailing solc CBOR metadata only — the case ADR-004 covers"
+      },
+      "FlashLoanExecutor": {
+        "path": "backend/sim-core/src/fixtures/FlashLoanExecutor.bytecode.hex",
+        "sha256_before": "bd10d1a856dc571db22b0fe4495db084a86b4d684bb33e2a9033fe7d5786438f",
+        "sha256_after": "1d91469e06ff2031c8e658c3eea6ffedaae3c2c190103b3b2a2acae9f70985cb",
+        "bytes_before": 8035,
+        "bytes_after": 8587,
+        "executable_before": 7982,
+        "executable_after": 8534,
+        "note": "REAL executable drift (+552 bytes; first diff at offset 9). The old committed fixture was NOT the contract compiled by contracts/src — a sim/live parity break. Regeneration closes it."
+      },
+      "ERC1967Proxy": {
+        "path": "backend/sim-core/src/fixtures/ERC1967Proxy.bytecode.hex",
+        "sha256_before": "a9245994deb85d5a4af51707a3c3ff92c4c41a6254018fc46834512e9fc513f4",
+        "sha256_after": "5b634aec1f0b2969de05c4a17da379c90059bca8f23d96f701e95050ddbce17f",
+        "bytes_before": 968,
+        "bytes_after": 968,
+        "executable_before": 915,
+        "executable_after": 915,
+        "note": "PR-D1 added this fixture; executable code identical (915 == 915), metadata only"
+      }
+    }
+  },
+  "R1_split_solc_metadata": {
+    "bug": "if declared + 2 == code.len() the splitter returned executable = [] with the whole blob as metadata; two such splits would compare empty slices and PASS trivially.",
+    "fix": "reject the whole-blob case: `declared + 2 >= code.len()` returns the whole blob as executable (strict compare); the drift guard also asserts `!executable.is_empty()` on both sides.",
+    "tests_pinned": [
+      "solc_metadata_split_is_explicit_and_fail_closed: 0x0000 stays executable",
+      "solc_metadata_split_is_explicit_and_fail_closed: declared+2 == code.len() strips nothing",
+      "fixtures_match_forge_output_when_present: non-empty executable asserted for fixture and contracts/out"
+    ]
+  },
+  "R2_ci_coverage": {
+    "before": "CI image shipped no forge, contracts/out absent, the Rust test self-skipped — the gate ran ONLY locally.",
+    "fix_primary": "new .github/workflows/ci.yml job `fixture-metadata-gate` (checkout submodules: recursive + dtolnay/rust-toolchain 1.91.0 + Swatinem/rust-cache + foundry-rs/foundry-toolchain) runs scripts/gates/g-fixture-metadata-01.sh; added to the ci-gate required set.",
+    "fix_fallback": "MANUAL-ONLY registration with expiry 2026-11-18 recorded in G-FIXTURE-METADATA-01.md",
+    "gate_script_bug_fixed": "cargo was invoked from the repo root, which has no Cargo.toml (only backend/Cargo.toml) — cargo test -p sim-core died with 'could not find Cargo.toml' before reaching the test. Now uses --manifest-path backend/Cargo.toml. Also: set -euo pipefail, forge build output no longer swallowed, cargo rc captured explicitly for FAIL classification."
+  },
+  "paper_suite": {
+    "commands": [
+      "cargo test -p sim-core --lib",
+      "cargo test -p sim-ctl --lib"
+    ],
+    "sim_core": "85 passed / 0 failed / 3 ignored",
+    "sim_ctl": "13 passed / 0 failed",
+    "note": "changing the fixture changes what sim-core deploys in the in-process paper fork; the PR-D1 proxy gate (G-PAPER-STACK-01) was re-run after regeneration and still returns Ok (new addresses)."
+  },
+  "gate": {
+    "id": "G-FIXTURE-METADATA-01",
+    "script": "scripts/gates/g-fixture-metadata-01.sh",
+    "result": "PASS (exit 0)",
+    "detail": "before regeneration: FAIL on FlashLoanExecutor (EXECUTABLE code drifted); after: test result ok"
+  },
+  "ledger_status": "APLICADO LOCAL (no push — the team lead pushes; until it is on main the ledger stays APLICADO LOCAL)",
+  "revert": "one step: revert the PR-D2 fixture commit restores the pre-regeneration fixtures, the pre-R-1 splitter and the CI job. Nothing else depends on the artifact beyond sim-core."
+}
