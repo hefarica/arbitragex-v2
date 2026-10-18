@@ -1,0 +1,776 @@
+{
+ "base": "https://arbx.ape-tv.net",
+ "generated_at": "2026-10-18T12:09:07.375Z",
+ "routes": 58,
+ "results": [
+  {
+   "route": "/",
+   "status": 200,
+   "body_text_len": 15057,
+   "headings": [
+    "Convergencia estocástica.\nTopological Yield en mil",
+    "Agregación del sistema — desde stores (§58)",
+    "Asimetrías Topológicas detectadas"
+   ],
+   "interactive": 51,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/admin/chains",
+   "status": 200,
+   "body_text_len": 4514,
+   "headings": [
+    "Chains Admin",
+    "Chains Admin"
+   ],
+   "interactive": 58,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/admin/signin",
+   "status": 200,
+   "body_text_len": 4001,
+   "headings": [],
+   "interactive": 53,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/admin/topology",
+   "status": 200,
+   "body_text_len": 4093,
+   "headings": [
+    "Topology Vault requiere sesión administrativa"
+   ],
+   "interactive": 52,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/agent-insights",
+   "status": 200,
+   "body_text_len": 10713,
+   "headings": [
+    "Agent Insights",
+    "Forensics",
+    "Deployment"
+   ],
+   "interactive": 52,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/apex/allocator",
+   "status": 200,
+   "body_text_len": 4116,
+   "headings": [
+    "Bayesian Allocator · Posterior espejo"
+   ],
+   "interactive": 51,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/audit-logs",
+   "status": 200,
+   "body_text_len": 4247,
+   "headings": [
+    "Audit Logs"
+   ],
+   "interactive": 54,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/chains",
+   "status": 200,
+   "body_text_len": 4058,
+   "headings": [
+    "Chain Registry"
+   ],
+   "interactive": 51,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/config",
+   "status": 200,
+   "body_text_len": 6825,
+   "headings": [
+    "Current config",
+    "Chains",
+    "Relays"
+   ],
+   "interactive": 57,
+   "http_errors": [
+    "401 GET /api/admin/rpc-backend"
+   ],
+   "console_errors": [
+    "Failed to load resource: the server responded with a status of 401 ()"
+   ],
+   "page_errors": []
+  },
+  {
+   "route": "/config/trading",
+   "status": 200,
+   "body_text_len": 6787,
+   "headings": [
+    "Trading config"
+   ],
+   "interactive": 90,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/deploy-pipeline",
+   "status": 200,
+   "body_text_len": 15475,
+   "headings": [
+    "Deploy Pipeline · OMEGA-102",
+    "Rollout de 4 fases mandatorias",
+    "16 artefactos ejecutables"
+   ],
+   "interactive": 62,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/dex-registry",
+   "status": 200,
+   "body_text_len": 6094,
+   "headings": [
+    "Blockchains → DEX → Pools",
+    "DEX Registry"
+   ],
+   "interactive": 85,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/executions",
+   "status": 200,
+   "body_text_len": 4221,
+   "headings": [
+    "Recent executions"
+   ],
+   "interactive": 52,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/killswitch",
+   "status": 200,
+   "body_text_len": 4449,
+   "headings": [
+    "Kill-switch"
+   ],
+   "interactive": 57,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/live-readiness",
+   "status": 200,
+   "body_text_len": 15791,
+   "headings": [
+    "Live readiness",
+    "Secuencia de Ignición Operativa",
+    "Manifolds de Ingesta"
+   ],
+   "interactive": 93,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/live-testnet",
+   "status": 200,
+   "body_text_len": 3971,
+   "headings": [
+    "LIVE_TESTNET"
+   ],
+   "interactive": 51,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/monitor",
+   "status": 200,
+   "body_text_len": 5146,
+   "headings": [
+    "SISTEMA OMEGA: MONITOR"
+   ],
+   "interactive": 51,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/omega-s5/adapters",
+   "status": 200,
+   "body_text_len": 4096,
+   "headings": [
+    "OMEGA S5",
+    "DEX Adapters"
+   ],
+   "interactive": 59,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/omega-s5/core",
+   "status": 200,
+   "body_text_len": 4170,
+   "headings": [
+    "OMEGA S5",
+    "ResolutionCore + Holonomic Decoder"
+   ],
+   "interactive": 59,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/omega-s5/crucible",
+   "status": 200,
+   "body_text_len": 4240,
+   "headings": [
+    "OMEGA S5",
+    "Crucible Survival Tracker"
+   ],
+   "interactive": 59,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/omega-s5/drift",
+   "status": 200,
+   "body_text_len": 4198,
+   "headings": [
+    "OMEGA S5",
+    "Drift Detection"
+   ],
+   "interactive": 59,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/omega-s5/factory",
+   "status": 200,
+   "body_text_len": 4143,
+   "headings": [
+    "OMEGA S5",
+    "DeterministicFactory Deployments"
+   ],
+   "interactive": 59,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/omega-s5/operator",
+   "status": 200,
+   "body_text_len": 4182,
+   "headings": [
+    "OMEGA S5",
+    "Operator Parametrization"
+   ],
+   "interactive": 59,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/omega-s5/registry",
+   "status": 200,
+   "body_text_len": 4395,
+   "headings": [
+    "OMEGA S5",
+    "Canonical Entity Registries"
+   ],
+   "interactive": 65,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/omega-s5/wallets",
+   "status": 200,
+   "body_text_len": 4153,
+   "headings": [
+    "OMEGA S5",
+    "Wallet Topology"
+   ],
+   "interactive": 59,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/onboarding",
+   "status": 200,
+   "body_text_len": 5702,
+   "headings": [
+    "Onboarding"
+   ],
+   "interactive": 55,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/onboarding/1-init",
+   "status": 200,
+   "body_text_len": 5507,
+   "headings": [
+    "Phase 1 — Install & boot"
+   ],
+   "interactive": 63,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/onboarding/2-connect",
+   "status": 200,
+   "body_text_len": 4888,
+   "headings": [
+    "Phase 2 — Connect primary services"
+   ],
+   "interactive": 63,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/onboarding/3-advanced",
+   "status": 200,
+   "body_text_len": 4968,
+   "headings": [
+    "Phase 3 — Advanced features"
+   ],
+   "interactive": 63,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/onboarding/4-testing",
+   "status": 200,
+   "body_text_len": 4996,
+   "headings": [
+    "Phase 4 — Real testing (paper-mode)"
+   ],
+   "interactive": 59,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/onboarding/5-production",
+   "status": 200,
+   "body_text_len": 5592,
+   "headings": [
+    "Phase 5 — Production operation"
+   ],
+   "interactive": 63,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/operations",
+   "status": 200,
+   "body_text_len": 7649,
+   "headings": [
+    "Convergence Metrics"
+   ],
+   "interactive": 57,
+   "http_errors": [
+    "401 GET /api/admin/archive/status"
+   ],
+   "console_errors": [
+    "Failed to load resource: the server responded with a status of 401 ()"
+   ],
+   "page_errors": []
+  },
+  {
+   "route": "/operator",
+   "status": 200,
+   "body_text_len": 7072,
+   "headings": [
+    "Operator self-test center"
+   ],
+   "interactive": 63,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/operator/presets",
+   "status": 200,
+   "body_text_len": 6263,
+   "headings": [
+    "Operator Risk Presets"
+   ],
+   "interactive": 57,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/operator/self-test",
+   "status": 200,
+   "body_text_len": 7060,
+   "headings": [
+    "Operator self-test center"
+   ],
+   "interactive": 63,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/opportunities",
+   "status": 200,
+   "body_text_len": 5063,
+   "headings": [
+    "Live Network value Feed",
+    "AUDIT TRAIL · INVALID / QUARANTINED EVENTS (§31)"
+   ],
+   "interactive": 65,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/opportunities/by-strategy",
+   "status": 200,
+   "body_text_len": 5067,
+   "headings": [
+    "Live Network value Feed",
+    "AUDIT TRAIL · INVALID / QUARANTINED EVENTS (§31)"
+   ],
+   "interactive": 65,
+   "http_errors": [],
+   "console_errors": [
+    "Failed to fetch RSC payload for https://arbx.ape-tv.net/recon. Falling back to browser navigation. TypeError: Failed to fetch\n    at f (https://arbx.ape-tv.net/_next/static/chunks/2364-ba6c6e63a991c0f",
+    "Failed to fetch RSC payload for https://arbx.ape-tv.net/routes/discovery. Falling back to browser navigation. TypeError: Failed to fetch\n    at f (https://arbx.ape-tv.net/_next/static/chunks/2364-ba6c",
+    "Failed to fetch RSC payload for https://arbx.ape-tv.net/route-outcomes. Falling back to browser navigation. TypeError: Failed to fetch\n    at f (https://arbx.ape-tv.net/_next/static/chunks/2364-ba6c6e",
+    "Failed to fetch RSC payload for https://arbx.ape-tv.net/sed. Falling back to browser navigation. TypeError: Failed to fetch\n    at f (https://arbx.ape-tv.net/_next/static/chunks/2364-ba6c6e63a991c0ff.",
+    "Failed to fetch RSC payload for https://arbx.ape-tv.net/operations. Falling back to browser navigation. TypeError: Failed to fetch\n    at f (https://arbx.ape-tv.net/_next/static/chunks/2364-ba6c6e63a9"
+   ],
+   "page_errors": []
+  },
+  {
+   "route": "/opportunities/exchange",
+   "status": 200,
+   "body_text_len": 5099,
+   "headings": [
+    "Live Network value Feed",
+    "AUDIT TRAIL · INVALID / QUARANTINED EVENTS (§31)"
+   ],
+   "interactive": 65,
+   "http_errors": [],
+   "console_errors": [
+    "Failed to fetch RSC payload for https://arbx.ape-tv.net/operations. Falling back to browser navigation. TypeError: Failed to fetch\n    at f (https://arbx.ape-tv.net/_next/static/chunks/2364-ba6c6e63a9",
+    "Failed to fetch RSC payload for https://arbx.ape-tv.net/routes/discovery. Falling back to browser navigation. TypeError: Failed to fetch\n    at f (https://arbx.ape-tv.net/_next/static/chunks/2364-ba6c",
+    "Failed to fetch RSC payload for https://arbx.ape-tv.net/route-outcomes. Falling back to browser navigation. TypeError: Failed to fetch\n    at f (https://arbx.ape-tv.net/_next/static/chunks/2364-ba6c6e",
+    "Failed to fetch RSC payload for https://arbx.ape-tv.net/recon. Falling back to browser navigation. TypeError: Failed to fetch\n    at f (https://arbx.ape-tv.net/_next/static/chunks/2364-ba6c6e63a991c0f",
+    "Failed to fetch RSC payload for https://arbx.ape-tv.net/sed. Falling back to browser navigation. TypeError: Failed to fetch\n    at f (https://arbx.ape-tv.net/_next/static/chunks/2364-ba6c6e63a991c0ff."
+   ],
+   "page_errors": []
+  },
+  {
+   "route": "/opportunities/live",
+   "status": 200,
+   "body_text_len": 5099,
+   "headings": [
+    "Live Network value Feed",
+    "AUDIT TRAIL · INVALID / QUARANTINED EVENTS (§31)"
+   ],
+   "interactive": 65,
+   "http_errors": [],
+   "console_errors": [
+    "Failed to fetch RSC payload for https://arbx.ape-tv.net/operations. Falling back to browser navigation. TypeError: Failed to fetch\n    at f (https://arbx.ape-tv.net/_next/static/chunks/2364-ba6c6e63a9",
+    "Failed to fetch RSC payload for https://arbx.ape-tv.net/route-outcomes. Falling back to browser navigation. TypeError: Failed to fetch\n    at f (https://arbx.ape-tv.net/_next/static/chunks/2364-ba6c6e",
+    "Failed to fetch RSC payload for https://arbx.ape-tv.net/sed. Falling back to browser navigation. TypeError: Failed to fetch\n    at f (https://arbx.ape-tv.net/_next/static/chunks/2364-ba6c6e63a991c0ff.",
+    "Failed to fetch RSC payload for https://arbx.ape-tv.net/recon. Falling back to browser navigation. TypeError: Failed to fetch\n    at f (https://arbx.ape-tv.net/_next/static/chunks/2364-ba6c6e63a991c0f",
+    "Failed to fetch RSC payload for https://arbx.ape-tv.net/routes/discovery. Falling back to browser navigation. TypeError: Failed to fetch\n    at f (https://arbx.ape-tv.net/_next/static/chunks/2364-ba6c"
+   ],
+   "page_errors": []
+  },
+  {
+   "route": "/paper/history",
+   "status": 200,
+   "body_text_len": 4996,
+   "headings": [
+    "Paper Trade History"
+   ],
+   "interactive": 53,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/pools",
+   "status": 200,
+   "body_text_len": 18155,
+   "headings": [
+    "Pool Registry"
+   ],
+   "interactive": 51,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/quant",
+   "status": 200,
+   "body_text_len": 9777,
+   "headings": [
+    "Quant layers — el libro Excel, vivo",
+    "Embudo por patas (hops)",
+    "Ledger de rutas · 06_ROUTES ⨝ 08_ROUTE_PNL"
+   ],
+   "interactive": 59,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/readiness",
+   "status": 200,
+   "body_text_len": 5658,
+   "headings": [
+    "Readiness Dashboard"
+   ],
+   "interactive": 52,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/recon",
+   "status": 200,
+   "body_text_len": 5014,
+   "headings": [
+    "Recon & PnL",
+    "Top strategies",
+    "Critical anomalies (last 24h)"
+   ],
+   "interactive": 57,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/risk",
+   "status": 200,
+   "body_text_len": 5443,
+   "headings": [
+    "Risk & alerts",
+    "Simulator readiness gate (G-SIM-1)\nsim_error_break",
+    "Executor contract health\nexecutor_breaker · execut"
+   ],
+   "interactive": 62,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/route-outcomes",
+   "status": 200,
+   "body_text_len": 4762,
+   "headings": [
+    "Route Outcomes"
+   ],
+   "interactive": 63,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/routes/discovery",
+   "status": 200,
+   "body_text_len": 13838,
+   "headings": [
+    "Routes Discovery",
+    "Discovered Routes (100)"
+   ],
+   "interactive": 70,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/rpcs",
+   "status": 200,
+   "body_text_len": 4445,
+   "headings": [
+    "RPC Health & Registry",
+    "Catalog registry (rpc_endpoints)",
+    "No RPCs registered yet"
+   ],
+   "interactive": 56,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/sed",
+   "status": 200,
+   "body_text_len": 4154,
+   "headings": [
+    "SED Pipeline"
+   ],
+   "interactive": 51,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/settings",
+   "status": 200,
+   "body_text_len": 4965,
+   "headings": [
+    "Settings",
+    "Notifications LOCAL_PREFS",
+    "Feed & Polling LOCAL_PREFS"
+   ],
+   "interactive": 58,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/settings/credentials",
+   "status": 200,
+   "body_text_len": 4233,
+   "headings": [
+    "Credentials"
+   ],
+   "interactive": 54,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/status",
+   "status": 200,
+   "body_text_len": 5293,
+   "headings": [
+    "System status",
+    "Services",
+    "Service Controls"
+   ],
+   "interactive": 62,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/strategies",
+   "status": 200,
+   "body_text_len": 4686,
+   "headings": [
+    "Resolution Engines"
+   ],
+   "interactive": 78,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/strategies/forge",
+   "status": 200,
+   "body_text_len": 29825,
+   "headings": [
+    "Strategy Forge"
+   ],
+   "interactive": 162,
+   "http_errors": [
+    "401 GET /api/cartridges"
+   ],
+   "console_errors": [
+    "Failed to load resource: the server responded with a status of 401 ()"
+   ],
+   "page_errors": []
+  },
+  {
+   "route": "/translator",
+   "status": 200,
+   "body_text_len": 4206,
+   "headings": [
+    "Fact-Forcing Gate"
+   ],
+   "interactive": 52,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/wallet",
+   "status": 200,
+   "body_text_len": 5721,
+   "headings": [
+    "Wallet (read-only)"
+   ],
+   "interactive": 64,
+   "http_errors": [
+    "400 POST https://pulse.walletconnect.org/e?projectId=walletconnect_project_id_missing&st=appkit&sv=html-core-1.7.8",
+    "403 GET https://api.web3modal.org/appkit/v1/config?projectId=walletconnect_project_id_missing&st=appkit&sv=html-core-1.7.8"
+   ],
+   "console_errors": [
+    "Failed to load resource: the server responded with a status of 400 ()",
+    "Failed to load resource: the server responded with a status of 403 ()"
+   ],
+   "page_errors": []
+  },
+  {
+   "route": "/wallets",
+   "status": 200,
+   "body_text_len": 4315,
+   "headings": [
+    "Operational Wallets",
+    "No wallets registered"
+   ],
+   "interactive": 53,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  },
+  {
+   "route": "/worker-health",
+   "status": 200,
+   "body_text_len": 4080,
+   "headings": [
+    "Worker Health & Telemetry",
+    "Uptime"
+   ],
+   "interactive": 51,
+   "http_errors": [],
+   "console_errors": [],
+   "page_errors": []
+  }
+ ]
+}

@@ -1,0 +1,30 @@
+{
+  "schema": "reaintegration/application-status/1",
+  "generated_at": "2026-10-18T12:30:00Z",
+  "rule": "A gate or artifact that exists only on a branch is NOT applied: nobody else runs it. Status is APLICADO LOCAL until it is in main.",
+  "main_head": "a14dd9e6d6a8ea5220c3636dc63cc27788df8bbd",
+  "entries": [
+    {
+      "iteration": "1 + P3 (D-04..D-07)",
+      "branch": "REAINTEGRATION-P3-D04-D07-01",
+      "commit": "4f2c88a33eeb31b23bc516a8bc35ccfbd2036a71",
+      "status": "IN MAIN — PR #955 merged as a14dd9e6"
+    },
+    {
+      "iteration": "P4 (clippy repair)",
+      "branch": "REAINTEGRATION-P4-CLIPPY-01",
+      "commit": "3b97274576852e8ea20139bdf75bb238a9cc654b",
+      "status": "APLICADO LOCAL — PR #957 open, not merged"
+    },
+    {
+      "iteration": "P5 plano 3 + fixture guard (ADR-004)",
+      "branch": "REAINTEGRATION-P5-PLANO3-01",
+      "commit": "see the branch tip",
+      "status": "APLICADO LOCAL — no PR yet"
+    }
+  ],
+  "gates_not_in_main": [
+    "G-FIXTURE-METADATA-01 (this branch)",
+    "G-OMEGA-01 / G-OMEGA-BASE-01 / G-PAGE-INV-01 / G-ROOT-ENTRYPOINTS-01 (in main via a14dd9e6)"
+  ]
+}

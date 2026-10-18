@@ -1,7 +1,7 @@
 {
   "schema": "reaintegration/ledger/2",
-  "generated_at": "2026-10-18T08:28:28Z",
-  "base_sha": "4f2c88a33eeb31b23bc516a8bc35ccfbd2036a71",
+  "generated_at": "2026-10-18T12:23:18Z",
+  "base_sha": "3b97274576852e8ea20139bdf75bb238a9cc654b",
   "algorithm": "sha256",
   "excluded_self_referential": [
     "docs/reaintegration/MANIFEST_SHA256.json",
@@ -54,6 +54,21 @@
       "bytes": 15422
     },
     {
+      "path": "docs/reaintegration/evidence/P5-scan-4viewports.json",
+      "sha256": "17ca631e36e579bfd1d870cf6af99775f9b96273929a3f4dad53dcf28ce727fb",
+      "bytes": 301146
+    },
+    {
+      "path": "docs/reaintegration/evidence/P5-scan-freshcontext-1440.json",
+      "sha256": "1bba5e0fd74b7fabe072fbec66feb2f9b983df00c9fb4462f9a3e229421a0070",
+      "bytes": 18185
+    },
+    {
+      "path": "docs/reaintegration/gates/APPLICATION-STATUS.json",
+      "sha256": "d90faaac7403552c8a59ac4768b6570574939a1035a1609f95e338ac03b36b1e",
+      "bytes": 1136
+    },
+    {
       "path": "docs/reaintegration/gates/G-ADMIN-ROOT-01.md",
       "sha256": "70bb4985bb67d90823193f0f629b98e2c46278fd879f66703bd9fff6dccb78ce",
       "bytes": 1604
@@ -62,6 +77,11 @@
       "path": "docs/reaintegration/gates/G-BACKUP-01.md",
       "sha256": "b81d32b0af8c1ddd6a8e927c9d76ff94e3caa7082d7c45828e6bfa5e2fc54f85",
       "bytes": 3153
+    },
+    {
+      "path": "docs/reaintegration/gates/G-FIXTURE-METADATA-01.md",
+      "sha256": "a6ffd97a33490e0479b4876370bd97488fd2b5ae89de5dbb24a2487ab56828b6",
+      "bytes": 3688
     },
     {
       "path": "docs/reaintegration/gates/G-OMEGA-01.md",
@@ -89,9 +109,19 @@
       "bytes": 3409
     },
     {
+      "path": "docs/reaintegration/gates/RESULTS-P5.json",
+      "sha256": "60aa064833ae0b824fac7c8f315604207ff3191e94ae46f4f5116ab3d87e41ca",
+      "bytes": 3559
+    },
+    {
       "path": "docs/reaintegration/gates/RESULTS.json",
       "sha256": "5309c2211927e49355a342aaa44a0d5fda4d368c027488c4d9813c263b519d7f",
       "bytes": 1383
+    },
+    {
+      "path": "docs/reaintegration/p5/PLANO3-CHROMIUM-MATRIX-2026-10-18.md",
+      "sha256": "16e806c2ebe5c8c7775c54eac5f31f8fdbb42ac78880111952e5a3690241a281",
+      "bytes": 11321
     },
     {
       "path": "docs/reaintegration/rea/01-cryptofeed.md",
@@ -182,6 +212,11 @@
       "path": "scripts/gates/g-backup-01.sh",
       "sha256": "0180095ad2224b49930afb2e4ad0c31a9444eee92d8b897594bcbe3d8f989d17",
       "bytes": 5208
+    },
+    {
+      "path": "scripts/gates/g-fixture-metadata-01.sh",
+      "sha256": "18639bfb15b939d1a6e6bd0581bab2b76c345a82ad005a331da26e2b2712c41a",
+      "bytes": 3091
     },
     {
       "path": "scripts/gates/g-omega-01.sh",

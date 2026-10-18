@@ -128,6 +128,33 @@ pub fn decode_fixture(
     hex::decode(stripped).map_err(|e| PaperStackError::FixtureDecode(format!("{name}: {e}")))
 }
 
+/// Split a solc creation-code blob into `(executable code, trailing metadata)`.
+///
+/// solc appends a CBOR metadata section at the very END of the code, preceded
+/// by a 2-byte big-endian length. That section carries the compiler version and
+/// the ipfs/keccak hash of the metadata — i.e. **build artifacts, not
+/// executable semantics**. Two builds of the SAME source can differ there
+/// (toolchain, absolute paths, settings) while every executable byte is
+/// identical.
+///
+/// Fail-honest (R8) — this NEVER guesses. If `code.len() < 2`, or the declared
+/// length does not fit (`L + 2 > code.len()`), the whole blob is returned as
+/// executable code with an empty metadata slice and the caller compares
+/// **every byte**, i.e. strictly. There is no "assume it is metadata" branch.
+///
+/// Invariant: `executable.len() + metadata.len() == code.len()`.
+pub fn split_solc_metadata(code: &[u8]) -> (&[u8], &[u8]) {
+    if code.len() < 2 {
+        return (code, &[]);
+    }
+    let declared = u16::from_be_bytes([code[code.len() - 2], code[code.len() - 1]]) as usize;
+    if declared + 2 > code.len() {
+        return (code, &[]);
+    }
+    let start = code.len() - (declared + 2);
+    (&code[..start], &code[start..])
+}
+
 // ---------------------------------------------------------------------------
 // ABI encoders (hand-built, same style as sequence_runner helpers)
 // ---------------------------------------------------------------------------
@@ -516,11 +543,21 @@ mod tests {
     }
 
     /// Drift guard: when `contracts/out` exists (local forge build), the
-    /// committed fixtures MUST byte-match the freshly compiled creation code.
-    /// `contracts/out` is untracked build output (VPS image rust:1.91 has no
-    /// forge), so the check self-skips where the artifacts are absent — but
-    /// any machine that DID build the contracts can never ship a stale
-    /// fixture. Regenerate with `scripts/gen_executor_fixtures.sh`.
+    /// committed fixtures MUST match the freshly compiled creation code.
+    ///
+    /// METADATA POLICY (2026-10-18, decision): the trailing solc CBOR metadata
+    /// section is a **build artifact** (compiler version + ipfs/keccak of the
+    /// metadata), not executable semantics, so it is EXCLUDED from the
+    /// comparison — and the exclusion is **explicit, never silent**: the guard
+    /// asserts that every byte BEFORE that section is identical and names, in
+    /// the failure message, the exact byte ranges it ignores. If
+    /// [`split_solc_metadata`] cannot find a well-formed trailing section it
+    /// strips nothing and the comparison is byte-for-byte over the whole blob.
+    ///
+    /// CI note: the image ships no `forge`, so `contracts/out` is absent and
+    /// the guard self-skips there. It is exercised by
+    /// `scripts/gates/g-fixture-metadata-01.sh` on any machine that DID build
+    /// the contracts; the gap is declared in `docs/reaintegration/P4-RESULTS.md`.
     #[test]
     fn fixtures_match_forge_output_when_present() {
         for (name, fixture) in [
@@ -546,12 +583,71 @@ mod tests {
             } else {
                 format!("0x{object}")
             };
+
+            let fixture_bytes = decode_fixture(fixture, "fixture").expect("fixture must decode");
+            let want_bytes = hex::decode(want.trim_start_matches("0x")).expect("forge object hex");
+
+            let (fixture_code, fixture_meta) = split_solc_metadata(&fixture_bytes);
+            let (want_code, want_meta) = split_solc_metadata(&want_bytes);
+
+            // The split must be lossless — a guard that silently drops bytes
+            // would be worse than no guard.
             assert_eq!(
-                fixture.trim(),
-                want,
-                "fixture {name} drifted from contracts/out — regenerate via scripts/gen_executor_fixtures.sh"
+                fixture_code.len() + fixture_meta.len(),
+                fixture_bytes.len(),
+                "{name}: split_solc_metadata lost bytes on the fixture"
+            );
+            assert_eq!(
+                want_code.len() + want_meta.len(),
+                want_bytes.len(),
+                "{name}: split_solc_metadata lost bytes on contracts/out"
+            );
+
+            // The ONE declared exclusion, spelled out for every failure below.
+            let ignored = format!(
+                "DECLARED EXCLUSION — ignoring only the trailing solc CBOR metadata: \
+                 fixture {} bytes at [{}, {}), contracts/out {} bytes at [{}, {})",
+                fixture_meta.len(),
+                fixture_code.len(),
+                fixture_bytes.len(),
+                want_meta.len(),
+                want_code.len(),
+                want_bytes.len(),
+            );
+
+            assert_eq!(
+                fixture_code, want_code,
+                "{ignored} — fixture {name} EXECUTABLE code drifted from contracts/out \
+                 (the exclusion covers metadata only, so this is a real byte drift). \
+                 Regenerate via scripts/gen_executor_fixtures.sh"
             );
         }
+    }
+
+    /// The exclusion above is only legitimate if the splitter is exact and
+    /// fail-closed. This pins: boundaries, losslessness, and both fallbacks.
+    #[test]
+    fn solc_metadata_split_is_explicit_and_fail_closed() {
+        // Well-formed: tail length 0x0033 = 51 bytes of CBOR after it.
+        let mut code = vec![0x60, 0x80, 0x60, 0x40];
+        code.extend_from_slice(&[0xaa; 51]);
+        code.extend_from_slice(&[0x00, 0x33]);
+        let (exec, meta) = split_solc_metadata(&code);
+        assert_eq!(exec, &[0x60, 0x80, 0x60, 0x40]);
+        assert_eq!(meta.len(), 53, "metadata section = 51 payload + 2 length");
+        assert_eq!(exec.len() + meta.len(), code.len());
+
+        // Fallback 1: nothing to read a length from ⇒ compare everything.
+        let short = vec![0x60u8];
+        let (e, m) = split_solc_metadata(&short);
+        assert_eq!(e, short.as_slice());
+        assert!(m.is_empty(), "short input must not be treated as metadata");
+
+        // Fallback 2: declared length does not fit ⇒ compare everything.
+        let bogus = vec![0x60u8, 0x80, 0xff, 0xff];
+        let (e2, m2) = split_solc_metadata(&bogus);
+        assert_eq!(e2, bogus.as_slice());
+        assert!(m2.is_empty(), "oversized length must not strip anything");
     }
 
     #[test]

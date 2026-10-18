@@ -1,0 +1,100 @@
+{
+  "schema": "reaintegration/gate-results/3",
+  "generated_at": "2026-10-18T12:10:12Z",
+  "phase": "P5 (planos 2 y 3)",
+  "environment": {
+    "browser": "chromium headless shell 149.0.7827.55 (playwright 1.5x)",
+    "live_frontend": "https://arbx.ape-tv.net",
+    "live_edge": "https://edge-arbx.ape-tv.net"
+  },
+  "results": {
+    "plano1_repo_vivo_docker": "DEBT \u2014 docker/docker-compose absent in sandbox (not simulated)",
+    "plano2_protocol_probe": "PUBLISHED BY COORDINATOR (branch REAINTEGRATION-P5-PLANO2-01 @ e2c10537, PR #958): 10 PASS / 1 FAIL (deploy.sha=unknown) / 1 unverifiable (cookies without session)",
+    "plano2_additions_by_me": {
+      "edge_duplicate_conflicting_csp": true,
+      "edge_csp_contains_127_0_0_1": true,
+      "socketio_handshake_at_frontend_host": "200 (engine.io open packet)",
+      "socketio_at_edge": "404 (correct)",
+      "edge_health": "200"
+    },
+    "plano3": {
+      "routes_scanned": 58,
+      "viewports": [
+        "1440",
+        "1280",
+        "1024",
+        "390"
+      ],
+      "rows": 232,
+      "http_200": "230/232 (2 timeouts: /quant@1280, /paper/history@1024; both 200 in the clean re-scan)",
+      "ssr_first_render_ok": "230/232",
+      "uncaught_js_errors": 0,
+      "overflow_390": "13/58 routes (worst /live-readiness 915px)",
+      "overflow_1440_1280_1024": "0/0/1"
+    }
+  },
+  "fails": [
+    {
+      "id": "P5-F1",
+      "route": "/wallet",
+      "detail": "calls production WalletConnect/Reown with projectId=walletconnect_project_id_missing -> 400 + 403"
+    },
+    {
+      "id": "P5-F2",
+      "route": "/live-readiness",
+      "detail": "horizontal overflow 915px at 390px viewport (12 more routes overflow 6-265px)"
+    },
+    {
+      "id": "P5-F3",
+      "route": "edge",
+      "detail": "edge emits TWO conflicting content-security-policy headers; one lists http://127.0.0.1:8080 and http://127.0.0.1:8787 in connect-src"
+    },
+    {
+      "id": "P5-F4",
+      "route": "-",
+      "detail": "P5 plano 1 (docker compose stack) not executed: docker absent \u2014 declared debt"
+    },
+    {
+      "id": "P5-F5",
+      "route": "/status",
+      "detail": "deploy.sha = unknown (inherited from the coordinator's plano-2 probe)"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "docs/reaintegration/p5/PLANO3-CHROMIUM-MATRIX-2026-10-18.md",
+      "sha256": "16e806c2ebe5c8c7775c54eac5f31f8fdbb42ac78880111952e5a3690241a281",
+      "bytes": 11321
+    },
+    {
+      "path": "docs/reaintegration/evidence/P5-scan-4viewports.json",
+      "sha256": "17ca631e36e579bfd1d870cf6af99775f9b96273929a3f4dad53dcf28ce727fb",
+      "bytes": 301146
+    },
+    {
+      "path": "docs/reaintegration/evidence/P5-scan-freshcontext-1440.json",
+      "sha256": "1bba5e0fd74b7fabe072fbec66feb2f9b983df00c9fb4462f9a3e229421a0070",
+      "bytes": 18185
+    },
+    {
+      "path": "docs/reaintegration/evidence/shot-390crucible.png",
+      "sha256": "ed008a66177d16343b40b6c9a59cebec6e7fec9df18a2dfe31838889f2287136",
+      "bytes": 506525
+    },
+    {
+      "path": "docs/reaintegration/evidence/shot-390liver.png",
+      "sha256": "dd9af1c7f4ce7ee06ebfc06f294701077797f73fb6e583a6ffeee59dae54ccd6",
+      "bytes": 516411
+    },
+    {
+      "path": "docs/reaintegration/evidence/shot-390quant.png",
+      "sha256": "cb3927ee1825d6af0a6cd020212b35e1e0dd47c290a46e4ef1dc4af0806417cc",
+      "bytes": 513208
+    },
+    {
+      "path": "docs/reaintegration/evidence/shot-390wallet.png",
+      "sha256": "1795ab2c39714125c5b1b9cf1f70ee518f34e30400fa8f1ca83264b8fcc9f0b9",
+      "bytes": 531331
+    }
+  ]
+}
