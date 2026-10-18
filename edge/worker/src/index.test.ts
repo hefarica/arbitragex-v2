@@ -229,4 +229,23 @@ describe("API-JSON-01 — /api/* never negotiates", () => {
     expect(pathWantsJson(ctx("/apiary", BROWSER))).toBe(false);
     expect(pathWantsJson(ctx("/status/api", BROWSER))).toBe(false);
   });
+
+  it("the bare /status page 404 says what actually happened (R8)", async () => {
+    // The worker never serves HTML (no frontend upstream binding): measured, no
+    // page route of this worker returns HTML. The old detail claimed it had
+    // served an SPA (`html_served_by_spa`) — a false account of the worker's
+    // own action.
+    const res = await app.request(
+      new Request("http://edge.invalid/status", {
+        headers: { ...BROWSER, accept: "text/html" },
+      }),
+      undefined,
+      makeEnv(),
+    );
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: string; detail: string };
+    expect(body.error).toBe("not_found");
+    expect(body.detail).toBe("not_served_by_edge");
+    expect(body.detail).not.toBe("html_served_by_spa");
+  });
 });

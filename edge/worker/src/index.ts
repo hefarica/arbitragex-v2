@@ -600,24 +600,25 @@ export function pathWantsJson(c: import("hono").Context<{ Bindings: Env }>): boo
 
 // FE-CRIT-01 — content-negotiated /status. API clients get the proxied backend
 // JSON verbatim (unchanged). For browser navigations (Accept: text/html) the
-// worker does NOT shadow the SPA with JSON — it returns the same not_found JSON
-// it gives every non-API path, so the front layer (Pages/Next) serves the SPA
-// /status page. The worker has no frontend upstream binding, so this is the
-// honest "I don't own the HTML route" signal (NEVER a fabricated 200).
+// worker returns 404 and lets the front layer (Pages/Next) serve the SPA /status
+// page. The worker has NO frontend upstream binding, so it never serves HTML
+// itself — and the detail says exactly that. (2026-10-18: it used to answer
+// `html_served_by_spa`, which claimed the worker had served an SPA it does not
+// have; measured — no page route of this worker returns HTML. NEVER a
+// fabricated 200, and never a false account of what the worker did.)
 app.get("/status", (c) => {
   if (pathWantsJson(c)) return proxy(c, "/status", "arbx:cache:status", 2);
-  return c.json({ error: "not_found", detail: "html_served_by_spa" }, 404);
+  return c.json({ error: "not_found", detail: "not_served_by_edge" }, 404);
 });
 // Alias under /api/* so the browser StatusClient poll reaches the edge via
 // Next.js's /api/* rewrite. The bare /status collides with the Next.js /status
 // page route, so the client polls /api/status. Upstream target unchanged
 // (api-server /status); SSR keeps using INTERNAL_EDGE_URL/status directly.
-app.get("/api/status", (c) => {
-  // API-JSON-01: `/api/*` never negotiates — always the backend JSON. Never the
-  // html_served_by_spa 404 (see pathWantsJson above).
-  if (pathWantsJson(c)) return proxy(c, "/status", "arbx:cache:status", 2);
-  return c.json({ error: "not_found", detail: "html_served_by_spa" }, 404);
-});
+//
+// API-JSON-01: `/api/*` is an API surface by construction — it is NEVER
+// content-negotiated, so this route always proxies the backend JSON (see
+// pathWantsJson above).
+app.get("/api/status", (c) => proxy(c, "/status", "arbx:cache:status", 2));
 // FE-CRIT — system manifest read surface. api-server mounts these at /api/system/*
 // (no /v1/ prefix). proxy() forwards the upstream status verbatim — a non-2xx from
 // api-server is surfaced as-is; a transport failure throws and is handled by Hono's
