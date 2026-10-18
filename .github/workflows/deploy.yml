@@ -226,10 +226,21 @@ jobs:
       # FASE 5: HOT-SWAP atómico
       # ─────────────────────────────────────────────────────────────────
       - name: 🚀 Hot-swap containers
+        env:
+          TARGET_SHA: ${{ github.event.inputs.target_sha }}
         run: |
-          ssh arbx "bash -s" <<'EOSSH'
+          # ARBX-DEPLOY-IDENTITY-01 (2026-10-18): estampa el stack con el commit
+          # exacto. Compose interpola estas variables desde el env del SHELL hacia
+          # el contenedor api-server (`environment:`), asi que `--env-file` solo NO
+          # basta; sin el export `/status` reporta deploy.sha='unknown' y la
+          # auditoria publica de navegador no puede identificar ni certificar la
+          # version servida (run 39126190606: status_before/after FAILED por
+          # 'unknown'). auto-deploy-vps.yml ya lo hacia; deploy.yml no.
+          SHA="${TARGET_SHA:-c815ef8c9048e8d6c6e97adc6865d884bfea6140}"
+          ssh arbx "ARBX_DEPLOY_SHA='$SHA' ARBX_DEPLOY_ID='$GITHUB_RUN_ID' ARBX_DEPLOYED_AT='$(date -u +%Y-%m-%dT%H:%M:%SZ)' bash -s" <<'EOSSH'
           set -e
           cd /opt/arbitragex-v2
+          echo "deploy identity: sha=$ARBX_DEPLOY_SHA id=$ARBX_DEPLOY_ID at=$ARBX_DEPLOYED_AT"
           docker compose --env-file .env -f docker/compose.prod.yml up -d --remove-orphans \
             searcher-rs api-server frontend edge
           sleep 15
@@ -295,6 +306,10 @@ jobs:
           set -e
           source /root/last-deploy.env  # contiene PREV_SHA
           cd /opt/arbitragex-v2
+          # ARBX-DEPLOY-IDENTITY-01: el rollback tambien estampa su SHA real.
+          export ARBX_DEPLOY_SHA="$PREV_SHA"
+          export ARBX_DEPLOY_ID="${GITHUB_RUN_ID:-rollback}"
+          export ARBX_DEPLOYED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           echo "🔄 Rollback a $PREV_SHA"
           git checkout -f $PREV_SHA
           docker compose --env-file .env -f docker/compose.prod.yml up -d --remove-orphans \
