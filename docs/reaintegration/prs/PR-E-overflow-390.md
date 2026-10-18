@@ -45,3 +45,16 @@ truco que el gate combate. Se deja declarado para el siguiente paso con una sond
 
 Commiteado en la rama como **NOT GREEN** para no perder el trabajo (12 de 13 rutas cerradas y el
 anti-trampa en verde). **No publicar como PR cerrado**: el gate de PR-E exige las 58 rutas.
+
+## P5-F6 — las 12 rutas de entidad (`/omega-s5/registry/[entity]`)
+
+Barrido propio (48 filas = 12 rutas × 4 viewports) contra el sitio vivo; evidencia cruda en
+`docs/reaintegration/evidence/P5-F6-entity-routes.json`.
+
+- **48/48 HTTP 200**, **48/48 SSR 200**, todas con contenido (`body_text_len` mínimo 3.7k), **0 filas con problema**.
+- **Overflow a 390: 11 de las 12 rutas desbordan exactamente 152 px** (todas menos `chain`) — mismo
+  cluster `/omega-s5/registry` de arriba, con un valor idéntico que apunta a un componente compartido.
+  Con estas 12 la matriz pasa de 58 a **70 rutas**; el gate pasará a 70 cuando se cierre el cluster.
+- Las 12 entidades salen del registro real (`chain, rpc, dex, token, pool, wallet, strategy,
+  contract, risk_gate, capital_gate, relay, agent`), el mismo listado que usa
+  `frontend/e2e/operator_sovereignty.spec.ts` (matriz C9.4), no inventadas.
