@@ -1015,8 +1015,8 @@ mod tests {
             );
             assert!(!absent.contains("gas_measurement_state"), "{absent}");
         }
-        assert_eq!(resolved_update_sql(GasLedger::Present).1, true);
-        assert_eq!(resolved_update_sql(GasLedger::Absent).1, false);
+        assert!(resolved_update_sql(GasLedger::Present).1);
+        assert!(!resolved_update_sql(GasLedger::Absent).1);
     }
 
     #[test]

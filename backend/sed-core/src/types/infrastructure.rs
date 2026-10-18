@@ -75,6 +75,7 @@ impl InfrastructurePrerequisite {
     }
 }
 
+#[allow(clippy::unwrap_used, clippy::expect_used)] // tests: expect() es aceptable en setup; la doctrina prohíbe unwrap/expect en PRODUCCIÓN
 #[cfg(test)]
 mod tests {
     use super::*;
