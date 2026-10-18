@@ -1,7 +1,7 @@
 {
   "schema": "reaintegration/ledger/2",
-  "generated_at": "2026-10-18T14:43:31Z",
-  "base_sha": "62afc49e09e383959614d1a79b4a6c0392724ca9",
+  "generated_at": "2026-10-18T15:49:43Z",
+  "base_sha": "8db8b63c610d96b53373043a14fb8987e4495f25",
   "algorithm": "sha256",
   "excluded_self_referential": [
     "docs/reaintegration/MANIFEST_SHA256.json",
@@ -92,6 +92,11 @@
       "path": "docs/reaintegration/gates/G-PAPER-STACK-01-GAS.md",
       "sha256": "d67301c2f64abb3e48e05b9daaae8d5c91a175ed5c04ee9e6df92af06813136f",
       "bytes": 4628
+    },
+    {
+      "path": "docs/reaintegration/gates/G-PAPER-STACK-POOL-DYN-01.md",
+      "sha256": "8d160ebc3735652025ba7299b8c18f31a7521c57c4b5a81e0f0ec02d51fe615d",
+      "bytes": 3793
     },
     {
       "path": "docs/reaintegration/gates/G-PAPER-STACK-PROXY-01.md",
@@ -235,8 +240,8 @@
     },
     {
       "path": "scripts/gates/g-paper-stack-01.sh",
-      "sha256": "0f02a0c27a65862d83c8ae2ba70776ca21b604b2e77fa8be3908e80624dacc04",
-      "bytes": 3731
+      "sha256": "8cc27626fb4c642808862f3db95ce41a5f55b817ad43375787e9b7d2d0abebcf",
+      "bytes": 5396
     },
     {
       "path": "scripts/gates/g-root-entrypoints-01.sh",

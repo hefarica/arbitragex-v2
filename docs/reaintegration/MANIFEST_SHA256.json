@@ -1,7 +1,7 @@
 {
   "schema": "reaintegration/manifest/2",
-  "generated_at": "2026-10-18T14:43:31Z",
-  "base_sha": "62afc49e09e383959614d1a79b4a6c0392724ca9",
+  "generated_at": "2026-10-18T15:49:43Z",
+  "base_sha": "8db8b63c610d96b53373043a14fb8987e4495f25",
   "artifacts": {
     "inventory": "docs/reaintegration/00-INVENTORY.json",
     "rea_fiches": 16,
@@ -18,6 +18,7 @@
       "docs/reaintegration/gates/G-OMEGA-BASE-01.md",
       "docs/reaintegration/gates/G-PAGE-INV-01.md",
       "docs/reaintegration/gates/G-PAPER-STACK-01-GAS.md",
+      "docs/reaintegration/gates/G-PAPER-STACK-POOL-DYN-01.md",
       "docs/reaintegration/gates/G-PAPER-STACK-PROXY-01.md",
       "docs/reaintegration/gates/G-ROOT-ENTRYPOINTS-01.md",
       "scripts/gates/g-admin-root-01.sh",
@@ -31,7 +32,7 @@
       "scripts/gates/g-root-entrypoints-01.sh"
     ],
     "ledger": "docs/reaintegration/ledger/LEDGER_SHA256.json",
-    "ledger_sha256": "511bd0a8b0e4413d9b35923a7177ff808c3dd00717ea24b723c22a744e41f25e"
+    "ledger_sha256": "c731d7a391d002ac6154f35f74d5bea5f0cf9611e2fd5e691f139314529394bc"
   },
   "gates_result": {
     "G-BACKUP-01": "PASS",
@@ -41,5 +42,5 @@
     "G-PAGE-INV-01": "PASS",
     "G-ROOT-ENTRYPOINTS-01": "PASS"
   },
-  "files_hashed": 48
+  "files_hashed": 49
 }
