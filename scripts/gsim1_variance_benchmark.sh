@@ -129,8 +129,23 @@ PY
 # status=failed with the exact blocker (RULE 00/R8 — never silently skip, never
 # fabricate a pass). The export still runs so the row carries the real number of
 # available candidate rows at attempt time.
+# POOL-DYN-01 (2026-10-18): `AAVE_POOL_<chain_id>` is an OPTIONAL OVERRIDE, never
+# a prerequisite. `PaperStackSpec::for_round_trip` leaves `aave_pool = None` when
+# the var is unset, and `deploy_paper_executor_stack` then resolves the Pool
+# on-chain from the chain's `PoolAddressesProvider` (`getPool()`) — fail-closed.
+# Listing it here turned a fixture_* condition into a false "missing
+# prerequisite" (measured: run 39168298227 recorded exactly that on a main that
+# already resolved the pool dynamically). The guard below refuses to let the
+# required list grow an optional override again.
+REQUIRED_PREREQS=(ARBITRAGE_EXECUTOR FLASHLOAN_EXECUTOR_1 ARBX_ADMIN_TOKEN)
+case " ${REQUIRED_PREREQS[*]} " in
+  *" AAVE_POOL_"*)
+    echo "fixture_gsim1_driver: an AAVE_POOL_* override is optional (POOL-DYN-01) and must never gate this run" >&2
+    exit 1
+    ;;
+esac
 MISSING_PREREQS=()
-for var_name in ARBITRAGE_EXECUTOR FLASHLOAN_EXECUTOR_1 AAVE_POOL_1 ARBX_ADMIN_TOKEN; do
+for var_name in "${REQUIRED_PREREQS[@]}"; do
   val=$(grep -E "^${var_name}=" "$DEPLOY_PATH/.env" | cut -d= -f2- || true)
   if [ -z "$val" ]; then
     MISSING_PREREQS+=("$var_name")
@@ -214,7 +229,9 @@ echo "sample floor for this run: ${MIN_SAMPLES} (population ${ROWS})"
 # harness MUST take the paper-stack fork-deploy path to label anything —
 # otherwise every route reverts at the FLE dispatch and the row records
 # pred_failed=N with samples_labeled=0 (the defect this change closes). The
-# Aave pool is resolved fail-closed from AAVE_POOL_1 (see prereqs above).
+# Aave pool is NOT passed as a requirement: it is resolved on-chain from the
+# chain's PoolAddressesProvider; `AAVE_POOL_1` is only forwarded when the
+# operator set it as an override (POOL-DYN-01).
 cd "$DEPLOY_PATH"
 HARNESS_RC=0
 docker run --rm \
@@ -227,7 +244,7 @@ docker run --rm \
   -e VARIANCE_INPUT=/work/input.jsonl \
   -e VARIANCE_MIN_SAMPLES="$MIN_SAMPLES" \
   -e PAPER_STACK_DEPLOY=1 \
-  -e AAVE_POOL_1="$AAVE_POOL_1" \
+  -e AAVE_POOL_1="${AAVE_POOL_1:-}" \
   rust:1.91 \
   cargo test -p sim-core --test variance_benchmark --locked -- --ignored --nocapture \
   2>&1 | tee "$LOG" || HARNESS_RC=$?
