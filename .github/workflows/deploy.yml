@@ -271,8 +271,12 @@ jobs:
           probe /omega-s5/core  200
 
           echo "=== Docker health ==="
-          docker compose --env-file .env -f docker/compose.prod.yml ps --format json | \
-            jq -r '. | "  " + .Service + " · " + .State + " · " + .Health'
+          # ARBX-DEPLOY-FIX-02: el step corría sin `cd /opt/arbitragex-v2` (el path
+          # relativo del compose no resolvía) y el VPS no tiene `jq` (exit 127). El
+          # step abortaba AUNQUE los 7 probes dieran 200 → rollback innecesario.
+          cd /opt/arbitragex-v2
+          docker compose --env-file .env -f docker/compose.prod.yml ps \
+            --format 'table {{.Service}}\t{{.State}}\t{{.Health}}' || true
 
           if [ $fail -gt 0 ]; then
             echo "❌ $fail endpoints fallaron — rollback obligatorio"
