@@ -1771,6 +1771,28 @@ async fn run_subscription<'a>(
     }
 }
 
+/// ARBX-F4 (2026-10-18): presupuesto de `eth_getTransactionByHash`, configurable
+/// por entorno para no exigir rebuild la próxima vez que la red cambie.
+///
+/// Default 250 ms, derivado de una medición, no de una intuición: con K=16
+/// concurrentes sobre el socket WS real del VPS, publicnode daba p95 59,54 ms y
+/// p99 62,56 ms, y 29,2 % de las llamadas superaban los 50 ms anteriores. El
+/// intervalo admisible medido es [250, 303] ms — 250 es 4×p99 y 303 es el techo
+/// por atasco del loop serie (p_fail 5,29 % × 374,5 intents/min ⇒ ≤10 % del reloj
+/// bloqueado). Se acota a [10, 5.000] para que un valor absurdo por env no
+/// desarme el pipeline: 5.000 ms ya bloquearía ~99 % del loop.
+fn rpc_get_tx_timeout_ms() -> u64 {
+    const DEFAULT_MS: u64 = 250;
+    static EFFECTIVE: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *EFFECTIVE.get_or_init(|| {
+        std::env::var("ARBX_RPC_GET_TX_TIMEOUT_MS")
+            .ok()
+            .and_then(|raw| raw.trim().parse::<u64>().ok())
+            .filter(|ms| (10..=5_000).contains(ms))
+            .unwrap_or(DEFAULT_MS)
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn process_pending<'a>(
     client: &WsChainClient,
@@ -1801,9 +1823,16 @@ async fn process_pending<'a>(
     // discarding degraded nodes. The cap is a function of how long we are
     // willing to delay tx scoring; 50ms remains well inside our mempool
     // dwell-time budget (block time / 12s on Ethereum).
-    const RPC_GET_TX_TIMEOUT_MS: u64 = 50;
+    //
+    // ARBX-F4 (2026-10-18): 50ms medido contra el socket WS real del VPS daba
+    // p95 59,54 ms / p99 62,56 ms con K=16 concurrentes y descartaba el 29,2% de
+    // las llamadas sanas (116 timeouts / 2.191 intentos = 5,29% del intake,
+    // 8,9x los intents que llegaban al decoder). Valor nuevo 250 ms con
+    // intervalo admisible medido [250, 303] ms: >=4x p99 cargado (4*62,56=250,2)
+    // y <=10% de atasco del loop serie (0,0529*374,5/min -> 303 ms). Override
+    // por env para no exigir rebuild la proxima vez.
     let tx = match tokio::time::timeout(
-        std::time::Duration::from_millis(RPC_GET_TX_TIMEOUT_MS),
+        std::time::Duration::from_millis(rpc_get_tx_timeout_ms()),
         client.get_tx(hash),
     )
     .await
@@ -1819,7 +1848,7 @@ async fn process_pending<'a>(
                 event = "scanner.rpc_timeout",
                 hash = %hash,
                 chain_id = client.chain_id,
-                timeout_ms = RPC_GET_TX_TIMEOUT_MS,
+                timeout_ms = rpc_get_tx_timeout_ms(),
                 "RPC timeout fetching tx; discarding (degraded node?)"
             );
             return Ok(());
