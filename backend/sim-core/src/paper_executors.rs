@@ -83,6 +83,13 @@ pub enum PaperStackError {
     ZeroAavePool,
     #[error("could not resolve the chain's Aave V3 pool: {0}")]
     AavePoolUnresolved(String),
+    #[error(
+        "chain {chain_id} has no Aave V3 PoolAddressesProvider in the catalog \
+         (no AAVE_POOL_{chain_id} override either) — fail-closed, no fallback pool"
+    )]
+    AavePoolProviderMissing { chain_id: u64 },
+    #[error("Aave V3 getPool() read failed for chain {chain_id}: {reason}")]
+    AavePoolReadFailed { chain_id: u64, reason: String },
     #[error("spec.admin is the zero address")]
     ZeroAdmin,
 }
@@ -104,6 +111,8 @@ impl PaperStackError {
             Self::BalanceSeed(_) => "balance_seed",
             Self::ZeroAavePool => "zero_aave_pool",
             Self::AavePoolUnresolved(_) => "aave_pool_unresolved",
+            Self::AavePoolProviderMissing { .. } => "aave_pool_provider_missing",
+            Self::AavePoolReadFailed { .. } => "aave_pool_read_failed",
             Self::ZeroAdmin => "zero_admin",
         }
     }
@@ -296,15 +305,27 @@ pub fn encode_set_router_selector_approval(
 /// mandatory; no defaults for economic parameters.
 #[derive(Debug, Clone)]
 pub struct PaperStackSpec {
+    /// The chain the spec targets. `for_round_trip` fills it from its own
+    /// `chain_id` argument; `deploy_paper_executor_stack` uses it to resolve the
+    /// dynamic Pool from the chain's `PoolAddressesProvider`.
+    pub chain_id: u64,
     /// The paper caller (== `RoundTripContext::caller`). Receives the seeded
     /// ETH, holds ADMIN/UPGRADER on both deployed contracts, and is granted
     /// EXECUTOR_ROLE on the FLE by the stack itself (real grantRole tx, so
     /// the `requestFlashLoan` gate passes WITHOUT any storage override).
     pub admin: Address,
-    /// REAL Aave V3 pool resolved from forked state (mainnet:
-    /// 0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2). The FLE's
-    /// `flashLoanProvider`/`aavePool` — the flash-loan source of funds.
-    pub aave_pool: Address,
+    /// REAL Aave V3 pool for the FLE's `flashLoanProvider`/`aavePool` — the
+    /// flash-loan source of funds.
+    ///
+    /// `Some(pool)` is an EXPLICIT override (from `AAVE_POOL_<chain_id>`) and
+    /// wins. `None` means "resolve it on-chain at deploy time":
+    /// `deploy_paper_executor_stack` reads
+    /// `IPoolAddressesProvider.getPool()` from the chain's canonical provider
+    /// (`shared_rs::chains::aave_pool_addresses_provider`), which is the stable
+    /// governance anchor — the Pool itself is not a constant (RULE 00: resolve
+    /// `getPool()` instead of hardcoding). Mainnet's Pool today:
+    /// 0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2.
+    pub aave_pool: Option<Address>,
     /// Tokens to allowlist on the AE (token_in + token_out of the candidate).
     pub tokens: Vec<Address>,
     /// Routers to allowlist on the AE.
@@ -373,16 +394,21 @@ pub fn paper_stack_deploy_enabled() -> bool {
 impl PaperStackSpec {
     /// Derive a spec from the SAME route data the encoder uses, so the paper
     /// stack deploys an executor whose allowlist matches exactly the routers,
-    /// tokens and selectors the round trip will call. The Aave V3 pool is
-    /// resolved fail-closed per chain from `AAVE_POOL_<chain_id>`
-    /// (`shared_rs::chains::resolve_aave_pool_address`) — no hardcoded pool.
+    /// tokens and selectors the round trip will call.
+    ///
+    /// The Aave V3 pool is an **explicit override** here: `AAVE_POOL_<chain_id>`
+    /// when set (a malformed or zero value still rejects fail-closed — never
+    /// silently dropped), else `None`, and `deploy_paper_executor_stack`
+    /// resolves it dynamically from the chain's `PoolAddressesProvider`
+    /// (`getPool()`) — no hardcoded pool. A bare `RoundTripContext` carries no
+    /// provider, so this builder cannot read the chain itself.
     pub fn for_round_trip(
         ctx: &prioritization_spine::round_trip_executor::RoundTripContext,
         chain_id: u64,
         gas_price_wei: u128,
         gas_limit: u64,
     ) -> Result<Self, PaperStackError> {
-        let aave_pool = shared_rs::chains::resolve_aave_pool_address(chain_id)
+        let aave_pool = shared_rs::chains::resolve_aave_pool_address_optional(chain_id)
             .map_err(|e| PaperStackError::AavePoolUnresolved(format!("chain {chain_id}: {e}")))?;
 
         // The selector the encoder will actually call, read from the plan's
@@ -412,6 +438,7 @@ impl PaperStackSpec {
         }
 
         Ok(Self {
+            chain_id,
             admin: ctx.caller,
             aave_pool,
             tokens,
@@ -458,6 +485,54 @@ pub fn paper_stack_for_round_trip(
     }
 }
 
+/// Resolve the Aave V3 Pool for `chain_id` DYNAMICALLY, from the chain's
+/// canonical `PoolAddressesProvider` (`IPoolAddressesProvider.getPool()`), via a
+/// non-committing read against the context's forked state — the provider is the
+/// stable governance anchor, so a `setPool` upgrade needs no code change
+/// (RULE 00, `.claude/skills/arbx-live-engineering/references/biblioteca/14-onchain-execution-contracts.md`).
+///
+/// Fail-closed on EVERY adverse path: no provider in the catalog, a failed or
+/// empty read (no contract at the provider address), a non-32-byte return, or
+/// the zero address each return a typed error — never an invented Pool.
+#[cfg(feature = "v2-simulator")]
+pub fn resolve_aave_pool_from_provider(
+    sctx: &mut simulator_v2::sequence_runner::SequenceContext,
+    chain_id: u64,
+) -> Result<Address, PaperStackError> {
+    let provider = shared_rs::chains::aave_pool_addresses_provider(chain_id)
+        .ok_or(PaperStackError::AavePoolProviderMissing { chain_id })?;
+    let provider = simulator_v2::AlloyAddress::from_slice(provider.as_bytes());
+
+    let output = sctx
+        .read_call(
+            provider,
+            shared_rs::chains::AAVE_V3_GET_POOL_SELECTOR.to_vec(),
+            "aave_pool_addresses_provider_get_pool",
+        )
+        .map_err(|e| PaperStackError::AavePoolReadFailed {
+            chain_id,
+            reason: e.to_string(),
+        })?
+        .ok_or(PaperStackError::AavePoolReadFailed {
+            chain_id,
+            reason: "getPool() returned no data (no contract at the provider address)".to_string(),
+        })?;
+
+    if output.len() != 32 {
+        return Err(PaperStackError::AavePoolReadFailed {
+            chain_id,
+            reason: format!("getPool() returned {} bytes, expected 32", output.len()),
+        });
+    }
+    let mut bytes = [0u8; 20];
+    bytes.copy_from_slice(&output[12..32]);
+    let pool = Address::from(bytes);
+    if pool == Address::zero() {
+        return Err(PaperStackError::ZeroAavePool);
+    }
+    Ok(pool)
+}
+
 /// Deploy the paper executor stack into an EXISTING `SequenceContext`'s
 /// CacheDB. The deploys are real REVM CREATEs against real forked state; the
 /// created contracts are immediately visible to subsequent steps. Mirrors the
@@ -483,7 +558,18 @@ pub fn deploy_paper_executor_stack(
     if spec.admin == Address::zero() {
         return Err(PaperStackError::ZeroAdmin);
     }
-    if spec.aave_pool == Address::zero() {
+
+    // Resolve the Aave V3 pool BEFORE any mutation: an explicit
+    // `AAVE_POOL_<chain_id>` override (spec.aave_pool = Some) wins and keeps
+    // today's behaviour exactly; otherwise resolve it DYNAMICALLY from the
+    // chain's canonical `PoolAddressesProvider` (`getPool()`) — the stable
+    // governance anchor — failing closed when there is no provider, the read
+    // fails, or it returns the zero address. Never an invented pool (RULE 00).
+    let aave_pool = match spec.aave_pool {
+        Some(pool) => pool,
+        None => resolve_aave_pool_from_provider(sctx, spec.chain_id)?,
+    };
+    if aave_pool == Address::zero() {
         return Err(PaperStackError::ZeroAavePool);
     }
 
@@ -576,7 +662,7 @@ pub fn deploy_paper_executor_stack(
         spec,
         admin,
         fle_impl,
-        encode_initialize_fle(spec.admin, spec.aave_pool, ae_e),
+        encode_initialize_fle(spec.admin, aave_pool, ae_e),
         "paper_deploy_flashloan_executor_proxy",
         PaperStackError::FleInitialize,
     )?;
@@ -645,7 +731,7 @@ pub fn deploy_paper_executor_stack(
         admin = ?spec.admin,
         arbitrage_executor = ?ae_e,
         flashloan_executor = ?fle_e,
-        aave_pool = ?spec.aave_pool,
+        aave_pool = ?aave_pool,
         tokens = spec.tokens.len(),
         routers = spec.routers.len(),
         router_selectors = spec.router_selectors.len(),
@@ -1030,8 +1116,9 @@ mod tests {
 
         let admin = Address::from([0x11u8; 20]);
         let spec = PaperStackSpec {
+            chain_id: 1,
             admin,
-            aave_pool: Address::from([0x22u8; 20]),
+            aave_pool: Some(Address::from([0x22u8; 20])),
             tokens: vec![],
             routers: vec![],
             router_selectors: vec![],
@@ -1072,8 +1159,9 @@ mod tests {
 
         let admin = Address::from([0x11u8; 20]);
         let spec = PaperStackSpec {
+            chain_id: 1,
             admin,
-            aave_pool: Address::from([0x22u8; 20]),
+            aave_pool: Some(Address::from([0x22u8; 20])),
             tokens: vec![],
             routers: vec![],
             router_selectors: vec![],
@@ -1214,10 +1302,13 @@ mod tests {
 
         assert_eq!(
             spec.aave_pool,
-            "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"
-                .parse::<Address>()
-                .unwrap()
+            Some(
+                "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"
+                    .parse::<Address>()
+                    .unwrap()
+            )
         );
+        assert_eq!(spec.chain_id, chain);
         assert_eq!(
             spec.tokens,
             vec![Address::from([0x01u8; 20]), Address::from([0x02u8; 20])]
@@ -1286,15 +1377,42 @@ mod tests {
         std::env::remove_var(format!("AAVE_POOL_{chain}"));
     }
 
-    /// Fail-closed: no env pool ⇒ typed error, never an invented address.
+    /// Pool-dynamics: with `AAVE_POOL_<chain>` unset the spec carries `None`
+    /// (no override) — the dynamic path takes over at deploy — while a
+    /// MALFORMED override still rejects fail-closed, never silently dropped.
     #[test]
-    fn paper_stack_spec_for_round_trip_fails_closed_without_pool_env() {
+    fn paper_stack_spec_pool_env_absent_is_none_and_invalid_rejects() {
         let chain = 4_242_425u64;
         std::env::remove_var(format!("AAVE_POOL_{chain}"));
         let ctx = diag_ctx();
+
+        let spec = PaperStackSpec::for_round_trip(&ctx, chain, 0, 16_000_000).expect("spec");
+        assert_eq!(spec.aave_pool, None);
+        assert_eq!(spec.chain_id, chain);
+
+        std::env::set_var(format!("AAVE_POOL_{chain}"), "0xnothex");
         assert!(matches!(
             PaperStackSpec::for_round_trip(&ctx, chain, 0, 16_000_000),
             Err(PaperStackError::AavePoolUnresolved(_))
+        ));
+        std::env::remove_var(format!("AAVE_POOL_{chain}"));
+    }
+
+    /// Pool-dynamics (c): a chain with NO provider in the catalog and no env
+    /// override returns the typed `AavePoolProviderMissing` — and does so
+    /// BEFORE any RPC read (the never-reachable URL proves no read is
+    /// attempted), so a `None` spec can never become an invented pool.
+    #[test]
+    fn paper_stack_pool_resolution_fails_closed_without_provider() {
+        let lazy = simulator_v2::LazyDb::new("http://127.0.0.1:1/never", Some(1))
+            .expect("well-formed URL");
+        let mut sctx = simulator_v2::sequence_runner::SequenceContext::new(lazy, 1, 1);
+        let err = resolve_aave_pool_from_provider(&mut sctx, 4_242_401).unwrap_err();
+        assert!(matches!(
+            err,
+            PaperStackError::AavePoolProviderMissing {
+                chain_id: 4_242_401
+            }
         ));
     }
 
