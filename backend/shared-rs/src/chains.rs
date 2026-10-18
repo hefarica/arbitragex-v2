@@ -713,6 +713,35 @@ pub fn resolve_flashloan_executor_address(chain_id: u64) -> Result<Address, Exec
     Ok(addr)
 }
 
+/// Resolve the Aave V3 pool address for a chain from the `AAVE_POOL_<chain_id>`
+/// environment variable, parsed to a non-zero `Address`.
+///
+/// PR-D1 (2026-10-18): the paper executor stack deploys a fresh
+/// `FlashLoanExecutor` whose `initialize(admin, aavePool, arbitrageExecutor)`
+/// needs the chain's REAL Aave V3 pool. That pool is the same protocol constant
+/// `DeployMainnet.s.sol` wires in production, but it is NOT a source-constant in
+/// this workspace, so — exactly like `EXECUTOR_<id>` / `FLASHLOAN_EXECUTOR_<id>`
+/// — it is operator-supplied and resolved fail-closed: NO hardcoded fallback,
+/// NO dummy default. Missing, invalid, or zero values each reject with a typed
+/// `ExecutorAddrError` variant (reused: its variants carry only `chain_id` /
+/// `value`, so they are env-key-agnostic).
+pub fn resolve_aave_pool_address(chain_id: u64) -> Result<Address, ExecutorAddrError> {
+    let key = format!("AAVE_POOL_{chain_id}");
+    let raw = match std::env::var(&key) {
+        Ok(v) if !v.trim().is_empty() => v,
+        _ => return Err(ExecutorAddrError::Missing { chain_id }),
+    };
+    let value = raw.trim();
+    let addr = Address::from_str(value).map_err(|_| ExecutorAddrError::Invalid {
+        chain_id,
+        value: value.to_string(),
+    })?;
+    if addr == Address::zero() {
+        return Err(ExecutorAddrError::Zero { chain_id });
+    }
+    Ok(addr)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -159,7 +159,13 @@ pub async fn resimulate(
         require_trace_hash: true,
         require_positive_net_profit: true,
         max_steps: 8,
-        paper_stack: None,
+        // PR-D1: paper stack OFF unless PAPER_STACK_DEPLOY is set.
+        paper_stack: sim_core::paper_executors::paper_stack_for_round_trip(
+            &plan.ctx,
+            chain_id,
+            gas_price_wei.low_u128(),
+            b2c.env.gas_limit_per_step,
+        ),
     };
 
     let ctx = plan.ctx;

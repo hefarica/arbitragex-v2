@@ -81,6 +81,8 @@ pub enum PaperStackError {
     BalanceSeed(String),
     #[error("spec.aave_pool is the zero address (flashLoanProvider would fall back to zero)")]
     ZeroAavePool,
+    #[error("could not resolve the chain's Aave V3 pool: {0}")]
+    AavePoolUnresolved(String),
     #[error("spec.admin is the zero address")]
     ZeroAdmin,
 }
@@ -101,6 +103,7 @@ impl PaperStackError {
             Self::RouterSelectorApproval(_) => "router_selector_approval",
             Self::BalanceSeed(_) => "balance_seed",
             Self::ZeroAavePool => "zero_aave_pool",
+            Self::AavePoolUnresolved(_) => "aave_pool_unresolved",
             Self::ZeroAdmin => "zero_admin",
         }
     }
@@ -114,6 +117,40 @@ pub const ARBITRAGE_EXECUTOR_BYTECODE_HEX: &str =
     include_str!("fixtures/ArbitrageExecutor.bytecode.hex");
 pub const FLASHLOAN_EXECUTOR_BYTECODE_HEX: &str =
     include_str!("fixtures/FlashLoanExecutor.bytecode.hex");
+/// ERC1967 proxy creation code (OpenZeppelin). PR-D1 (2026-10-18): the paper
+/// stack deploys each executor BEHIND this proxy; the proxy's constructor
+/// delegatecalls `initialize`, because the implementation's constructor calls
+/// `_disableInitializers()` and a direct `initialize` on the impl reverts with
+/// `InvalidInitialization()` (0xf92ee8a9).
+pub const ERC1967_PROXY_BYTECODE_HEX: &str = include_str!("fixtures/ERC1967Proxy.bytecode.hex");
+
+/// Build the ERC1967Proxy creation code for `logic` initialized with `data`.
+///
+/// `ERC1967Proxy(address _logic, bytes memory _data)` — ABI head is
+/// `[logic, offset]`, then the dynamic `bytes` tail (`len || padded data`).
+/// `data` is the implementation's `initialize(...)` calldata. The proxy
+/// constructor `delegatecall`s `data` to `logic`, so the initialization lands
+/// in the PROXY's storage (the impl stays uninitialized / disabled).
+pub fn erc1967_proxy_init_code(proxy_creation: &[u8], logic: Address, data: &[u8]) -> Vec<u8> {
+    let mut cd = Vec::with_capacity(proxy_creation.len() + 96 + data.len() + 32);
+    cd.extend_from_slice(proxy_creation);
+    // head word 0: logic address
+    cd.extend_from_slice(&addr_word(logic));
+    // head word 1: offset of the dynamic bytes payload = 0x40 (two head words)
+    let mut offset = [0u8; 32];
+    offset[31] = 0x40;
+    cd.extend_from_slice(&offset);
+    // tail: length (u256, big-endian) then the data, zero-padded to 32 bytes
+    let mut len = [0u8; 32];
+    len[24..32].copy_from_slice(&(data.len() as u64).to_be_bytes());
+    cd.extend_from_slice(&len);
+    cd.extend_from_slice(data);
+    let rem = data.len() % 32;
+    if rem != 0 {
+        cd.resize(cd.len() + (32 - rem), 0u8);
+    }
+    cd
+}
 
 /// Decode a `0x`-prefixed (or bare) hex fixture into raw creation code.
 /// Fail-closed on odd length / non-hex characters / empty payload.
@@ -169,7 +206,7 @@ pub fn encode_initialize_fle(
 /// `grantRole(bytes32,address)`. Selector 0x2f2ff15d (OZ standard).
 pub fn encode_grant_role(role: [u8; 32], account: Address) -> Vec<u8> {
     let mut cd = Vec::with_capacity(68);
-    cd.extend_from_slice(&[0x2f, 0x2f, 0xff, 0x15]);
+    cd.extend_from_slice(&[0x2f, 0x2f, 0xf1, 0x5d]);
     cd.extend_from_slice(&role);
     cd.extend_from_slice(&addr_word(account));
     cd
@@ -256,6 +293,110 @@ pub struct PaperExecutorStack {
     pub flashloan_executor: Address,
 }
 
+/// Paper-only ETH seeded to the admin when the spec is derived from a route.
+/// Absolute set (not additive); enough for the deploys + setup + the later
+/// flash dispatch to pay gas.
+pub const PAPER_ADMIN_ETH_SEED_WEI: u128 = 1_000_000_000_000_000_000; // 1 ETH
+
+/// Environment flag that turns the paper-stack deploy ON for the sim paths.
+/// Absent, or any value other than `1`/`true`/`yes`/`on`, leaves the spec
+/// `None`, so the default behaviour of every call site is unchanged
+/// (P3 doctrine: flag OFF when it touches the wire).
+pub const PAPER_STACK_DEPLOY_ENV: &str = "PAPER_STACK_DEPLOY";
+
+/// `PAPER_STACK_DEPLOY` truthiness (`1`/`true`/`yes`/`on`, case-insensitive).
+pub fn paper_stack_deploy_enabled() -> bool {
+    match std::env::var(PAPER_STACK_DEPLOY_ENV) {
+        Ok(v) => matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        ),
+        Err(_) => false,
+    }
+}
+
+impl PaperStackSpec {
+    /// Derive a spec from the SAME route data the encoder uses, so the paper
+    /// stack deploys an executor whose allowlist matches exactly the routers,
+    /// tokens and selectors the round trip will call. The Aave V3 pool is
+    /// resolved fail-closed per chain from `AAVE_POOL_<chain_id>`
+    /// (`shared_rs::chains::resolve_aave_pool_address`) — no hardcoded pool.
+    pub fn for_round_trip(
+        ctx: &prioritization_spine::round_trip_executor::RoundTripContext,
+        chain_id: u64,
+        gas_price_wei: u128,
+        gas_limit: u64,
+    ) -> Result<Self, PaperStackError> {
+        let aave_pool = shared_rs::chains::resolve_aave_pool_address(chain_id)
+            .map_err(|e| PaperStackError::AavePoolUnresolved(format!("chain {chain_id}: {e}")))?;
+
+        // The selector the encoder will actually call, read from the plan's
+        // calldata — never a hardcoded constant.
+        let plan = prioritization_spine::round_trip_executor::build_round_trip_plan(ctx);
+        let mut selector = [0u8; 4];
+        if plan.forward_calldata.len() >= 4 {
+            selector.copy_from_slice(&plan.forward_calldata[..4]);
+        }
+
+        let mut tokens = vec![ctx.token_in];
+        if ctx.token_out != ctx.token_in {
+            tokens.push(ctx.token_out);
+        }
+        let mut routers: Vec<Address> = Vec::new();
+        let mut router_selectors: Vec<(Address, [u8; 4])> = Vec::new();
+        for router in [ctx.forward_router, ctx.backward_router] {
+            if router == Address::zero() {
+                continue;
+            }
+            if !routers.contains(&router) {
+                routers.push(router);
+            }
+            if !router_selectors.contains(&(router, selector)) {
+                router_selectors.push((router, selector));
+            }
+        }
+
+        Ok(Self {
+            admin: ctx.caller,
+            aave_pool,
+            tokens,
+            routers,
+            router_selectors,
+            flashloan_callers: vec![ctx.caller],
+            admin_eth_seed_wei: U256::from(PAPER_ADMIN_ETH_SEED_WEI),
+            gas_price_wei,
+            gas_limit,
+        })
+    }
+}
+
+/// Convenience for the production sim call sites: build the spec for `ctx`
+/// when `PAPER_STACK_DEPLOY` is enabled, else `None`. A resolution failure is
+/// logged and degrades to `None` — the pre-PR-D1 behaviour (sim against the
+/// env-deployed executor) — rather than failing the whole simulation.
+pub fn paper_stack_for_round_trip(
+    ctx: &prioritization_spine::round_trip_executor::RoundTripContext,
+    chain_id: u64,
+    gas_price_wei: u128,
+    gas_limit: u64,
+) -> Option<PaperStackSpec> {
+    if !paper_stack_deploy_enabled() {
+        return None;
+    }
+    match PaperStackSpec::for_round_trip(ctx, chain_id, gas_price_wei, gas_limit) {
+        Ok(spec) => Some(spec),
+        Err(error) => {
+            warn!(
+                event = "paper_stack.spec_unresolved",
+                chain_id, %error,
+                "PAPER_STACK_DEPLOY set but the spec could not be built — \
+                 falling back to the env-deployed executor path"
+            );
+            None
+        }
+    }
+}
+
 /// Deploy the paper executor stack into an EXISTING `SequenceContext`'s
 /// CacheDB. The deploys are real REVM CREATEs against real forked state; the
 /// created contracts are immediately visible to subsequent steps. Mirrors the
@@ -296,17 +437,22 @@ pub fn deploy_paper_executor_stack(
     sctx.seed_balance(admin, seed, "paper_admin_eth_seed")
         .map_err(|e| PaperStackError::BalanceSeed(e.reason_tag().to_string()))?;
 
-    // 2. Deploy ArbitrageExecutor + initialize(admin).
+    // 2. Deploy the ArbitrageExecutor implementation, then an ERC1967Proxy that
+    //    initializes it in the SAME tx (the proxy constructor delegatecalls
+    //    `initialize`). PR-D1 (2026-10-18): the implementation's constructor
+    //    calls `_disableInitializers()`, so calling `initialize` directly on the
+    //    impl reverts with InvalidInitialization() — 0xf92ee8a9. The proxy is the
+    //    live address that every later step (grantRole, allowlists) targets.
     let ae_code = decode_fixture(
         ARBITRAGE_EXECUTOR_BYTECODE_HEX,
         "ArbitrageExecutor.bytecode.hex",
     )?;
-    let ae = match sctx.deploy(SequenceDeploy {
+    let ae_impl = match sctx.deploy(SequenceDeploy {
         from: admin,
         init_code: ae_code,
         gas_price_wei: spec.gas_price_wei,
         gas_limit: spec.gas_limit,
-        label: "paper_deploy_arbitrage_executor",
+        label: "paper_deploy_arbitrage_executor_impl",
     }) {
         Ok(simulator_v2::sequence_runner::DeployOutcome::Success { address, .. }) => address,
         Ok(other) => {
@@ -324,27 +470,29 @@ pub fn deploy_paper_executor_stack(
         }
         Err(e) => return Err(PaperStackError::AeDeploy(e.to_string())),
     };
-    exec_setup_call(
+    let ae = deploy_erc1967_proxy(
         sctx,
         spec,
-        ae,
+        admin,
+        ae_impl,
         encode_initialize_admin(spec.admin),
-        "paper_ae_initialize",
+        "paper_deploy_arbitrage_executor_proxy",
         PaperStackError::AeInitialize,
     )?;
     let ae_e = to_ethers(ae);
 
-    // 3. Deploy FlashLoanExecutor + initialize(admin, aavePool, AE).
+    // 3. Deploy the FlashLoanExecutor implementation, then its ERC1967Proxy
+    //    initialized with (admin, aavePool, AE).
     let fle_code = decode_fixture(
         FLASHLOAN_EXECUTOR_BYTECODE_HEX,
         "FlashLoanExecutor.bytecode.hex",
     )?;
-    let fle = match sctx.deploy(SequenceDeploy {
+    let fle_impl = match sctx.deploy(SequenceDeploy {
         from: admin,
         init_code: fle_code,
         gas_price_wei: spec.gas_price_wei,
         gas_limit: spec.gas_limit,
-        label: "paper_deploy_flashloan_executor",
+        label: "paper_deploy_flashloan_executor_impl",
     }) {
         Ok(simulator_v2::sequence_runner::DeployOutcome::Success { address, .. }) => address,
         Ok(other) => {
@@ -362,12 +510,13 @@ pub fn deploy_paper_executor_stack(
         }
         Err(e) => return Err(PaperStackError::FleDeploy(e.to_string())),
     };
-    exec_setup_call(
+    let fle = deploy_erc1967_proxy(
         sctx,
         spec,
-        fle,
+        admin,
+        fle_impl,
         encode_initialize_fle(spec.admin, spec.aave_pool, ae_e),
-        "paper_fle_initialize",
+        "paper_deploy_flashloan_executor_proxy",
         PaperStackError::FleInitialize,
     )?;
     let fle_e = to_ethers(fle);
@@ -448,6 +597,48 @@ pub fn deploy_paper_executor_stack(
     })
 }
 
+/// PR-D1 (2026-10-18): deploy an ERC1967Proxy that initializes `logic` in its
+/// own constructor and return the PROXY address. Fail-closed: a revert/halt of
+/// the proxy deployment is surfaced through `wrap` (never a partial stack).
+#[cfg(feature = "v2-simulator")]
+fn deploy_erc1967_proxy(
+    sctx: &mut simulator_v2::sequence_runner::SequenceContext,
+    spec: &PaperStackSpec,
+    admin: simulator_v2::AlloyAddress,
+    logic: simulator_v2::AlloyAddress,
+    initialize_data: Vec<u8>,
+    label: &'static str,
+    wrap: fn(String) -> PaperStackError,
+) -> Result<simulator_v2::AlloyAddress, PaperStackError> {
+    use simulator_v2::sequence_runner::{DeployOutcome, SequenceDeploy};
+
+    let proxy_code = decode_fixture(ERC1967_PROXY_BYTECODE_HEX, "ERC1967Proxy.bytecode.hex")?;
+    let mut logic_bytes = [0u8; 20];
+    logic_bytes.copy_from_slice(logic.as_slice());
+    let init_code =
+        erc1967_proxy_init_code(&proxy_code, Address::from(logic_bytes), &initialize_data);
+
+    match sctx.deploy(SequenceDeploy {
+        from: admin,
+        init_code,
+        gas_price_wei: spec.gas_price_wei,
+        gas_limit: spec.gas_limit,
+        label,
+    }) {
+        Ok(DeployOutcome::Success { address, .. }) => Ok(address),
+        Ok(other) => {
+            let why = match &other {
+                DeployOutcome::Reverted { reason, .. } => reason.clone(),
+                DeployOutcome::Halted { reason, .. } => reason.clone(),
+                _ => unreachable!("matched Success above"),
+            };
+            warn!(event = "paper_stack.proxy_deploy_failed", label = label, why = %why);
+            Err(wrap(why))
+        }
+        Err(e) => Err(wrap(e.to_string())),
+    }
+}
+
 #[cfg(feature = "v2-simulator")]
 fn exec_setup_call(
     sctx: &mut simulator_v2::sequence_runner::SequenceContext,
@@ -526,6 +717,10 @@ mod tests {
         for (name, fixture) in [
             ("ArbitrageExecutor", ARBITRAGE_EXECUTOR_BYTECODE_HEX),
             ("FlashLoanExecutor", FLASHLOAN_EXECUTOR_BYTECODE_HEX),
+            // PR-D1 (2026-10-18): the proxy creation code is a first-class
+            // fixture (the paper stack deploys each executor BEHIND it), so the
+            // drift guard covers it too — no more hardcoded two-name list.
+            ("ERC1967Proxy", ERC1967_PROXY_BYTECODE_HEX),
         ] {
             let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../../contracts/out")
@@ -579,7 +774,7 @@ mod tests {
 
         assert_eq!(
             &encode_grant_role([0x11; 32], a)[0..4],
-            &[0x2f, 0x2f, 0xff, 0x15]
+            &[0x2f, 0x2f, 0xf1, 0x5d]
         );
         assert_eq!(encode_grant_role([0x11; 32], a).len(), 68);
 
@@ -607,5 +802,170 @@ mod tests {
         assert_eq!(cd.len(), 100);
         // bytes4 left-aligned in its head word.
         assert_eq!(&cd[4 + 32..4 + 36], &[0x41, 0x4b, 0xf3, 0x89]);
+    }
+
+    /// PR-D1: the ERC1967Proxy creation code must carry a well-formed
+    /// `(address logic, bytes data)` ABI tail so the proxy constructor can
+    /// delegatecall `initialize` against the implementation.
+    #[test]
+    fn erc1967_proxy_init_code_abi_is_well_formed() {
+        let proxy = vec![0x60u8, 0x80, 0x60, 0x40, 0x52]; // stand-in creation code
+        let logic = Address::from([0x11u8; 20]);
+        let data = encode_initialize_admin(Address::from([0x22u8; 20]));
+        assert_eq!(
+            data.len(),
+            36,
+            "initialize(address) calldata is 4 + 32 bytes"
+        );
+
+        let cd = erc1967_proxy_init_code(&proxy, logic, &data);
+
+        // The creation code stays verbatim at the front.
+        assert_eq!(&cd[..proxy.len()], proxy.as_slice());
+        let tail = &cd[proxy.len()..];
+        // head word 0: logic, left-padded to 32 bytes.
+        assert_eq!(&tail[12..32], logic.as_bytes());
+        // head word 1: offset of the dynamic bytes = 0x40.
+        assert_eq!(tail[63], 0x40);
+        // dynamic tail: length word then the data, zero-padded to 32 bytes.
+        assert_eq!(&tail[64 + 24..64 + 32], &(data.len() as u64).to_be_bytes());
+        assert_eq!(&tail[96..96 + data.len()], data.as_slice());
+        assert_eq!(
+            (cd.len() - proxy.len()) % 32,
+            0,
+            "ABI tail is 32-byte aligned"
+        );
+        assert!(cd.len() > proxy.len() + 96, "data must be present");
+
+        // The committed fixture decodes and is non-empty.
+        let code = decode_fixture(ERC1967_PROXY_BYTECODE_HEX, "ERC1967Proxy.bytecode.hex")
+            .expect("ERC1967Proxy fixture must decode");
+        assert!(!code.is_empty(), "ERC1967Proxy fixture must not be empty");
+    }
+
+    /// PR-D1 gate: construct a `PaperStackSpec`, run the REAL deploy
+    /// (impl + ERC1967Proxy whose constructor initializes) and assert `Ok`.
+    /// Requires an RPC that answers `eth_blockNumber`/`eth_getCode` — point
+    /// `PAPER_STACK_RPC` at a bare `anvil` (default http://127.0.0.1:8545).
+    /// Before PR-D1 this returned `Err(AeInitialize)` (revert 0xf92ee8a9).
+    #[test]
+    #[ignore = "requires an RPC at PAPER_STACK_RPC (default http://127.0.0.1:8545); run with --ignored"]
+    fn paper_stack_deploy_initializes_via_erc1967_proxy_ok() {
+        let rpc = std::env::var("PAPER_STACK_RPC")
+            .unwrap_or_else(|_| "http://127.0.0.1:8545".to_string());
+        let block = std::env::var("PAPER_STACK_BLOCK")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok());
+
+        let lazy = simulator_v2::LazyDb::new(&rpc, block).expect("connect PAPER_STACK_RPC");
+        let mut sctx =
+            simulator_v2::sequence_runner::SequenceContext::new(lazy, 1, block.unwrap_or(1));
+
+        let admin = Address::from([0x11u8; 20]);
+        let spec = PaperStackSpec {
+            admin,
+            aave_pool: Address::from([0x22u8; 20]),
+            tokens: vec![],
+            routers: vec![],
+            router_selectors: vec![],
+            flashloan_callers: vec![admin],
+            admin_eth_seed_wei: U256::from(1_000_000_000_000_000_000u128),
+            gas_price_wei: 1_000_000_000,
+            gas_limit: 15_000_000,
+        };
+
+        let stack = deploy_paper_executor_stack(&mut sctx, &spec)
+            .expect("paper stack deploy must be Ok via ERC1967Proxy (no InvalidInitialization)");
+        assert_ne!(stack.arbitrage_executor, Address::zero());
+        assert_ne!(stack.flashloan_executor, Address::zero());
+        assert_ne!(stack.arbitrage_executor, stack.flashloan_executor);
+        eprintln!(
+            "PAPER_STACK_DEPLOY_OUTCOME=OK ae={:?} fle={:?}",
+            stack.arbitrage_executor, stack.flashloan_executor
+        );
+    }
+
+    fn diag_ctx() -> prioritization_spine::round_trip_executor::RoundTripContext {
+        prioritization_spine::round_trip_executor::RoundTripContext {
+            caller: Address::from([0x11u8; 20]),
+            token_in: Address::from([0x01u8; 20]),
+            token_out: Address::from([0x02u8; 20]),
+            amount_in: U256::from(1u64),
+            forward_router: Address::from([0xaau8; 20]),
+            forward_path: vec![Address::from([0x01u8; 20]), Address::from([0x02u8; 20])],
+            backward_router: Address::from([0xbbu8; 20]),
+            backward_path: vec![Address::from([0x02u8; 20]), Address::from([0x01u8; 20])],
+            deadline: U256::from(1u64),
+        }
+    }
+
+    /// PR-D1 wiring: the spec is derived from the SAME route data the encoder
+    /// uses, and the Aave pool comes from the env — never hardcoded.
+    #[test]
+    fn paper_stack_spec_for_round_trip_derives_route_data_and_env_pool() {
+        let chain = 4_242_424u64; // test-only chain id, no other test touches it
+        std::env::set_var(
+            format!("AAVE_POOL_{chain}"),
+            "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+        );
+        let ctx = diag_ctx();
+        let spec = PaperStackSpec::for_round_trip(&ctx, chain, 7, 16_000_000).expect("spec");
+
+        assert_eq!(
+            spec.aave_pool,
+            "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"
+                .parse::<Address>()
+                .unwrap()
+        );
+        assert_eq!(
+            spec.tokens,
+            vec![Address::from([0x01u8; 20]), Address::from([0x02u8; 20])]
+        );
+        assert_eq!(
+            spec.routers,
+            vec![Address::from([0xaau8; 20]), Address::from([0xbbu8; 20])]
+        );
+        // Selector read from the plan calldata (V2 swapExactTokensForTokens).
+        assert_eq!(
+            spec.router_selectors,
+            vec![
+                (Address::from([0xaau8; 20]), [0x38, 0xed, 0x17, 0x39]),
+                (Address::from([0xbbu8; 20]), [0x38, 0xed, 0x17, 0x39]),
+            ]
+        );
+        assert_eq!(spec.admin, Address::from([0x11u8; 20]));
+        assert_eq!(spec.flashloan_callers, vec![Address::from([0x11u8; 20])]);
+        assert_eq!(spec.gas_price_wei, 7);
+        assert_eq!(spec.gas_limit, 16_000_000);
+        std::env::remove_var(format!("AAVE_POOL_{chain}"));
+    }
+
+    /// Fail-closed: no env pool ⇒ typed error, never an invented address.
+    #[test]
+    fn paper_stack_spec_for_round_trip_fails_closed_without_pool_env() {
+        let chain = 4_242_425u64;
+        std::env::remove_var(format!("AAVE_POOL_{chain}"));
+        let ctx = diag_ctx();
+        assert!(matches!(
+            PaperStackSpec::for_round_trip(&ctx, chain, 0, 16_000_000),
+            Err(PaperStackError::AavePoolUnresolved(_))
+        ));
+    }
+
+    /// The deploy wire is OFF unless the flag is set (P3: flag OFF by default).
+    #[test]
+    fn paper_stack_for_round_trip_is_off_by_default() {
+        let chain = 4_242_426u64;
+        std::env::set_var(
+            format!("AAVE_POOL_{chain}"),
+            "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+        );
+        std::env::remove_var(PAPER_STACK_DEPLOY_ENV);
+        let ctx = diag_ctx();
+        assert!(paper_stack_for_round_trip(&ctx, chain, 0, 16_000_000).is_none());
+        std::env::set_var(PAPER_STACK_DEPLOY_ENV, "1");
+        assert!(paper_stack_for_round_trip(&ctx, chain, 0, 16_000_000).is_some());
+        std::env::remove_var(PAPER_STACK_DEPLOY_ENV);
+        std::env::remove_var(format!("AAVE_POOL_{chain}"));
     }
 }
