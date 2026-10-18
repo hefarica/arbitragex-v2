@@ -361,6 +361,24 @@ elif [ -f "$NGINX_CANON" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# 8d. G-EDGE-CSP-SINGLE-01 — CSP single owner (nginx must not emit a CSP)
+# El L0 sólo diffea sites-enabled/arbitragex; un add_header CSP a nivel http{}
+# o en conf.d/ NO se veía y producía DOS cabeceras CSP en el edge (la efectiva
+# es la intersección) con 127.0.0.1 en connect-src. Barrido de todo el surface
+# nginx vivo: cualquier `add_header Content-Security-Policy` = FAIL.
+# ---------------------------------------------------------------------------
+log "--- G-EDGE-CSP-SINGLE-01: CSP single owner (nginx emits none) ---"
+CSP_HITS="$(grep -RIlE '^[[:space:]]*add_header[[:space:]]+Content-Security-Policy' \
+  /etc/nginx/nginx.conf /etc/nginx/conf.d/ /etc/nginx/sites-enabled/ 2>/dev/null || true)"
+if [ -z "$CSP_HITS" ]; then
+  ok "no nginx config emits Content-Security-Policy (single owner = app layer)"
+  observation "G-EDGE-CSP-SINGLE-01" "nginx_csp_absent" "info"
+else
+  fail "nginx emite Content-Security-Policy (duplica la CSP del app layer): $(echo "$CSP_HITS" | tr '\n' ' ')"
+  observation "G-EDGE-CSP-SINGLE-01" "nginx_csp_present" "critical"
+fi
+
+# ---------------------------------------------------------------------------
 # 9. Final verdict
 # ---------------------------------------------------------------------------
 log "=== VERIFICATION COMPLETE ==="
