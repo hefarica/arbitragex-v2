@@ -206,7 +206,15 @@ pub async fn run_real_simulation(
         require_trace_hash: true,
         require_positive_net_profit: true,
         max_steps: 8,
-        paper_stack: None,
+        // PR-D1: paper stack OFF unless PAPER_STACK_DEPLOY is set (sim-ctl is a
+        // paper path; when ON the deploy is invoked instead of the env-deployed
+        // executor, whose address has no code on mainnet).
+        paper_stack: sim_core::paper_executors::paper_stack_for_round_trip(
+            &ctx,
+            chain_id,
+            gas_price_wei.low_u128(),
+            env_config.gas_limit_per_step,
+        ),
     };
 
     // 4. Dispatch the sync REVM call off the tokio executor.
