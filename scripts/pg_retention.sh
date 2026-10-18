@@ -230,7 +230,7 @@ fi
 #    migración 116, esto es solo mantenimiento incremental).
 # ----------------------------------------------------------------------------
 if [ "$DRY_RUN" = "0" ]; then
-  if ! psql_batch "
+  if [ "$DRY_RUN" = "0" ] && ! psql_batch "
     INSERT INTO paper_trade_runs_daily (
         day, chain_id, strategy_kind, runs, runs_with_actual,
         sim_profit_sum, sim_profit_n, actual_profit_sum, actual_profit_n,
@@ -305,7 +305,7 @@ if [ "$RDO_PARTITIONED" = "1" ]; then
     BEGIN
       today_lo := (extract(epoch FROM clock_timestamp())::bigint * 1000) / 86400000 * 86400000;
       hi_ms    := (today_lo / 86400000 + 2) * 86400000;
-      p_lo     := today_lo + 86400000;
+      p_lo     := today_lo;  -- ARBX-RDO-PART-03: incluye HOY (antes solo D+1/D+2)
       WHILE p_lo <= hi_ms LOOP
         daytag := to_char(to_timestamp(p_lo / 1000.0) AT TIME ZONE 'UTC', 'YYYYMMDD');
         IF to_regclass(format('route_discovery_outcomes_p%s', daytag)) IS NULL THEN
@@ -433,10 +433,14 @@ for spec in "${TABLES[@]}"; do
   # esperan la ventana (90d) del propio hijo. Los índices de soporte ya existen
   # (idx_paper_trade_runs_opportunity, idx_risk_events_opportunity_id,
   # idx_opportunity_observations_opportunity_id) → NOT EXISTS indexado.
+  # FK-02 (2026-10-18): ademas de las SET NULL, proteger las 3 CASCADE.
   fk_guard=""
   if [ "$tbl" = "opportunities" ]; then
     fk_guard="AND NOT EXISTS (SELECT 1 FROM paper_trade_runs p WHERE p.opportunity_id = o.id)
               AND NOT EXISTS (SELECT 1 FROM risk_events r WHERE r.opportunity_id = o.id)
+              AND NOT EXISTS (SELECT 1 FROM simulations s WHERE s.opportunity_id = o.id)
+              AND NOT EXISTS (SELECT 1 FROM executions e WHERE e.opportunity_id = o.id)
+              AND NOT EXISTS (SELECT 1 FROM recon_reports rr WHERE rr.opportunity_id = o.id)
               AND NOT EXISTS (SELECT 1 FROM opportunity_observations x WHERE x.opportunity_id = o.id)"
   fi
 
@@ -540,8 +544,8 @@ for spec in "${TABLES[@]}"; do
       -v ON_ERROR_STOP=1 \
       -c "SET lock_timeout='$BATCH_LOCK_TIMEOUT'" \
       -c "SET statement_timeout='600s'" \
-      -c "VACUUM (ANALYZE) $tbl" >/dev/null 2>&1 \
-      || log "retention.vacuum table=$tbl failed (non-fatal)"
+      -c "VACUUM (ANALYZE, PARALLEL 0) $tbl" 2>&1 \
+      || log "retention.vacuum FAILED table=$tbl (stderr arriba — ARBX-F1P: PARALLEL 0 para no agotar /dev/shm)"
   fi
 done
 

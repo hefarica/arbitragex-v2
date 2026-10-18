@@ -27,7 +27,10 @@ def vacuum_args(source: str, container: str, lock_timeout: str = "5s") -> list[s
     if source.count(marker) != 1:
         raise ValueError("expected exactly one canonical VACUUM section")
     section = source.split(marker, 1)[1]
-    match = re.search(r'(docker exec -i "\$PG_CONTAINER" psql.*?)\s+>/dev/null', section, re.S)
+    # ARBX-F1P (2026-10-18): the retention script no longer swallows the VACUUM
+    # stderr (`2>&1` + `|| log ... FAILED`), so the canonical command may end in
+    # either `>/dev/null` (legacy) or `2>&1` (current). Accept both terminators.
+    match = re.search(r'(docker exec -i "\$PG_CONTAINER" psql.*?)\s+(?:>/dev/null|2>&1)', section, re.S)
     if match is None:
         raise ValueError("canonical VACUUM command not found")
     args = shlex.split(match.group(1).replace("\\\n", ""))
@@ -63,7 +66,7 @@ class CommandShape(unittest.TestCase):
     def test_independent_bounded_requests(self) -> None:
         args = vacuum_args(SOURCE.read_text(encoding="utf-8"), "test-container")
         self.assertEqual(commands(args), ["SET lock_timeout='5s'",
-                         "SET statement_timeout='600s'", "VACUUM (ANALYZE) vacuum_probe"])
+                         "SET statement_timeout='600s'", "VACUUM (ANALYZE, PARALLEL 0) vacuum_probe"])
         self.assertIn("ON_ERROR_STOP=1", args)
         self.assertIn("-X", args)
         self.assertNotIn("FULL", " ".join(commands(args)))

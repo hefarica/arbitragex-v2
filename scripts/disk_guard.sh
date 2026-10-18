@@ -27,6 +27,14 @@ CRIT_MB=$((15 * 1024))
 
 avail_mb() { df / | awk 'NR==2 {print int($4/1024)}'; }
 
+# ARBX-LOG-CAP (2026-10-18): corta cualquier log de /var/log/arbx > 1GB.
+# truncate(2) es seguro: los escritores del searcher abren O_APPEND.
+while read -r lf; do
+  [ -n "$lf" ] || continue
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) logcap truncate file=$lf size=$(stat -c%s "$lf")" >> /var/log/arbx-disk-guard.log
+  truncate -s 0 "$lf"
+done < <(find /var/log/arbx -type f -name "*.log" -size +1G 2>/dev/null)
+
 AVAIL=$(avail_mb)
 TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
@@ -38,11 +46,11 @@ USED_PCT=$(df / | awk 'NR==2 {gsub(/%/,""); print $5}')
 if [ "$AVAIL" -lt "$CRIT_MB" ]; then
   echo "$TS disk_guard level=CRIT avail_mb=$AVAIL used_pct=$USED_PCT accion=builder_prune+image_prune+volume_prune"
   docker builder prune -af --min-free-space 20GB
-  docker image prune -f
+  docker image prune -a -f
   docker volume prune -f
 else
   echo "$TS disk_guard level=WARN avail_mb=$AVAIL used_pct=$USED_PCT accion=builder_prune+image_prune"
   docker builder prune -af --min-free-space 20GB
-  docker image prune -f
+  docker image prune -a -f
 fi
 echo "$TS disk_guard post avail_mb=$(avail_mb)"

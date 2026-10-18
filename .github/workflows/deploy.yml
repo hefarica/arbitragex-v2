@@ -79,11 +79,22 @@ jobs:
           cd /opt/arbitragex-v2
           echo "=== git status ==="
           git status --porcelain | head -20
-          if [ -n "$(git status --porcelain)" ]; then
-            echo "⚠️  STOP: working tree no está limpio. Otro agente puede estar trabajando."
-            echo "    Si es seguro proceder, ejecuta manualmente: git stash && git clean -fd"
+          # ARBX-DEPLOY-GATE-01 (2026-10-18): el gate original abortaba por CUALQUIER
+          # entrada de `git status --porcelain`, incluidos los ficheros SIN TRACKEAR
+          # (backups `.pre-*`, `archives/`, docs de trabajo). Eso bloqueaba el deploy
+          # de forma permanente sin proteger nada: el anclaje posterior es
+          # `git checkout -f <sha>`, que NO borra ficheros sin trackear. El riesgo real
+          # —pisar trabajo sin commitear de otro agente— son los ficheros TRACKEADOS
+          # modificados; solo esos siguen abortando.
+          echo "=== git status (solo trackeados) ==="
+          git status --porcelain --untracked-files=no | head -20
+          if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+            echo "⚠️  STOP: hay ficheros TRACKEADOS modificados sin commitear. Otro agente puede estar trabajando."
+            echo "    Los ficheros sin trackear no bloquean (no los toca el checkout)."
             exit 10
           fi
+          UNTRACKED=$(git status --porcelain | grep -c '^??' || true)
+          echo "ℹ️  ficheros sin trackear presentes: ${UNTRACKED} (no bloquean el deploy)"
           echo ""
           echo "=== HEAD actual ==="
           git log --oneline -5

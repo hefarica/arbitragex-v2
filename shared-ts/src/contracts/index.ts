@@ -63,6 +63,16 @@ export const OpportunitySchema = z.object({
   updated_at: IsoDate.nullable().optional(),
   detected_at: IsoDate,
   trace_id: Uuid,
+  // ARBX-F2 (2026-10-18): el productor Rust SIEMPRE serializa `economics` (el
+  // bloque completo de costes/legs que emite el kernel multileg). No estaba
+  // declarado en el schema estricto, así que zod lo reportaba como
+  // `unrecognized_keys: ["economics"]` y el paper archiver rechazaba el 100 %
+  // de los mensajes (el catch XACKea y descarta ⇒ ledger de paper vacío;
+  // 66.197 `paper_archiver.invalid_message` medidos). Se declara como objeto
+  // abierto tipado: acepta el bloque tal cual lo emite Rust SIN debilitar el
+  // `.strict()` del nivel superior — mismo criterio que `cartridge_id` /
+  // `detector_id`, que ya documentan esta misma trampa.
+  economics: z.record(z.string(), z.unknown()).nullable().optional(),
 }).strict();
 export type Opportunity = z.infer<typeof OpportunitySchema>;
 

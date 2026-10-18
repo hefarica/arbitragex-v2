@@ -54,6 +54,11 @@ services:
 
   postgres:
     image: postgres:15
+    # ARBX-F1-SHM (2026-10-18): mismo valor que compose.prod.yml:39 — sin drift.
+    shm_size: 1gb
+    # ARBX-F1-MEM (2026-10-18): prod declara deploy.resources.limits.memory: 4G;
+    # sin techo, los 1GB de tmpfs de /dev/shm cuentan contra el cgroup del host.
+    mem_limit: 4g
     environment:
       POSTGRES_DB: arbitragex
       POSTGRES_USER: postgres
