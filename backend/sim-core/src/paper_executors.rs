@@ -1274,6 +1274,124 @@ mod tests {
         std::env::remove_var(format!("AAVE_POOL_{chain_id}"));
     }
 
+    /// Pool-dynamics (a): an explicit `AAVE_POOL_<chain>` override WINS over the
+    /// dynamic provider resolution. Runs against a MAINNET FORK
+    /// (`PAPER_STACK_RPC`): a bogus non-zero override is deployed as the FLE's
+    /// `aavePool`, and reading it back from the deployed proxy proves
+    /// `getPool()` was NOT consulted (the real mainnet pool differs).
+    #[test]
+    #[ignore = "requires a MAINNET-FORK RPC at PAPER_STACK_RPC; run with --ignored"]
+    fn paper_stack_pool_env_override_beats_provider() {
+        let rpc = std::env::var("PAPER_STACK_RPC")
+            .unwrap_or_else(|_| "http://127.0.0.1:8545".to_string());
+        let block = std::env::var("PAPER_STACK_BLOCK")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok());
+        let chain_id = 1u64;
+        let override_pool = Address::from([0x11u8; 20]);
+        std::env::set_var(
+            format!("AAVE_POOL_{chain_id}"),
+            "0x1111111111111111111111111111111111111111",
+        );
+
+        let ctx = diag_ctx();
+        let spec = PaperStackSpec::for_round_trip(&ctx, chain_id, 1_000_000_000, 16_000_000)
+            .expect("spec");
+        assert_eq!(spec.aave_pool, Some(override_pool));
+
+        let lazy = simulator_v2::LazyDb::new(&rpc, block).expect("connect PAPER_STACK_RPC");
+        let mut sctx =
+            simulator_v2::sequence_runner::SequenceContext::new(lazy, chain_id, block.unwrap_or(1));
+        let stack =
+            deploy_paper_executor_stack(&mut sctx, &spec).expect("deploy with env override");
+        let got = read_public_address(
+            &mut sctx,
+            stack.flashloan_executor,
+            FLE_AAVE_POOL_SELECTOR,
+            "fle_aave_pool_env_override",
+        );
+        assert_eq!(
+            got, override_pool,
+            "the env override must win over provider.getPool()"
+        );
+        eprintln!("PAPER_STACK_POOL_ENV_OVERRIDE_WINS={got:?}");
+        std::env::remove_var(format!("AAVE_POOL_{chain_id}"));
+    }
+
+    /// Pool-dynamics (b)+(d): with NO env override the pool is read DYNAMICALLY
+    /// from the chain's `PoolAddressesProvider` (`getPool()`); on mainnet the
+    /// value MUST equal the canonical Pool `0x87870Bca…`, and the wired deploy
+    /// must initialize the FLE with that same pool. Runs against a MAINNET FORK
+    /// (`PAPER_STACK_RPC`).
+    #[test]
+    #[ignore = "requires a MAINNET-FORK RPC at PAPER_STACK_RPC; run with --ignored"]
+    fn paper_stack_pool_resolved_from_provider_matches_mainnet_canonical() {
+        let rpc = std::env::var("PAPER_STACK_RPC")
+            .unwrap_or_else(|_| "http://127.0.0.1:8545".to_string());
+        let block = std::env::var("PAPER_STACK_BLOCK")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok());
+        let chain_id = 1u64;
+        std::env::remove_var(format!("AAVE_POOL_{chain_id}"));
+        let canonical: Address = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"
+            .parse()
+            .expect("canonical mainnet pool");
+
+        let lazy = simulator_v2::LazyDb::new(&rpc, block).expect("connect PAPER_STACK_RPC");
+        let mut sctx =
+            simulator_v2::sequence_runner::SequenceContext::new(lazy, chain_id, block.unwrap_or(1));
+
+        // (b) the dynamic read itself.
+        let pool = resolve_aave_pool_from_provider(&mut sctx, chain_id).expect("getPool() read");
+        // (d) mainnet parity: the read value is the canonical Pool.
+        assert_eq!(pool, canonical, "mainnet getPool() must match 0x87870Bca…");
+
+        // Wired deploy with no override resolves the pool dynamically.
+        let ctx = diag_ctx();
+        let spec = PaperStackSpec::for_round_trip(&ctx, chain_id, 1_000_000_000, 16_000_000)
+            .expect("spec");
+        assert_eq!(spec.aave_pool, None);
+        let stack =
+            deploy_paper_executor_stack(&mut sctx, &spec).expect("dynamic deploy must be Ok");
+        let got = read_public_address(
+            &mut sctx,
+            stack.flashloan_executor,
+            FLE_AAVE_POOL_SELECTOR,
+            "fle_aave_pool_from_provider",
+        );
+        assert_eq!(
+            got, canonical,
+            "the FLE must be initialized with the provider-resolved pool"
+        );
+        eprintln!(
+            "PAPER_STACK_POOL_FROM_PROVIDER={pool:?} ae={:?} fle={:?}",
+            stack.arbitrage_executor, stack.flashloan_executor
+        );
+    }
+
+    /// Selector of the `FlashLoanExecutor`'s `aavePool()` public getter
+    /// (`cast sig "aavePool()"`), used to read back the pool the stack wired.
+    const FLE_AAVE_POOL_SELECTOR: [u8; 4] = [0xa0, 0x3e, 0x4b, 0xc3];
+
+    /// Read a `public address` getter (`selector()` → 32-byte word, low 20
+    /// bytes) from `to` via the non-committing `read_call`.
+    fn read_public_address(
+        sctx: &mut simulator_v2::sequence_runner::SequenceContext,
+        to: Address,
+        selector: [u8; 4],
+        label: &str,
+    ) -> Address {
+        let to = simulator_v2::AlloyAddress::from_slice(to.as_bytes());
+        let out = sctx
+            .read_call(to, selector.to_vec(), label)
+            .expect("read_call must succeed")
+            .expect("contract must return data");
+        assert_eq!(out.len(), 32, "{label}: expected a 32-byte word");
+        let mut bytes = [0u8; 20];
+        bytes.copy_from_slice(&out[12..32]);
+        Address::from(bytes)
+    }
+
     fn diag_ctx() -> prioritization_spine::round_trip_executor::RoundTripContext {
         prioritization_spine::round_trip_executor::RoundTripContext {
             caller: Address::from([0x11u8; 20]),
@@ -1413,6 +1531,21 @@ mod tests {
             PaperStackError::AavePoolProviderMissing {
                 chain_id: 4_242_401
             }
+        ));
+    }
+
+    /// Pool-dynamics (c): a FAILING read is fail-closed with the typed
+    /// `AavePoolReadFailed` — never a fallback pool. Offline: the
+    /// never-reachable RPC guarantees the read errors.
+    #[test]
+    fn paper_stack_pool_resolution_fails_closed_when_read_errors() {
+        let lazy = simulator_v2::LazyDb::new("http://127.0.0.1:1/never", Some(1))
+            .expect("well-formed URL");
+        let mut sctx = simulator_v2::sequence_runner::SequenceContext::new(lazy, 1, 1);
+        let err = resolve_aave_pool_from_provider(&mut sctx, 1).unwrap_err();
+        assert!(matches!(
+            err,
+            PaperStackError::AavePoolReadFailed { chain_id: 1, .. }
         ));
     }
 
