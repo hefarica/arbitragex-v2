@@ -99,7 +99,14 @@ pub async fn refresh(
         require_trace_hash: true,
         require_positive_net_profit: true,
         max_steps: 8,
-        paper_stack: None,
+        // PR-D1: paper stack OFF unless PAPER_STACK_DEPLOY is set (flag OFF by
+        // default so admission validation is byte-for-byte unchanged).
+        paper_stack: sim_core::paper_executors::paper_stack_for_round_trip(
+            &ctx,
+            opp.chain_id,
+            U256::zero().low_u128(),
+            16_000_000,
+        ),
     };
     let sim_ctx = ctx.clone();
     let outcome = tokio::time::timeout(

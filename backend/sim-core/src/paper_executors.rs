@@ -81,6 +81,8 @@ pub enum PaperStackError {
     BalanceSeed(String),
     #[error("spec.aave_pool is the zero address (flashLoanProvider would fall back to zero)")]
     ZeroAavePool,
+    #[error("could not resolve the chain's Aave V3 pool: {0}")]
+    AavePoolUnresolved(String),
     #[error("spec.admin is the zero address")]
     ZeroAdmin,
 }
@@ -101,6 +103,7 @@ impl PaperStackError {
             Self::RouterSelectorApproval(_) => "router_selector_approval",
             Self::BalanceSeed(_) => "balance_seed",
             Self::ZeroAavePool => "zero_aave_pool",
+            Self::AavePoolUnresolved(_) => "aave_pool_unresolved",
             Self::ZeroAdmin => "zero_admin",
         }
     }
@@ -288,6 +291,110 @@ pub struct PaperStackSpec {
 pub struct PaperExecutorStack {
     pub arbitrage_executor: Address,
     pub flashloan_executor: Address,
+}
+
+/// Paper-only ETH seeded to the admin when the spec is derived from a route.
+/// Absolute set (not additive); enough for the deploys + setup + the later
+/// flash dispatch to pay gas.
+pub const PAPER_ADMIN_ETH_SEED_WEI: u128 = 1_000_000_000_000_000_000; // 1 ETH
+
+/// Environment flag that turns the paper-stack deploy ON for the sim paths.
+/// Absent, or any value other than `1`/`true`/`yes`/`on`, leaves the spec
+/// `None`, so the default behaviour of every call site is unchanged
+/// (P3 doctrine: flag OFF when it touches the wire).
+pub const PAPER_STACK_DEPLOY_ENV: &str = "PAPER_STACK_DEPLOY";
+
+/// `PAPER_STACK_DEPLOY` truthiness (`1`/`true`/`yes`/`on`, case-insensitive).
+pub fn paper_stack_deploy_enabled() -> bool {
+    match std::env::var(PAPER_STACK_DEPLOY_ENV) {
+        Ok(v) => matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        ),
+        Err(_) => false,
+    }
+}
+
+impl PaperStackSpec {
+    /// Derive a spec from the SAME route data the encoder uses, so the paper
+    /// stack deploys an executor whose allowlist matches exactly the routers,
+    /// tokens and selectors the round trip will call. The Aave V3 pool is
+    /// resolved fail-closed per chain from `AAVE_POOL_<chain_id>`
+    /// (`shared_rs::chains::resolve_aave_pool_address`) — no hardcoded pool.
+    pub fn for_round_trip(
+        ctx: &prioritization_spine::round_trip_executor::RoundTripContext,
+        chain_id: u64,
+        gas_price_wei: u128,
+        gas_limit: u64,
+    ) -> Result<Self, PaperStackError> {
+        let aave_pool = shared_rs::chains::resolve_aave_pool_address(chain_id)
+            .map_err(|e| PaperStackError::AavePoolUnresolved(format!("chain {chain_id}: {e}")))?;
+
+        // The selector the encoder will actually call, read from the plan's
+        // calldata — never a hardcoded constant.
+        let plan = prioritization_spine::round_trip_executor::build_round_trip_plan(ctx);
+        let mut selector = [0u8; 4];
+        if plan.forward_calldata.len() >= 4 {
+            selector.copy_from_slice(&plan.forward_calldata[..4]);
+        }
+
+        let mut tokens = vec![ctx.token_in];
+        if ctx.token_out != ctx.token_in {
+            tokens.push(ctx.token_out);
+        }
+        let mut routers: Vec<Address> = Vec::new();
+        let mut router_selectors: Vec<(Address, [u8; 4])> = Vec::new();
+        for router in [ctx.forward_router, ctx.backward_router] {
+            if router == Address::zero() {
+                continue;
+            }
+            if !routers.contains(&router) {
+                routers.push(router);
+            }
+            if !router_selectors.contains(&(router, selector)) {
+                router_selectors.push((router, selector));
+            }
+        }
+
+        Ok(Self {
+            admin: ctx.caller,
+            aave_pool,
+            tokens,
+            routers,
+            router_selectors,
+            flashloan_callers: vec![ctx.caller],
+            admin_eth_seed_wei: U256::from(PAPER_ADMIN_ETH_SEED_WEI),
+            gas_price_wei,
+            gas_limit,
+        })
+    }
+}
+
+/// Convenience for the production sim call sites: build the spec for `ctx`
+/// when `PAPER_STACK_DEPLOY` is enabled, else `None`. A resolution failure is
+/// logged and degrades to `None` — the pre-PR-D1 behaviour (sim against the
+/// env-deployed executor) — rather than failing the whole simulation.
+pub fn paper_stack_for_round_trip(
+    ctx: &prioritization_spine::round_trip_executor::RoundTripContext,
+    chain_id: u64,
+    gas_price_wei: u128,
+    gas_limit: u64,
+) -> Option<PaperStackSpec> {
+    if !paper_stack_deploy_enabled() {
+        return None;
+    }
+    match PaperStackSpec::for_round_trip(ctx, chain_id, gas_price_wei, gas_limit) {
+        Ok(spec) => Some(spec),
+        Err(error) => {
+            warn!(
+                event = "paper_stack.spec_unresolved",
+                chain_id, %error,
+                "PAPER_STACK_DEPLOY set but the spec could not be built — \
+                 falling back to the env-deployed executor path"
+            );
+            None
+        }
+    }
 }
 
 /// Deploy the paper executor stack into an EXISTING `SequenceContext`'s
@@ -770,4 +877,87 @@ mod tests {
         );
     }
 
+    fn diag_ctx() -> prioritization_spine::round_trip_executor::RoundTripContext {
+        prioritization_spine::round_trip_executor::RoundTripContext {
+            caller: Address::from([0x11u8; 20]),
+            token_in: Address::from([0x01u8; 20]),
+            token_out: Address::from([0x02u8; 20]),
+            amount_in: U256::from(1u64),
+            forward_router: Address::from([0xaau8; 20]),
+            forward_path: vec![Address::from([0x01u8; 20]), Address::from([0x02u8; 20])],
+            backward_router: Address::from([0xbbu8; 20]),
+            backward_path: vec![Address::from([0x02u8; 20]), Address::from([0x01u8; 20])],
+            deadline: U256::from(1u64),
+        }
+    }
+
+    /// PR-D1 wiring: the spec is derived from the SAME route data the encoder
+    /// uses, and the Aave pool comes from the env — never hardcoded.
+    #[test]
+    fn paper_stack_spec_for_round_trip_derives_route_data_and_env_pool() {
+        let chain = 4_242_424u64; // test-only chain id, no other test touches it
+        std::env::set_var(
+            format!("AAVE_POOL_{chain}"),
+            "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+        );
+        let ctx = diag_ctx();
+        let spec = PaperStackSpec::for_round_trip(&ctx, chain, 7, 16_000_000).expect("spec");
+
+        assert_eq!(
+            spec.aave_pool,
+            "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"
+                .parse::<Address>()
+                .unwrap()
+        );
+        assert_eq!(
+            spec.tokens,
+            vec![Address::from([0x01u8; 20]), Address::from([0x02u8; 20])]
+        );
+        assert_eq!(
+            spec.routers,
+            vec![Address::from([0xaau8; 20]), Address::from([0xbbu8; 20])]
+        );
+        // Selector read from the plan calldata (V2 swapExactTokensForTokens).
+        assert_eq!(
+            spec.router_selectors,
+            vec![
+                (Address::from([0xaau8; 20]), [0x38, 0xed, 0x17, 0x39]),
+                (Address::from([0xbbu8; 20]), [0x38, 0xed, 0x17, 0x39]),
+            ]
+        );
+        assert_eq!(spec.admin, Address::from([0x11u8; 20]));
+        assert_eq!(spec.flashloan_callers, vec![Address::from([0x11u8; 20])]);
+        assert_eq!(spec.gas_price_wei, 7);
+        assert_eq!(spec.gas_limit, 16_000_000);
+        std::env::remove_var(format!("AAVE_POOL_{chain}"));
+    }
+
+    /// Fail-closed: no env pool ⇒ typed error, never an invented address.
+    #[test]
+    fn paper_stack_spec_for_round_trip_fails_closed_without_pool_env() {
+        let chain = 4_242_425u64;
+        std::env::remove_var(format!("AAVE_POOL_{chain}"));
+        let ctx = diag_ctx();
+        assert!(matches!(
+            PaperStackSpec::for_round_trip(&ctx, chain, 0, 16_000_000),
+            Err(PaperStackError::AavePoolUnresolved(_))
+        ));
+    }
+
+    /// The deploy wire is OFF unless the flag is set (P3: flag OFF by default).
+    #[test]
+    fn paper_stack_for_round_trip_is_off_by_default() {
+        let chain = 4_242_426u64;
+        std::env::set_var(
+            format!("AAVE_POOL_{chain}"),
+            "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+        );
+        std::env::remove_var(PAPER_STACK_DEPLOY_ENV);
+        let ctx = diag_ctx();
+        assert!(paper_stack_for_round_trip(&ctx, chain, 0, 16_000_000).is_none());
+        std::env::set_var(PAPER_STACK_DEPLOY_ENV, "1");
+        assert!(paper_stack_for_round_trip(&ctx, chain, 0, 16_000_000).is_some());
+        std::env::remove_var(PAPER_STACK_DEPLOY_ENV);
+        std::env::remove_var(format!("AAVE_POOL_{chain}"));
+    }
 }

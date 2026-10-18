@@ -99,11 +99,41 @@ de ejecución (sólo declaración, evento `AllowanceManagerUpdated` y
 ejecución y no hace falta desplegarlo para la paridad. Se registra: el cableado de
 producción (`DeployMainnet.s.sol` líneas 280-281) es hoy **inerte**.
 
-## Cableado del spec (alcance real)
+## Cableado del spec (hecho)
 
 `MultiStepExecutionConfig.paper_stack` era `None` en TODOS los call sites y **no
-existía construcción de `PaperStackSpec`** ⇒ el deploy no se invocaba nunca. Ver el
-apartado "Cableado" más abajo para el estado tras este PR.
+existía construcción de `PaperStackSpec`** ⇒ el deploy no se invocaba nunca.
+Ahora:
+
+- `PaperStackSpec::for_round_trip(ctx, chain_id, gas_price_wei, gas_limit)` deriva
+  el spec de **la misma** `RoundTripContext` que usa el encoder: `tokens` =
+  `{token_in, token_out}`; `routers`/`router_selectors` = las patas
+  `forward_router`/`backward_router` con el **selector leído del calldata del plan**
+  (no un literal); `admin`/`flashloan_callers` = `ctx.caller`. El pool Aave V3 no
+  se inventa: se resuelve fail-closed por cadena desde `AAVE_POOL_<chain_id>`
+  (`shared_rs::chains::resolve_aave_pool_address`, mismo patrón que
+  `EXECUTOR_<id>` / `FLASHLOAN_EXECUTOR_<id>`; sin fallback hardcodeado).
+- Los 5 call sites pasan el spec vía
+  `sim_core::paper_executors::paper_stack_for_round_trip(...)`:
+  `candidate_simulation.rs`, `scanner.rs`, `sim_runner.rs`,
+  `canonical_plan_consumer.rs`, `execution_admission.rs`.
+- **Flag OFF por defecto (P3):** sin `PAPER_STACK_DEPLOY` el helper devuelve
+  `None` ⇒ el comportamiento de todos los call sites es **byte-a-byte el de antes**
+  (sim contra el executor de entorno). Con `PAPER_STACK_DEPLOY=1` **y**
+  `AAVE_POOL_<chain_id>` se invoca el deploy. Si el flag está puesto y el pool no
+  se resuelve, se **degrada a `None` con `warn`** (nunca falla la simulación
+  entera), declarado.
+- Tests nuevos (corren siempre): derivación desde la ruta + pool por env,
+  fail-closed sin `AAVE_POOL_*`, y OFF por defecto sin el flag.
+
+### Pendiente declarado del cableado (R8)
+
+La **activación en producción** exige dos insumos de operador que no son código y
+no se inventan: (a) exportar `AAVE_POOL_<chain_id>` con el pool real por cadena, y
+(b) decidir **qué** call sites arrancan con `PAPER_STACK_DEPLOY=1` (hoy los tres de
+`sim-ctl`/`scanner` ya son `paper_mode=true`; `candidate_simulation` y
+`execution_admission` son `paper_mode=false` y no se voltean por defecto). El
+cableado está; la decisión de encenderlo es del propietario.
 
 ## Revert
 

@@ -462,7 +462,15 @@ async fn prepare_inner(
         require_trace_hash: true,
         require_positive_net_profit: true,
         max_steps: 8,
-        paper_stack: None,
+        // PR-D1: paper stack OFF unless PAPER_STACK_DEPLOY is set (flag OFF by
+        // default ⇒ behaviour unchanged). When ON, the sim deploys the executor
+        // stack into the fork from the SAME route data the encoder uses.
+        paper_stack: sim_core::paper_executors::paper_stack_for_round_trip(
+            &ctx,
+            opportunity.chain_id,
+            U256::zero().low_u128(),
+            16_000_000,
+        ),
     };
     let simulator = Arc::new(simulator_v2::SimulatorV2::new(rpc_url).with_block(block_number));
     let sim_ctx = ctx.clone();
