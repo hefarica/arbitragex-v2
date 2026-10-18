@@ -16,11 +16,26 @@ class EvidenceTests(unittest.TestCase):
         row.update(changes)
         return row
 
-    def test_only_exact_main_push_can_supply_evidence(self):
+    def test_evidence_is_bound_to_the_exact_sha_not_the_event(self):
+        # The invariant is `run.head_sha == deploy.sha`. Gating evidence on
+        # `event == "push"` was a proxy: it silently dropped a valid
+        # `workflow_dispatch` on the exact commit (2026-10-18 — a dispatch
+        # registered unit_tests/dep_tree while the deploy still printed "No
+        # simulator evidence run for this SHA" and skipped the publication).
         self.assertEqual(select_run([self.run_record()], self.sha, self.repo), 10)
-        for changes in (dict(head_sha="b" * 40), dict(event="pull_request"),
-                        dict(head_branch="feature"), dict(repository={"full_name": "fork/repo"})):
-            self.assertIsNone(select_run([self.run_record(**changes)], self.sha, self.repo))
+        for event in ("push", "workflow_dispatch", "pull_request", "schedule"):
+            with self.subTest(event=event):
+                self.assertEqual(
+                    select_run([self.run_record(event=event)], self.sha, self.repo), 10,
+                    f"any event on the exact SHA supplies valid evidence")
+        for branch in ("main", "feature"):
+            with self.subTest(branch=branch):
+                self.assertEqual(
+                    select_run([self.run_record(head_branch=branch)], self.sha, self.repo), 10)
+        # The binding that still must hold: the exact SHA, in this repository.
+        for changes in (dict(head_sha="b" * 40), dict(repository={"full_name": "fork/repo"})):
+            with self.subTest(changes=changes):
+                self.assertIsNone(select_run([self.run_record(**changes)], self.sha, self.repo))
 
     def test_newer_failure_or_pending_attempt_invalidates_old_success(self):
         for changes in (dict(id=11, conclusion="failure"),
