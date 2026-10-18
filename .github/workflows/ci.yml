@@ -142,6 +142,18 @@ jobs:
       - name: G-FIXTURE-METADATA-01 (fixture vs contracts/out, metadata excluded)
         run: bash scripts/gates/g-fixture-metadata-01.sh
 
+  # ADR-005 / G-IMG-ROLLBACK-01. Static and fast (no build, no checkout of
+  # submodules): it pins the deploy-hardening rules so a later edit cannot
+  # silently drop the rollback capture, weaken the disk guard, or un-declare the
+  # production environment. Part of the `ci-gate` required set like its sibling.
+  deploy-hardening-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - name: G-IMG-ROLLBACK-01 (image rollback + deploy environment)
+        run: bash scripts/gates/g-img-rollback-01.sh
+
   retention-vacuum-regression:
     runs-on: ubuntu-latest
     timeout-minutes: 10
