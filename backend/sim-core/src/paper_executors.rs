@@ -905,6 +905,140 @@ mod tests {
         );
     }
 
+    /// PR-D2 root-cause pin: an UNCAPPED spec at the scanner's `30_000_000`
+    /// must be REJECTED by the OSAKA per-tx cap (EIP-7825) before it executes.
+    /// This is the defect PR-D2 fixes, pinned so a future change that drops the
+    /// cap in `for_round_trip` cannot pass unnoticed. The spec is built
+    /// literally (bypassing the cap) — the cap is exercised by the wired test.
+    #[test]
+    #[ignore = "requires an RPC at PAPER_STACK_RPC (default http://127.0.0.1:8545); run with --ignored"]
+    fn paper_stack_uncapped_gas_is_rejected_by_the_osaka_tx_cap() {
+        let rpc = std::env::var("PAPER_STACK_RPC")
+            .unwrap_or_else(|_| "http://127.0.0.1:8545".to_string());
+        let block = std::env::var("PAPER_STACK_BLOCK")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok());
+
+        let lazy = simulator_v2::LazyDb::new(&rpc, block).expect("connect PAPER_STACK_RPC");
+        let mut sctx =
+            simulator_v2::sequence_runner::SequenceContext::new(lazy, 1, block.unwrap_or(1));
+
+        let admin = Address::from([0x11u8; 20]);
+        let spec = PaperStackSpec {
+            admin,
+            aave_pool: Address::from([0x22u8; 20]),
+            tokens: vec![],
+            routers: vec![],
+            router_selectors: vec![],
+            flashloan_callers: vec![admin],
+            admin_eth_seed_wei: U256::from(1_000_000_000_000_000_000u128),
+            gas_price_wei: 1_000_000_000,
+            // Deliberately UNCAPPED: the scanner's real value.
+            gas_limit: 30_000_000,
+        };
+        let err = deploy_paper_executor_stack(&mut sctx, &spec)
+            .expect_err("30_000_000 must be rejected by the OSAKA per-tx cap, not executed");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("16777216") || msg.to_lowercase().contains("cap"),
+            "expected the EIP-7825 per-tx-cap rejection, got: {msg}"
+        );
+        eprintln!("PAPER_STACK_UNCAPPED_30M_REJECTED={msg}");
+    }
+
+    /// PR-D2 gate: run the WIRED path with the REAL gas each call site passes —
+    /// `searcher-rs::scanner`'s `30_000_000` included — and require the deploy
+    /// to be `Ok`. The spec comes from `PaperStackSpec::for_round_trip`, the
+    /// exact builder behind `paper_stack_for_round_trip`, i.e. production.
+    ///
+    /// Before the PR-D2 cap this FAILS: the paper `SequenceContext` pins
+    /// `SpecId::OSAKA`, EIP-7825 caps a transaction at `2^24 = 16_777_216`, and
+    /// the transactor rejects the deploy tx BEFORE executing it
+    /// (`transaction gas limit (30000000) is greater than the cap (16777216)`).
+    /// `G-PAPER-STACK-01` stayed green with the wire broken only because it
+    /// deployed a HAND-BUILT spec at `15_000_000` — the real gas of the call
+    /// sites was never exercised. This test closes that gap.
+    ///
+    /// Requires an RPC at `PAPER_STACK_RPC` (bare `anvil` works). Gas values:
+    /// `PAPER_STACK_GAS_VALUES` (comma-separated; default the real
+    /// DEPLOY-CAPABLE call-site values `30000000,16000000`). `PAPER_STACK_CHAIN_ID`
+    /// overrides the fork chain (default 1).
+    ///
+    /// The sim-ctl call sites pass a `500_000` default, which is below the
+    /// paper-stack DEPLOY FLOOR (measured >2_000_000: the AE creation code alone
+    /// deposits ~9.5 KB) — a deploy there fails with `OutOfGas` regardless of
+    /// the cap. That is a separate, declared limitation of enabling
+    /// `PAPER_STACK_DEPLOY` through sim-ctl with defaults, so 500_000 is covered
+    /// by the offline cap test (`…caps_gas_below_osaka_tx_cap_for_every_call_site`)
+    /// instead of here.
+    #[test]
+    #[ignore = "requires an RPC at PAPER_STACK_RPC (default http://127.0.0.1:8545); run with --ignored"]
+    fn paper_stack_wired_path_deploys_ok_at_call_site_gas() {
+        let rpc = std::env::var("PAPER_STACK_RPC")
+            .unwrap_or_else(|_| "http://127.0.0.1:8545".to_string());
+        let block = std::env::var("PAPER_STACK_BLOCK")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok());
+        let chain_id = std::env::var("PAPER_STACK_CHAIN_ID")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(1);
+        // `for_round_trip` resolves the Aave pool fail-closed from
+        // `AAVE_POOL_<chain_id>`; mainnet's real pool keeps the fork honest.
+        std::env::set_var(
+            format!("AAVE_POOL_{chain_id}"),
+            "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+        );
+
+        let gas_values = std::env::var("PAPER_STACK_GAS_VALUES")
+            .unwrap_or_else(|_| "30000000,16000000".to_string());
+        let ctx = diag_ctx();
+
+        let mut checked = 0usize;
+        for raw in gas_values.split(',') {
+            let raw = raw.trim();
+            if raw.is_empty() {
+                continue;
+            }
+            let gas: u64 = raw.parse().expect("PAPER_STACK_GAS_VALUES: not a u64");
+            // The wired spec — the same builder every call site uses.
+            let spec = PaperStackSpec::for_round_trip(&ctx, chain_id, 1_000_000_000, gas)
+                .expect("wired spec must build");
+            assert!(
+                spec.gas_limit <= 16_777_216,
+                "wired spec gas_limit {} exceeds the OSAKA per-tx cap for requested {gas}",
+                spec.gas_limit
+            );
+            assert_eq!(
+                spec.gas_limit,
+                gas.min(PAPER_STACK_MAX_TX_GAS),
+                "cap mismatch for requested gas {gas}"
+            );
+
+            let lazy = simulator_v2::LazyDb::new(&rpc, block).expect("connect PAPER_STACK_RPC");
+            let mut sctx = simulator_v2::sequence_runner::SequenceContext::new(
+                lazy,
+                chain_id,
+                block.unwrap_or(1),
+            );
+            let stack = deploy_paper_executor_stack(&mut sctx, &spec).unwrap_or_else(|e| {
+                panic!(
+                    "WIRED deploy must be Ok at call-site gas {gas} (capped {}): {e}",
+                    spec.gas_limit
+                )
+            });
+            assert_ne!(stack.arbitrage_executor, Address::zero());
+            assert_ne!(stack.flashloan_executor, Address::zero());
+            eprintln!(
+                "PAPER_STACK_WIRED_AT_CALL_SITE_GAS requested={gas} capped={} OUTCOME=OK ae={:?} fle={:?}",
+                spec.gas_limit, stack.arbitrage_executor, stack.flashloan_executor
+            );
+            checked += 1;
+        }
+        assert!(checked > 0, "no gas values exercised");
+        std::env::remove_var(format!("AAVE_POOL_{chain_id}"));
+    }
+
     fn diag_ctx() -> prioritization_spine::round_trip_executor::RoundTripContext {
         prioritization_spine::round_trip_executor::RoundTripContext {
             caller: Address::from([0x11u8; 20]),
