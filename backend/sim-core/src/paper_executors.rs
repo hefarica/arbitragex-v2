@@ -1509,10 +1509,22 @@ mod tests {
         assert_eq!(spec.chain_id, chain);
 
         std::env::set_var(format!("AAVE_POOL_{chain}"), "0xnothex");
-        assert!(matches!(
-            PaperStackSpec::for_round_trip(&ctx, chain, 0, 16_000_000),
-            Err(PaperStackError::AavePoolUnresolved(_))
-        ));
+        let err = PaperStackSpec::for_round_trip(&ctx, chain, 0, 16_000_000).unwrap_err();
+        assert!(matches!(err, PaperStackError::AavePoolUnresolved(_)));
+        // POOL-DYN-01 review (2026-10-18): the surfaced message must name the
+        // CONCRETE variable. It used to say `EXECUTOR_<chain>` because the
+        // shared error's Display hardcoded that prefix; assert on the TEXT so a
+        // future refactor cannot reintroduce the misnaming (the variant-only
+        // assert above did not catch it).
+        assert!(
+            err.to_string()
+                .contains(&format!("AAVE_POOL_{chain} env var")),
+            "the override error must name AAVE_POOL_{chain}, got: {err}"
+        );
+        assert!(
+            !err.to_string().contains("EXECUTOR_"),
+            "the override error must not name EXECUTOR_: {err}"
+        );
         std::env::remove_var(format!("AAVE_POOL_{chain}"));
     }
 

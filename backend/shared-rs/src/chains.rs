@@ -650,16 +650,24 @@ pub fn router_addresses_hex_for_chain(chain_id: u64) -> Vec<String> {
 /// rejection paths so callers can map each variant to a stable, fail-closed
 /// reason. No silent fallbacks: a missing, unparsable, or zero env value each
 /// produces a distinct error variant.
+/// The error carries the CONCRETE env key (`key`) instead of a hardcoded
+/// prefix: this one type serves `EXECUTOR_<id>`, `FLASHLOAN_EXECUTOR_<id>` and
+/// `AAVE_POOL_<id>`, so a fixed `EXECUTOR_` prefix in the `Display` misnamed the
+/// variable on two of the three paths (POOL-DYN-01 review, 2026-10-18).
 #[derive(Debug, thiserror::Error, PartialEq)]
 pub enum ExecutorAddrError {
-    #[error("EXECUTOR_{chain_id} env var not set")]
-    Missing { chain_id: u64 },
+    #[error("{key} env var not set")]
+    Missing { chain_id: u64, key: String },
 
-    #[error("EXECUTOR_{chain_id} env var value cannot parse as address: {value}")]
-    Invalid { chain_id: u64, value: String },
+    #[error("{key} env var value cannot parse as address: {value}")]
+    Invalid {
+        chain_id: u64,
+        key: String,
+        value: String,
+    },
 
-    #[error("EXECUTOR_{chain_id} env var resolves to the zero address")]
-    Zero { chain_id: u64 },
+    #[error("{key} env var resolves to the zero address")]
+    Zero { chain_id: u64, key: String },
 }
 
 /// Resolve the deployed `ArbitrageExecutor` proxy address for a chain from the
@@ -673,15 +681,16 @@ pub fn resolve_executor_address(chain_id: u64) -> Result<Address, ExecutorAddrEr
     let key = format!("EXECUTOR_{chain_id}");
     let raw = match std::env::var(&key) {
         Ok(v) if !v.trim().is_empty() => v,
-        _ => return Err(ExecutorAddrError::Missing { chain_id }),
+        _ => return Err(ExecutorAddrError::Missing { chain_id, key }),
     };
     let value = raw.trim();
     let addr = Address::from_str(value).map_err(|_| ExecutorAddrError::Invalid {
         chain_id,
+        key: key.clone(),
         value: value.to_string(),
     })?;
     if addr == Address::zero() {
-        return Err(ExecutorAddrError::Zero { chain_id });
+        return Err(ExecutorAddrError::Zero { chain_id, key });
     }
     Ok(addr)
 }
@@ -694,21 +703,22 @@ pub fn resolve_executor_address(chain_id: u64) -> Result<Address, ExecutorAddrEr
 /// NO hardcoded fallback addresses; NO test/dummy defaults. Every chain that
 /// participates in the flash-loan wire must export this env var explicitly.
 /// Missing, invalid, or zero values all reject fail-closed with a typed
-/// `ExecutorAddrError` variant (reused: its variants carry only `chain_id` /
-/// `value`, so they are env-key-agnostic and apply identically here).
+/// `ExecutorAddrError` variant (reused and now carrying the concrete `key` —
+/// `FLASHLOAN_EXECUTOR_<id>` — so the message names the right variable).
 pub fn resolve_flashloan_executor_address(chain_id: u64) -> Result<Address, ExecutorAddrError> {
     let key = format!("FLASHLOAN_EXECUTOR_{chain_id}");
     let raw = match std::env::var(&key) {
         Ok(v) if !v.trim().is_empty() => v,
-        _ => return Err(ExecutorAddrError::Missing { chain_id }),
+        _ => return Err(ExecutorAddrError::Missing { chain_id, key }),
     };
     let value = raw.trim();
     let addr = Address::from_str(value).map_err(|_| ExecutorAddrError::Invalid {
         chain_id,
+        key: key.clone(),
         value: value.to_string(),
     })?;
     if addr == Address::zero() {
-        return Err(ExecutorAddrError::Zero { chain_id });
+        return Err(ExecutorAddrError::Zero { chain_id, key });
     }
     Ok(addr)
 }
@@ -767,8 +777,8 @@ pub fn aave_pool_addresses_provider(chain_id: u64) -> Option<Address> {
 /// needs the chain's REAL Aave V3 pool. Exactly like `EXECUTOR_<id>` /
 /// `FLASHLOAN_EXECUTOR_<id>`, the override is resolved fail-closed: NO
 /// hardcoded fallback, NO dummy default. Missing, invalid, or zero values each
-/// reject with a typed `ExecutorAddrError` variant (reused: its variants carry
-/// only `chain_id` / `value`, so they are env-key-agnostic).
+/// reject with a typed `ExecutorAddrError` variant (reused and now carrying the
+/// concrete `key` — `AAVE_POOL_<id>` — so the message names the right variable).
 ///
 /// Pool-dynamics (2026-10-18): the env var is now an **explicit override**, not
 /// the only source. When it is absent the caller resolves the Pool on-chain
@@ -777,7 +787,10 @@ pub fn aave_pool_addresses_provider(chain_id: u64) -> Option<Address> {
 /// from "malformed override" (`Err`); this function is its `None → Missing`
 /// projection, so its contract is unchanged.
 pub fn resolve_aave_pool_address(chain_id: u64) -> Result<Address, ExecutorAddrError> {
-    resolve_aave_pool_address_optional(chain_id)?.ok_or(ExecutorAddrError::Missing { chain_id })
+    resolve_aave_pool_address_optional(chain_id)?.ok_or(ExecutorAddrError::Missing {
+        chain_id,
+        key: format!("AAVE_POOL_{chain_id}"),
+    })
 }
 
 /// Optional form of [`resolve_aave_pool_address`]: `Ok(None)` when
@@ -795,10 +808,11 @@ pub fn resolve_aave_pool_address_optional(
     let value = raw.trim();
     let addr = Address::from_str(value).map_err(|_| ExecutorAddrError::Invalid {
         chain_id,
+        key: key.clone(),
         value: value.to_string(),
     })?;
     if addr == Address::zero() {
-        return Err(ExecutorAddrError::Zero { chain_id });
+        return Err(ExecutorAddrError::Zero { chain_id, key });
     }
     Ok(Some(addr))
 }
@@ -1234,7 +1248,13 @@ mod tests {
     fn executor_missing_rejected() {
         std::env::remove_var("EXECUTOR_8999");
         let err = resolve_executor_address(8999).unwrap_err();
-        assert_eq!(err, ExecutorAddrError::Missing { chain_id: 8999 });
+        assert_eq!(
+            err,
+            ExecutorAddrError::Missing {
+                chain_id: 8999,
+                key: "EXECUTOR_8999".into()
+            }
+        );
     }
 
     /// A non-address env value rejects with `Invalid` carrying the raw value.
@@ -1246,6 +1266,10 @@ mod tests {
             err,
             ExecutorAddrError::Invalid { chain_id: 8998, .. }
         ));
+        assert!(
+            err.to_string().contains("EXECUTOR_8998"),
+            "the message must name the concrete variable: {err}"
+        );
         std::env::remove_var("EXECUTOR_8998");
     }
 
@@ -1257,7 +1281,13 @@ mod tests {
             "0x0000000000000000000000000000000000000000",
         );
         let err = resolve_executor_address(8997).unwrap_err();
-        assert_eq!(err, ExecutorAddrError::Zero { chain_id: 8997 });
+        assert_eq!(
+            err,
+            ExecutorAddrError::Zero {
+                chain_id: 8997,
+                key: "EXECUTOR_8997".into()
+            }
+        );
         std::env::remove_var("EXECUTOR_8997");
     }
 
@@ -1285,7 +1315,13 @@ mod tests {
     fn flashloan_executor_missing_rejected() {
         std::env::remove_var("FLASHLOAN_EXECUTOR_8995");
         let err = resolve_flashloan_executor_address(8995).unwrap_err();
-        assert_eq!(err, ExecutorAddrError::Missing { chain_id: 8995 });
+        assert_eq!(
+            err,
+            ExecutorAddrError::Missing {
+                chain_id: 8995,
+                key: "FLASHLOAN_EXECUTOR_8995".into()
+            }
+        );
     }
 
     /// A non-address env value rejects with `Invalid` carrying the raw value.
@@ -1297,6 +1333,14 @@ mod tests {
             err,
             ExecutorAddrError::Invalid { chain_id: 8994, .. }
         ));
+        assert!(
+            err.to_string().contains("FLASHLOAN_EXECUTOR_8994"),
+            "the message must name the concrete variable: {err}"
+        );
+        assert!(
+            err.to_string().starts_with("FLASHLOAN_EXECUTOR_8994 "),
+            "the FLASHLOAN path must not carry a hardcoded EXECUTOR_ prefix: {err}"
+        );
         std::env::remove_var("FLASHLOAN_EXECUTOR_8994");
     }
 
@@ -1308,7 +1352,13 @@ mod tests {
             "0x0000000000000000000000000000000000000000",
         );
         let err = resolve_flashloan_executor_address(8993).unwrap_err();
-        assert_eq!(err, ExecutorAddrError::Zero { chain_id: 8993 });
+        assert_eq!(
+            err,
+            ExecutorAddrError::Zero {
+                chain_id: 8993,
+                key: "FLASHLOAN_EXECUTOR_8993".into()
+            }
+        );
         std::env::remove_var("FLASHLOAN_EXECUTOR_8993");
     }
 
@@ -1393,7 +1443,10 @@ mod tests {
         assert_eq!(resolve_aave_pool_address_optional(chain), Ok(None));
         assert_eq!(
             resolve_aave_pool_address(chain),
-            Err(ExecutorAddrError::Missing { chain_id: chain })
+            Err(ExecutorAddrError::Missing {
+                chain_id: chain,
+                key: format!("AAVE_POOL_{chain}")
+            })
         );
     }
 
@@ -1423,20 +1476,37 @@ mod tests {
     fn aave_pool_env_invalid_or_zero_rejects() {
         let chain = 4_242_404u64;
         std::env::set_var(format!("AAVE_POOL_{chain}"), "0xnothex");
+        let err = resolve_aave_pool_address_optional(chain).unwrap_err();
         assert!(matches!(
-            resolve_aave_pool_address_optional(chain),
-            Err(ExecutorAddrError::Invalid {
+            err,
+            ExecutorAddrError::Invalid {
                 chain_id: 4_242_404,
                 ..
-            })
+            }
         ));
+        assert!(
+            err.to_string().starts_with(&format!("AAVE_POOL_{chain} ")),
+            "the Aave-pool override must be named as AAVE_POOL_, not EXECUTOR_: {err}"
+        );
+        assert!(
+            !err.to_string().contains("EXECUTOR_"),
+            "the Aave-pool path must not leak the EXECUTOR_ prefix: {err}"
+        );
         std::env::set_var(
             format!("AAVE_POOL_{chain}"),
             "0x0000000000000000000000000000000000000000",
         );
+        let zero = resolve_aave_pool_address_optional(chain).unwrap_err();
         assert_eq!(
-            resolve_aave_pool_address_optional(chain),
-            Err(ExecutorAddrError::Zero { chain_id: chain })
+            zero,
+            ExecutorAddrError::Zero {
+                chain_id: chain,
+                key: format!("AAVE_POOL_{chain}")
+            }
+        );
+        assert!(
+            zero.to_string().starts_with(&format!("AAVE_POOL_{chain} ")),
+            "the zero override must be named AAVE_POOL_{chain}: {zero}"
         );
         std::env::remove_var(format!("AAVE_POOL_{chain}"));
     }

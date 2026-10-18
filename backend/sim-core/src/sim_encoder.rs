@@ -266,13 +266,15 @@ impl RouteEncodingConfig {
 /// scanner sees byte-identical behaviour (same variants, same `reason_tag()`).
 pub fn parse_executor_address(chain_id: u64) -> Result<Address, SimEncoderError> {
     shared_rs::chains::resolve_executor_address(chain_id).map_err(|e| match e {
-        ExecutorAddrError::Missing { chain_id } => {
+        ExecutorAddrError::Missing { chain_id, .. } => {
             SimEncoderError::MissingExecutorAddress { chain_id }
         }
-        ExecutorAddrError::Invalid { chain_id, value } => {
-            SimEncoderError::InvalidExecutorAddress { chain_id, value }
+        ExecutorAddrError::Invalid {
+            chain_id, value, ..
+        } => SimEncoderError::InvalidExecutorAddress { chain_id, value },
+        ExecutorAddrError::Zero { chain_id, .. } => {
+            SimEncoderError::ZeroExecutorAddress { chain_id }
         }
-        ExecutorAddrError::Zero { chain_id } => SimEncoderError::ZeroExecutorAddress { chain_id },
     })
 }
 
