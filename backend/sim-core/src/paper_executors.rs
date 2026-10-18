@@ -203,7 +203,7 @@ pub fn encode_initialize_fle(
 /// `grantRole(bytes32,address)`. Selector 0x2f2ff15d (OZ standard).
 pub fn encode_grant_role(role: [u8; 32], account: Address) -> Vec<u8> {
     let mut cd = Vec::with_capacity(68);
-    cd.extend_from_slice(&[0x2f, 0x2f, 0xff, 0x15]);
+    cd.extend_from_slice(&[0x2f, 0x2f, 0xf1, 0x5d]);
     cd.extend_from_slice(&role);
     cd.extend_from_slice(&addr_word(account));
     cd
@@ -667,7 +667,7 @@ mod tests {
 
         assert_eq!(
             &encode_grant_role([0x11; 32], a)[0..4],
-            &[0x2f, 0x2f, 0xff, 0x15]
+            &[0x2f, 0x2f, 0xf1, 0x5d]
         );
         assert_eq!(encode_grant_role([0x11; 32], a).len(), 68);
 
