@@ -142,7 +142,9 @@ python3 scripts/oracle/oracle_p01.py --scan 60000 --scan-step 1500
 - [x] `scripts/oracle/oracle_p01.py` (verificado contra mainnet)
 - [x] prefijos por capa en el productor: `shared-rs::sim_taxonomy::{layer_of, with_layer_prefix, layer_of_prefixed}`
       + prefijado del `fail_reason` persistido en `sim-ctl::insert_simulation` (tests en verde)
-- [ ] tally desglosado (`passed`/`fixture_failures`/`sim_failures`/`market_failures`) en el canal read-only
+- [x] tally desglosado en el canal read-only (`g2-tally-readonly.yml`): set `layer_breakdown`
+      + `fixture_failures`/`sim_failures`/`market_failures`; guard de verbos read-only extendido
+      y validado localmente. **Ojo:** sólo cuentan filas POSTERIORES al prefijado (régimen).
 - [ ] setup determinista del fork (nativo por override, ballena + `transfer`, `approve`, aserciones)
 - [ ] casos N-01 / N-02 / N-03 cableados al gate
 - [ ] bloque de P-01 (a decidir: (i) / (ii) / (iii))

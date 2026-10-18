@@ -48,6 +48,13 @@ on:
           - simulations_total
           - simulations_pgstat
           - t0_discriminator
+          # SIM-ORACLE-01: el candado de G2 deja de ser un solo número.
+          # `passed = 0` mezclaba "el harness no dejó medir" con "el mercado dijo
+          # que no"; estas tres series separan la capa (ver `layer_breakdown`).
+          - layer_breakdown
+          - fixture_failures
+          - sim_failures
+          - market_failures
         required: true
         default: g2_simulations_passed
   pull_request:
@@ -86,7 +93,13 @@ jobs:
               control_select_1)      printf '%s' "SELECT 1 AS control;" ;;
               g2_simulations_passed) printf '%s' "SELECT COUNT(*)::bigint AS simulations_passed FROM simulations WHERE passed;" ;;
               simulations_total)     printf '%s' "SELECT COUNT(*)::bigint AS simulations_total FROM simulations;" ;;
-              simulations_pgstat)    printf '%s' "SELECT n_tup_ins::bigint AS n_ins, n_tup_del::bigint AS n_del FROM pg_stat_user_tables WHERE relname = 'simulations';" ;;
+              simulations_pgstat)   printf '%s' "SELECT n_tup_ins::bigint AS n_ins, n_tup_del::bigint AS n_del FROM pg_stat_user_tables WHERE relname = 'simulations';" ;;
+              # SIM-ORACLE-01 — capa del `fail_reason` PERSISTIDO. OJO: sólo
+              # cuentan las filas escritas DESPUES del cambio que introduce el
+              # prefijo; las anteriores no llevan capa (regimen declarado).
+              fixture_failures)     printf '%s' "SELECT COUNT(*)::bigint AS fixture_failures FROM simulations WHERE fail_reason LIKE 'fixture\_%';" ;;
+              sim_failures)         printf '%s' "SELECT COUNT(*)::bigint AS sim_failures FROM simulations WHERE fail_reason LIKE 'sim\_%';" ;;
+              market_failures)      printf '%s' "SELECT COUNT(*)::bigint AS market_failures FROM simulations WHERE fail_reason LIKE 'market\_%';" ;;
               *) echo "::error::unknown tally key '$1' — refusing to build SQL"; return 1 ;;
             esac
           }
@@ -94,12 +107,16 @@ jobs:
           keys=""
           case "$TALLY_KEY" in
             both)
-              # PR self-test: control + los CUATRO tallies, en una sola ventana.
-              keys="control_select_1 g2_simulations_passed simulations_total simulations_pgstat" ;;
+              # PR self-test: control + TODOS los tallies, en una sola ventana.
+              keys="control_select_1 g2_simulations_passed simulations_total simulations_pgstat fixture_failures sim_failures market_failures" ;;
             t0_discriminator)
               # t0: control + total + contadores de por vida, MISMA ventana y MISMA
               # corrida. Responde la disputa 0-vs-+40.958 (un ACK no inserta filas).
               keys="control_select_1 simulations_total simulations_pgstat" ;;
+            layer_breakdown)
+              # SIM-ORACLE-01: passed + las tres capas, misma ventana. Con esto
+              # `fixture_failures > 0` NUNCA se confunde con "no hay edge".
+              keys="control_select_1 g2_simulations_passed fixture_failures sim_failures market_failures" ;;
             *) keys="$TALLY_KEY" ;;
           esac
 
@@ -116,7 +133,12 @@ jobs:
                 # TABLES. Ninguno es un verbo de escritura: el inventario sigue sin
                 # INSERT/UPDATE/DELETE/DROP/ALTER/TRUNCATE/GRANT y por eso el canal es
                 # read-only por construccion.
-                SELECT|COUNT|FROM|WHERE|AS|BIGINT|SIMULATIONS|PASSED|CONTROL|1|TOTAL|N|TUP|INS|DEL|PG|STAT|USER|TABLES|RELNAME|"") ;;
+                # SIM-ORACLE-01 añade: FAIL REASON (fail_reason), FIXTURE/SIM/
+                # MARKET FAILURES (los tres tallies de capa) y LIKE (el filtro
+                # por prefijo). Siguen sin aparecer INSERT/UPDATE/DELETE/DROP/
+                # ALTER/TRUNCATE/GRANT: el canal sigue siendo read-only por
+                # construcción.
+                SELECT|COUNT|FROM|WHERE|AS|BIGINT|SIMULATIONS|PASSED|CONTROL|1|TOTAL|N|TUP|INS|DEL|PG|STAT|USER|TABLES|RELNAME|FAIL|REASON|FIXTURE|SIM|MARKET|FAILURES|LIKE|"") ;;
                 *) echo "::error::tally '$k' uses SQL token '$w' outside the read-only whitelist — refusing to run against the host"; exit 1 ;;
               esac
             done
