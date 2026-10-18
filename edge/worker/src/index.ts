@@ -566,7 +566,7 @@ function applyTopologySteroids(context: Record<string, unknown>): void {
 // navigation). JSON ⇐ Accept: application/json, ?format=json, or a CLI UA
 // (curl/httpie/wget/...). HTML ⇐ Accept includes text/html and not json. Default
 // (ambiguous) → JSON, preserving the exact legacy API-client behaviour.
-function statusWantsJson(c: import("hono").Context<{ Bindings: Env }>): boolean {
+export function statusWantsJson(c: import("hono").Context<{ Bindings: Env }>): boolean {
   const fmt = (new URL(c.req.url).searchParams.get("format") ?? "").toLowerCase();
   if (fmt === "json") return true;
   const ua = (c.req.header("user-agent") ?? "").toLowerCase();
@@ -580,24 +580,45 @@ function statusWantsJson(c: import("hono").Context<{ Bindings: Env }>): boolean 
   return true;
 }
 
+// API-JSON-01 (2026-10-18) — `/api/*` is an API surface by construction: it is
+// NOT negotiated. Measured on both hosts before this change: the browser
+// StatusClient poll of `/api/status` (UA Chrome + `Accept: text/html`, forwarded
+// through Next's /api/* rewrite) got a 404 `html_served_by_spa`, while the same
+// URL with a curl UA got 200 — because the negotiation was written for the bare
+// `/status` PAGE route (which collides with Next's /status page) and then reused
+// for the API alias.
+//
+// `edge/dev-local` already proxied `/api/status` unconditionally and documented
+// it as "Mirrors edge/worker/src/index.ts (Cloudflare Hono)". It did not: this
+// makes that mirror TRUE instead of aspirational, by exempting the `/api/` prefix
+// here rather than at each call site. Negotiation for the bare `/status` is
+// unchanged.
+export function pathWantsJson(c: import("hono").Context<{ Bindings: Env }>): boolean {
+  if (new URL(c.req.url).pathname.startsWith("/api/")) return true;
+  return statusWantsJson(c);
+}
+
 // FE-CRIT-01 — content-negotiated /status. API clients get the proxied backend
 // JSON verbatim (unchanged). For browser navigations (Accept: text/html) the
-// worker does NOT shadow the SPA with JSON — it returns the same not_found JSON
-// it gives every non-API path, so the front layer (Pages/Next) serves the SPA
-// /status page. The worker has no frontend upstream binding, so this is the
-// honest "I don't own the HTML route" signal (NEVER a fabricated 200).
+// worker returns 404 and lets the front layer (Pages/Next) serve the SPA /status
+// page. The worker has NO frontend upstream binding, so it never serves HTML
+// itself — and the detail says exactly that. (2026-10-18: it used to answer
+// `html_served_by_spa`, which claimed the worker had served an SPA it does not
+// have; measured — no page route of this worker returns HTML. NEVER a
+// fabricated 200, and never a false account of what the worker did.)
 app.get("/status", (c) => {
-  if (statusWantsJson(c)) return proxy(c, "/status", "arbx:cache:status", 2);
-  return c.json({ error: "not_found", detail: "html_served_by_spa" }, 404);
+  if (pathWantsJson(c)) return proxy(c, "/status", "arbx:cache:status", 2);
+  return c.json({ error: "not_found", detail: "not_served_by_edge" }, 404);
 });
 // Alias under /api/* so the browser StatusClient poll reaches the edge via
 // Next.js's /api/* rewrite. The bare /status collides with the Next.js /status
 // page route, so the client polls /api/status. Upstream target unchanged
 // (api-server /status); SSR keeps using INTERNAL_EDGE_URL/status directly.
-app.get("/api/status", (c) => {
-  if (statusWantsJson(c)) return proxy(c, "/status", "arbx:cache:status", 2);
-  return c.json({ error: "not_found", detail: "html_served_by_spa" }, 404);
-});
+//
+// API-JSON-01: `/api/*` is an API surface by construction — it is NEVER
+// content-negotiated, so this route always proxies the backend JSON (see
+// pathWantsJson above).
+app.get("/api/status", (c) => proxy(c, "/status", "arbx:cache:status", 2));
 // FE-CRIT — system manifest read surface. api-server mounts these at /api/system/*
 // (no /v1/ prefix). proxy() forwards the upstream status verbatim — a non-2xx from
 // api-server is surfaced as-is; a transport failure throws and is handled by Hono's
