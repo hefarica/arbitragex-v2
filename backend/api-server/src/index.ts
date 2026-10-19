@@ -118,6 +118,10 @@ import { mountStrategyRuntimeStatus } from "./routes/strategy-runtime-status.js"
 // CHANNELS-01 (2026-09-26): fail-honest Redis Streams bus health (R8/R10).
 import { mountChannels } from "./routes/channels.js";
 import { mountReadinessExtras } from "./routes/readiness-extras.js";
+// ORCH-MODE-READONLY-01 (C-15b): read the effective ARBX_ORCHESTRATOR_MODE from
+// the searcher's boot census so "is the legacy emitter reachable?" stops being
+// a VPS trip. Read-only: one Redis GET, no mutation.
+import { mountOrchestratorMode } from "./routes/orchestrator-mode.js";
 import { mountReadinessSteps } from "./routes/readiness-steps.js";
 import { mountReadinessEvidence } from "./routes/readiness-evidence.js";
 import { mountAgentsStatus } from "./routes/agents-status.js";
@@ -574,6 +578,7 @@ mountStrategyRuntimeStatus(app, { pool, redis, logger });
 // per-stream degrade; 503 solo si Redis entero cae (R8/R10).
 mountChannels(app, { redis, logger });
 mountReadinessExtras(app, { pool, redis, logger });
+mountOrchestratorMode(app, { redis, logger });
 mountReadinessSteps(app, { pool, redis, logger });
 // G-SIM-1 FASE 2: append-only readiness evidence registry. Admin-gated
 // (requireAdminToken) inside the module; sits under the /admin/ rate limiter.
