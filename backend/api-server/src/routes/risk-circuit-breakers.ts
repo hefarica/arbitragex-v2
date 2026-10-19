@@ -1554,7 +1554,8 @@ function makeExecutorBreaker(ctx: EvalCtx): CircuitBreaker {
     ref: "onchain:EXECUTOR_1",
   };
 
-  // PASS requires ALL of: bytecode, paused()==false, AccessControl surface.
+  // PASS requires ALL of: bytecode, paused()==false, wiring FLE→AE, and
+  // hasRole(EXECUTOR_ROLE) held by BOTH the FLE proxy and the operator EOA.
   if (h.status === "healthy") {
     return {
       id: "executor_breaker",
@@ -1565,7 +1566,7 @@ function makeExecutorBreaker(ctx: EvalCtx): CircuitBreaker {
       action: "none",
       evidence: {
         ...baseEvidence,
-        detail: `eth_getCode=${h.bytecode_size}B · paused()=false · getRoleAdmin(EXECUTOR_ROLE) ok${h.rpc_host ? ` · rpc=${h.rpc_host}` : ""} · ${h.latency_ms ?? "?"}ms`,
+        detail: `eth_getCode=${h.bytecode_size}B · paused()=false · hasRole(EXECUTOR_ROLE,FLE)=true · hasRole(EXECUTOR_ROLE,operator)=true · arbitrageExecutor()==EXECUTOR_1${h.rpc_host ? ` · rpc=${h.rpc_host}` : ""} · ${h.latency_ms ?? "?"}ms`,
         current_value: "healthy",
       },
       blocks: [],
@@ -1597,7 +1598,11 @@ function makeExecutorBreaker(ctx: EvalCtx): CircuitBreaker {
     };
   }
 
-  if (h.status === "rpc_unavailable" || h.status === "not_configured") {
+  if (
+    h.status === "rpc_unavailable" ||
+    h.status === "not_configured" ||
+    h.status === "identity_not_configured"
+  ) {
     return {
       id: "executor_breaker",
       name: "Executor contract health",
@@ -1617,17 +1622,26 @@ function makeExecutorBreaker(ctx: EvalCtx): CircuitBreaker {
       required_action:
         h.status === "not_configured"
           ? "Set RPC_HTTP_<ARBX_CB_CHAIN_ID> to a reachable HTTP JSON-RPC endpoint."
-          : "Restore RPC reachability; no on-chain claim is made until the probe answers.",
+          : h.status === "identity_not_configured"
+            ? "Export FLASHLOAN_EXECUTOR_<ARBX_CB_CHAIN_ID> (and SIGNER_ADDRESS or EXECUTION_SIGNER_ADDRESS); without the execution identity the role gate cannot be proven."
+            : "Restore RPC reachability; no on-chain claim is made until the probe answers.",
     };
   }
 
-  // no_code / invalid_address / wrong_contract — deterministic, fail-closed.
+  // no_code / invalid_address / wrong_contract / not_armed / operator_not_armed /
+  // wiring_mismatch — deterministic, fail-closed.
   const detail =
     h.status === "no_code"
       ? "eth_getCode(EXECUTOR_1)=0x — no bytecode at the configured address (EOA or undeployed)"
       : h.status === "invalid_address"
         ? "EXECUTOR_1 is not a 0x-prefixed 20-byte hex address"
-        : (h.error ?? "EXECUTOR_1 has code but not the ArbitrageExecutor surface");
+        : h.status === "not_armed"
+          ? (h.error ?? "the FlashLoanExecutor proxy holds no EXECUTOR_ROLE on the ArbitrageExecutor")
+          : h.status === "operator_not_armed"
+            ? (h.error ?? "the operator EOA holds no EXECUTOR_ROLE on the ArbitrageExecutor")
+            : h.status === "wiring_mismatch"
+              ? (h.error ?? "the FlashLoanExecutor points at a different ArbitrageExecutor")
+              : (h.error ?? "EXECUTOR_1 has code but not the ArbitrageExecutor surface");
   return {
     id: "executor_breaker",
     name: "Executor contract health",
@@ -1649,7 +1663,13 @@ function makeExecutorBreaker(ctx: EvalCtx): CircuitBreaker {
         ? "Deploy ArbitrageExecutor.sol (UUPS proxy) and point EXECUTOR_1 at the proxy."
         : h.status === "invalid_address"
           ? "Fix EXECUTOR_1 (0x + 20 bytes)."
-          : "Verify EXECUTOR_1 is the ArbitrageExecutor proxy (Pausable + AccessControl surfaces).",
+          : h.status === "not_armed"
+            ? "Grant EXECUTOR_ROLE on the ArbitrageExecutor to the FlashLoanExecutor proxy (AE.grantRole(EXECUTOR_ROLE, FLE))."
+            : h.status === "operator_not_armed"
+              ? "Grant EXECUTOR_ROLE on the ArbitrageExecutor to the operator EOA (AE.grantRole(EXECUTOR_ROLE, SIGNER))."
+              : h.status === "wiring_mismatch"
+                ? "Point FLASHLOAN_EXECUTOR_<chain> at the ArbitrageExecutor it actually calls, or fix the proxy wiring."
+                : "Verify EXECUTOR_1 is the ArbitrageExecutor proxy (Pausable + AccessControl surfaces).",
   };
 }
 

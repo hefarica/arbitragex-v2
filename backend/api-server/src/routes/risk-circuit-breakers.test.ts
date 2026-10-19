@@ -981,7 +981,11 @@ describe("makeExecutorBreaker", () => {
     rpc_host: "eth.example.com",
     bytecode_size: 4096,
     paused: false,
-    access_control_admin: `0x${"0".repeat(64)}`,
+    fle_address: "0x2222222222222222222222222222222222222222",
+    fle_has_executor_role: true,
+    operator_address: "0x3333333333333333333333333333333333333333",
+    operator_has_executor_role: true,
+    fle_reported_executor: "0x1111111111111111111111111111111111111111",
     latency_ms: 42,
     error: null,
     checked_at: "2026-10-19T04:00:00Z",
@@ -994,6 +998,59 @@ describe("makeExecutorBreaker", () => {
     expect(b.evidence.current_value).toBe("healthy");
     expect(b.blocks).toEqual([]);
     expect(b.evidence.detail).toContain("paused()=false");
+  });
+
+  it("PASS detail names both role holders and the wiring, not getRoleAdmin", () => {
+    const b = makeExecutorBreaker({ ...baseCtx, envExecutor: true, executorHealth: probe({}) });
+    expect(b.evidence.detail).toContain("hasRole(EXECUTOR_ROLE,FLE)=true");
+    expect(b.evidence.detail).toContain("hasRole(EXECUTOR_ROLE,operator)=true");
+    expect(b.evidence.detail).not.toContain("getRoleAdmin");
+  });
+
+  it("returns UNKNOWN when the execution identity is not configured (never PASS)", () => {
+    const b = makeExecutorBreaker({
+      ...baseCtx,
+      envExecutor: true,
+      executorHealth: probe({
+        status: "identity_not_configured",
+        operator_address: null,
+        operator_has_executor_role: null,
+        error: "SIGNER_ADDRESS missing — the operator grant cannot be proven",
+      }),
+    });
+    expect(b.state).toBe("UNKNOWN");
+    expect(b.evidence.detail).toContain("SIGNER_ADDRESS");
+    expect(b.required_action).toContain("FLASHLOAN_EXECUTOR_");
+  });
+
+  it("returns BLOCKED when the FLE holds no EXECUTOR_ROLE", () => {
+    const b = makeExecutorBreaker({
+      ...baseCtx,
+      envExecutor: true,
+      executorHealth: probe({ status: "not_armed", fle_has_executor_role: false }),
+    });
+    expect(b.state).toBe("BLOCKED");
+    expect(b.required_action).toContain("grantRole(EXECUTOR_ROLE, FLE)");
+  });
+
+  it("returns BLOCKED when the operator holds no EXECUTOR_ROLE", () => {
+    const b = makeExecutorBreaker({
+      ...baseCtx,
+      envExecutor: true,
+      executorHealth: probe({ status: "operator_not_armed", operator_has_executor_role: false }),
+    });
+    expect(b.state).toBe("BLOCKED");
+    expect(b.required_action).toContain("grantRole(EXECUTOR_ROLE, SIGNER)");
+  });
+
+  it("returns BLOCKED when the FLE points at another ArbitrageExecutor", () => {
+    const b = makeExecutorBreaker({
+      ...baseCtx,
+      envExecutor: true,
+      executorHealth: probe({ status: "wiring_mismatch" }),
+    });
+    expect(b.state).toBe("BLOCKED");
+    expect(b.evidence.detail).toContain("different ArbitrageExecutor");
   });
 
   it("returns PAUSED when the executor is deployed but paused on-chain", () => {
@@ -1011,7 +1068,16 @@ describe("makeExecutorBreaker", () => {
     const b = makeExecutorBreaker({
       ...baseCtx,
       envExecutor: true,
-      executorHealth: probe({ status: "no_code", bytecode_size: 0, paused: null, access_control_admin: null }),
+      executorHealth: probe({
+        status: "no_code",
+        bytecode_size: 0,
+        paused: null,
+        fle_address: null,
+        fle_has_executor_role: null,
+        operator_address: null,
+        operator_has_executor_role: null,
+        fle_reported_executor: null,
+      }),
     });
     expect(b.state).toBe("BLOCKED");
     expect(b.severity).toBe("critical");
@@ -1025,7 +1091,8 @@ describe("makeExecutorBreaker", () => {
       executorHealth: probe({
         status: "wrong_contract",
         paused: null,
-        access_control_admin: null,
+        fle_has_executor_role: null,
+        operator_has_executor_role: null,
         error: "paused() reverted",
       }),
     });

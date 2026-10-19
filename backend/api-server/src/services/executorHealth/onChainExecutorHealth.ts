@@ -5,31 +5,45 @@
  * breaker (C-15a) with a real, reusable read-only probe.
  *
  * What it reads
- *   1. eth_getCode(EXECUTOR_1)                → does bytecode exist at all?
- *   2. paused()               (0x5c975abb)    → PausableUpgradeable state.
- *   3. getRoleAdmin(EXECUTOR_ROLE) (0x248a9ca3) → AccessControl wiring.
+ *   1. eth_getCode(EXECUTOR_<chain>)            → does bytecode exist at all?
+ *   2. paused()                 (0x5c975abb)    → PausableUpgradeable state.
+ *   3. hasRole(EXECUTOR_ROLE, FLE) (0x91d14854) → is the FlashLoanExecutor proxy
+ *      actually armed on the ArbitrageExecutor? This is the gate that decides
+ *      whether `onlyExecutor` lets the live path through.
+ *   4. arbitrageExecutor()      (0xb7525248) on the FLE → does the configured
+ *      FLE point at THIS ArbitrageExecutor? A role granted on the wrong AE is
+ *      worth nothing.
+ *   5. hasRole(EXECUTOR_ROLE, operator) → second documented grantee. The
+ *      operator EOA has no live env carrying its address, so when neither
+ *      SIGNER_ADDRESS nor EXECUTION_SIGNER_ADDRESS is set this answer is
+ *      unknowable and the probe caps at `identity_not_configured`.
  *
- * Why getRoleAdmin and not owner()
+ * Why hasRole and not getRoleAdmin or owner()
+ *   `getRoleAdmin(EXECUTOR_ROLE)` answers "who may grant the role", not "who
+ *   holds it" — it made the probe PASS on an executor that was not armed.
+ *   The contract gates execution with `hasRole(EXECUTOR_ROLE, msg.sender)`
+ *   (contracts/src/ArbitrageExecutor.sol:212-214; `onlyExecutor` at :260 and
+ *   :313), so that is what is probed. `owner()` is not used at all:
  *   ArbitrageExecutor inherits AccessControlUpgradeable + PausableUpgradeable
- *   (contracts/src/ArbitrageExecutor.sol:117-121) — it is NOT Ownable, so
- *   owner() reverts on the real contract. Probing owner() would have made the
- *   positive control fail on a healthy executor and is therefore not used.
- *   getRoleAdmin(EXECUTOR_ROLE) proves the AccessControl surface is present;
- *   the returned admin role is surfaced as-is (DEFAULT_ADMIN_ROLE is the
- *   documented default, custom hierarchies are not called wrong).
+ *   (:117-121) and is NOT Ownable, so owner() reverts on the real contract.
  *
  * Why direct JSON-RPC instead of an SDK
  *   Same reason as services/tokenValidation/onChainTruth.ts: the selectors are
  *   protocol-level constants and node fetch is enough. No new dependency.
  *
  * R8 fail-honest mapping (consumed by routes/risk-circuit-breakers.ts)
- *   - transport/HTTP failure                → rpc_unavailable  → UNKNOWN
- *   - address with no bytecode (EOA/empty)  → no_code         → BLOCKED
- *   - bytecode but Pausable/AC surface gone → wrong_contract  → BLOCKED
- *   - paused() == true                      → paused          → PAUSED
- *   - bytecode + not paused + AC surface    → healthy         → PASS
+ *   - transport/HTTP failure                   → rpc_unavailable         → UNKNOWN
+ *   - address with no bytecode (EOA/empty)     → no_code                 → BLOCKED
+ *   - bytecode but Pausable/AC surface gone    → wrong_contract          → BLOCKED
+ *   - paused() == true                         → paused                  → PAUSED
+ *   - FLE holds no EXECUTOR_ROLE               → not_armed               → BLOCKED
+ *   - operator holds no EXECUTOR_ROLE          → operator_not_armed      → BLOCKED
+ *   - FLE points at another AE                 → wiring_mismatch         → BLOCKED
+ *   - FLE address or operator address unknown  → identity_not_configured → UNKNOWN
+ *   - bytecode + not paused + both roles held  → healthy                 → PASS
  *   A failed probe NEVER yields `healthy`. A revert is deterministic evidence
- *   about the contract; a transport failure is not evidence of absence.
+ *   about the contract; a transport failure is not evidence of absence, and an
+ *   unidentified grantee is not a role holder.
  *
  * Secrets: the configured RPC URL is never echoed — only its hostname — and
  * the executor address is available on the raw result for logs but MUST NOT
@@ -37,13 +51,17 @@
  */
 
 export const PAUSED_SELECTOR = "0x5c975abb";
-export const GET_ROLE_ADMIN_SELECTOR = "0x248a9ca3";
+/** hasRole(bytes32,address) — the gate `onlyExecutor` applies to msg.sender. */
+export const HAS_ROLE_SELECTOR = "0x91d14854";
+/** arbitrageExecutor() — the FLE's pointer back to the ArbitrageExecutor. */
+export const ARBITRAGE_EXECUTOR_SELECTOR = "0xb7525248";
 /** keccak256("EXECUTOR_ROLE") — same constant as scripts/post-deploy-sepolia.sh:103. */
 export const EXECUTOR_ROLE_HASH =
   "0xd8aa0f3194971a2a116679f7c2090f6939c8d4e01a2a8d7e41d55e5351469e63";
 
 const DEFAULT_TIMEOUT_MS = 2500;
 const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
 export type ExecutorProbeStatus =
   | "healthy"
@@ -52,7 +70,11 @@ export type ExecutorProbeStatus =
   | "wrong_contract"
   | "rpc_unavailable"
   | "invalid_address"
-  | "not_configured";
+  | "not_configured"
+  | "identity_not_configured"
+  | "not_armed"
+  | "operator_not_armed"
+  | "wiring_mismatch";
 
 export interface ExecutorHealthProbe {
   /** True once a JSON-RPC endpoint answered at least eth_getCode. */
@@ -65,8 +87,16 @@ export interface ExecutorHealthProbe {
   rpc_host: string | null;
   bytecode_size: number | null;
   paused: boolean | null;
-  /** Admin role returned for EXECUTOR_ROLE, 32-byte hex; null when unread. */
-  access_control_admin: string | null;
+  /** Configured FlashLoanExecutor proxy (FLASHLOAN_EXECUTOR_<chain>). */
+  fle_address: string | null;
+  /** hasRole(EXECUTOR_ROLE, fle_address) on the AE; null when unread. */
+  fle_has_executor_role: boolean | null;
+  /** Configured operator EOA (SIGNER_ADDRESS | EXECUTION_SIGNER_ADDRESS). */
+  operator_address: string | null;
+  /** hasRole(EXECUTOR_ROLE, operator_address) on the AE; null when unknown. */
+  operator_has_executor_role: boolean | null;
+  /** What the FLE's arbitrageExecutor() returned; null when unread. */
+  fle_reported_executor: string | null;
   latency_ms: number | null;
   error: string | null;
   checked_at: string;
@@ -117,7 +147,11 @@ function emptyProbe(
     rpc_host: null,
     bytecode_size: null,
     paused: null,
-    access_control_admin: null,
+    fle_address: null,
+    fle_has_executor_role: null,
+    operator_address: null,
+    operator_has_executor_role: null,
+    fle_reported_executor: null,
     latency_ms: null,
     error,
     checked_at: new Date().toISOString(),
@@ -199,6 +233,26 @@ function decodeBoolWord(hex: string): boolean | null {
   return null;
 }
 
+/** Decode a 32-byte ABI word into a 20-byte address (zero → null). */
+function decodeAddressWord(hex: string): string | null {
+  if (!isHexData(hex) || hex.length !== 66) return null;
+  const addr = `0x${hex.slice(26).toLowerCase()}`;
+  return addr === ZERO_ADDRESS ? null : addr;
+}
+
+/** Left-pad an address to a 32-byte ABI word (without the 0x prefix). */
+function addressWord(address: string): string {
+  return address.slice(2).toLowerCase().padStart(64, "0");
+}
+
+/** A configured address, or null when unset/malformed/zero (fail-closed). */
+function readAddress(value: string | undefined): string | null {
+  const raw = (value ?? "").trim();
+  if (!ADDRESS_RE.test(raw)) return null;
+  const addr = raw.toLowerCase();
+  return addr === ZERO_ADDRESS ? null : addr;
+}
+
 export async function probeExecutorHealth(opts: {
   chainId: number;
   env?: NodeJS.ProcessEnv;
@@ -210,12 +264,13 @@ export async function probeExecutorHealth(opts: {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const chainId = opts.chainId;
 
-  const address = (env["EXECUTOR_1"] ?? "").trim();
+  const aeKey = `EXECUTOR_${chainId}`;
+  const address = (env[aeKey] ?? "").trim();
   if (address.length === 0) {
-    return emptyProbe("not_configured", chainId, "EXECUTOR_1 missing");
+    return emptyProbe("not_configured", chainId, `${aeKey} missing`);
   }
-  if (!ADDRESS_RE.test(address)) {
-    return emptyProbe("invalid_address", chainId, "EXECUTOR_1 is not a 20-byte hex address", {
+  if (!ADDRESS_RE.test(address) || address.toLowerCase() === ZERO_ADDRESS) {
+    return emptyProbe("invalid_address", chainId, `${aeKey} is not a 20-byte non-zero hex address`, {
       address,
     });
   }
@@ -255,41 +310,30 @@ export async function probeExecutorHealth(opts: {
       ...base,
       bytecode_size: 0,
       paused: null,
-      access_control_admin: null,
+      fle_address: null,
+      fle_has_executor_role: null,
+      operator_address: null,
+      operator_has_executor_role: null,
+      fle_reported_executor: null,
       latency_ms: Date.now() - started,
       error: null,
       checked_at: new Date().toISOString(),
     };
   }
 
-  // 2) Pausable + AccessControl surfaces, in parallel.
-  const [pausedOutcome, roleOutcome] = await Promise.all([
-    rpcCall(
-      rpcUrl,
-      {
-        jsonrpc: "2.0",
-        id: 2,
-        method: "eth_call",
-        params: [{ to: address, data: PAUSED_SELECTOR }, "latest"],
-      },
-      fetchImpl,
-      timeoutMs,
-    ),
-    rpcCall(
-      rpcUrl,
-      {
-        jsonrpc: "2.0",
-        id: 3,
-        method: "eth_call",
-        params: [{ to: address, data: `${GET_ROLE_ADMIN_SELECTOR}${EXECUTOR_ROLE_HASH.slice(2)}` }, "latest"],
-      },
-      fetchImpl,
-      timeoutMs,
-    ),
-  ]);
-
-  const latency = Date.now() - started;
-
+  // 2) Pausable surface — a revert means this is not the executor contract.
+  const pausedOutcome = await rpcCall(
+    rpcUrl,
+    {
+      jsonrpc: "2.0",
+      id: 2,
+      method: "eth_call",
+      params: [{ to: address, data: PAUSED_SELECTOR }, "latest"],
+    },
+    fetchImpl,
+    timeoutMs,
+  );
+  const latencyAfterPaused = Date.now() - started;
   if (pausedOutcome.kind !== "ok") {
     const reverted = isRevert(pausedOutcome);
     return {
@@ -299,15 +343,18 @@ export async function probeExecutorHealth(opts: {
       ...base,
       bytecode_size: bytecodeSize,
       paused: null,
-      access_control_admin: null,
-      latency_ms: latency,
+      fle_address: null,
+      fle_has_executor_role: null,
+      operator_address: null,
+      operator_has_executor_role: null,
+      fle_reported_executor: null,
+      latency_ms: latencyAfterPaused,
       error: reverted
         ? "paused() reverted — contract does not expose PausableUpgradeable"
         : `paused() probe failed: ${pausedOutcome.kind === "transport" ? pausedOutcome.message : "rpc_error"}`,
       checked_at: new Date().toISOString(),
     };
   }
-
   const paused = decodeBoolWord(pausedOutcome.result);
   if (paused === null) {
     return {
@@ -317,49 +364,218 @@ export async function probeExecutorHealth(opts: {
       ...base,
       bytecode_size: bytecodeSize,
       paused: null,
-      access_control_admin: null,
-      latency_ms: latency,
+      fle_address: null,
+      fle_has_executor_role: null,
+      operator_address: null,
+      operator_has_executor_role: null,
+      fle_reported_executor: null,
+      latency_ms: latencyAfterPaused,
       error: "paused() returned a non-boolean word",
       checked_at: new Date().toISOString(),
     };
   }
 
-  // AccessControl surface: an execution revert means "not this contract"; a
-  // transport failure means "we could not tell" and must not be called wrong.
-  let accessControlAdmin: string | null = null;
-  if (roleOutcome.kind === "ok" && isHexData(roleOutcome.result) && roleOutcome.result.length === 66) {
-    accessControlAdmin = roleOutcome.result;
-  } else if (roleOutcome.kind !== "ok" && !isRevert(roleOutcome)) {
+  // 3) Identities. The FLE proxy is the caller `onlyExecutor` sees on the live
+  // path; the operator EOA is the second documented grantee. A missing FLE
+  // leaves the gate unanswerable: UNKNOWN, never PASS.
+  const fleKey = `FLASHLOAN_EXECUTOR_${chainId}`;
+  const fle = readAddress(env[fleKey]);
+  const operatorRaw = (env["SIGNER_ADDRESS"] ?? "").trim().length
+    ? (env["SIGNER_ADDRESS"] ?? "").trim()
+    : (env["EXECUTION_SIGNER_ADDRESS"] ?? "").trim();
+  const operatorKey = (env["SIGNER_ADDRESS"] ?? "").trim().length ? "SIGNER_ADDRESS" : "EXECUTION_SIGNER_ADDRESS";
+  const operator = readAddress(operatorRaw);
+
+  const identityFields = {
+    paused,
+    fle_address: fle,
+    fle_has_executor_role: null as boolean | null,
+    operator_address: operator,
+    operator_has_executor_role: null as boolean | null,
+    fle_reported_executor: null as string | null,
+  };
+
+  if (fle === null) {
+    const reason = (env[fleKey] ?? "").trim().length
+      ? `${fleKey} is not a 20-byte non-zero hex address`
+      : `${fleKey} missing`;
     return {
       ran: true,
-      status: "rpc_unavailable",
+      status: "identity_not_configured",
       chain_id: chainId,
       ...base,
+      ...identityFields,
       bytecode_size: bytecodeSize,
-      paused,
-      access_control_admin: null,
-      latency_ms: latency,
-      error: `getRoleAdmin() probe failed: ${roleOutcome.kind === "transport" ? roleOutcome.message : "rpc_error"}`,
+      latency_ms: Date.now() - started,
+      error: `${reason} — cannot prove the executor is armed without the FLE identity`,
       checked_at: new Date().toISOString(),
     };
   }
 
-  const status: ExecutorProbeStatus =
-    accessControlAdmin === null ? "wrong_contract" : paused ? "paused" : "healthy";
+  const roleCall = (grantee: string): Promise<RpcOutcome> =>
+    rpcCall(
+      rpcUrl,
+      {
+        jsonrpc: "2.0",
+        id: 3,
+        method: "eth_call",
+        params: [
+          {
+            to: address,
+            data: `${HAS_ROLE_SELECTOR}${EXECUTOR_ROLE_HASH.slice(2)}${addressWord(grantee)}`,
+          },
+          "latest",
+        ],
+      },
+      fetchImpl,
+      timeoutMs,
+    );
+
+  // 4) Roles + wiring, in parallel.
+  const [fleRoleOutcome, wiringOutcome, operatorRoleOutcome] = await Promise.all([
+    roleCall(fle),
+    rpcCall(
+      rpcUrl,
+      {
+        jsonrpc: "2.0",
+        id: 4,
+        method: "eth_call",
+        params: [{ to: fle, data: ARBITRAGE_EXECUTOR_SELECTOR }, "latest"],
+      },
+      fetchImpl,
+      timeoutMs,
+    ),
+    operator ? roleCall(operator) : Promise.resolve<RpcOutcome | null>(null),
+  ]);
+  const latency = Date.now() - started;
+
+  if (fleRoleOutcome.kind !== "ok") {
+    const reverted = isRevert(fleRoleOutcome);
+    return {
+      ran: true,
+      status: reverted ? "wrong_contract" : "rpc_unavailable",
+      chain_id: chainId,
+      ...base,
+      ...identityFields,
+      bytecode_size: bytecodeSize,
+      latency_ms: latency,
+      error: reverted
+        ? "hasRole(EXECUTOR_ROLE, FLE) reverted — contract does not expose AccessControl"
+        : `hasRole(EXECUTOR_ROLE, FLE) probe failed: ${fleRoleOutcome.kind === "transport" ? fleRoleOutcome.message : "rpc_error"}`,
+      checked_at: new Date().toISOString(),
+    };
+  }
+  const fleHasRole = decodeBoolWord(fleRoleOutcome.result);
+  if (fleHasRole === null) {
+    return {
+      ran: true,
+      status: "wrong_contract",
+      chain_id: chainId,
+      ...base,
+      ...identityFields,
+      bytecode_size: bytecodeSize,
+      latency_ms: latency,
+      error: "hasRole(EXECUTOR_ROLE, FLE) returned a non-boolean word",
+      checked_at: new Date().toISOString(),
+    };
+  }
+
+  // Wiring: the FLE must point back at THIS ArbitrageExecutor. A role granted
+  // on an AE the FLE does not call is worth nothing.
+  if (wiringOutcome.kind !== "ok") {
+    const reverted = isRevert(wiringOutcome);
+    return {
+      ran: true,
+      status: reverted ? "wiring_mismatch" : "rpc_unavailable",
+      chain_id: chainId,
+      ...base,
+      ...identityFields,
+      fle_has_executor_role: fleHasRole,
+      bytecode_size: bytecodeSize,
+      latency_ms: latency,
+      error: reverted
+        ? `arbitrageExecutor() reverted on ${fleKey} — not a FlashLoanExecutor proxy`
+        : `arbitrageExecutor() probe failed: ${wiringOutcome.kind === "transport" ? wiringOutcome.message : "rpc_error"}`,
+      checked_at: new Date().toISOString(),
+    };
+  }
+  const fleReported = decodeAddressWord(wiringOutcome.result);
+  const wiringOk = fleReported !== null && fleReported === address.toLowerCase();
+
+  // Operator role is the second requirement; without a configured identity the
+  // honest answer is "unknown", never PASS.
+  let operatorHasRole: boolean | null = null;
+  if (operator && operatorRoleOutcome) {
+    if (operatorRoleOutcome.kind !== "ok") {
+      return {
+        ran: true,
+        status: "rpc_unavailable",
+        chain_id: chainId,
+        ...base,
+        ...identityFields,
+        fle_has_executor_role: fleHasRole,
+        fle_reported_executor: fleReported,
+        bytecode_size: bytecodeSize,
+        latency_ms: latency,
+        error: `hasRole(EXECUTOR_ROLE, operator) probe failed: ${operatorRoleOutcome.kind === "transport" ? operatorRoleOutcome.message : "rpc_error"}`,
+        checked_at: new Date().toISOString(),
+      };
+    }
+    operatorHasRole = decodeBoolWord(operatorRoleOutcome.result);
+    if (operatorHasRole === null) {
+      return {
+        ran: true,
+        status: "rpc_unavailable",
+        chain_id: chainId,
+        ...base,
+        ...identityFields,
+        fle_has_executor_role: fleHasRole,
+        fle_reported_executor: fleReported,
+        bytecode_size: bytecodeSize,
+        latency_ms: latency,
+        error: "hasRole(EXECUTOR_ROLE, operator) returned a non-boolean word",
+        checked_at: new Date().toISOString(),
+      };
+    }
+  }
+
+  const status: ExecutorProbeStatus = paused
+    ? "paused"
+    : !wiringOk
+      ? "wiring_mismatch"
+      : !fleHasRole
+        ? "not_armed"
+        : operator === null
+          ? "identity_not_configured"
+          : operatorHasRole === false
+            ? "operator_not_armed"
+            : "healthy";
+
+  const error =
+    status === "wiring_mismatch"
+      ? `executor_wiring_mismatch: ${fleKey}.arbitrageExecutor()=${
+          fleReported ?? "0x0"
+        } != ${aeKey}=${address.toLowerCase()}`
+      : status === "not_armed"
+        ? `missing_onchain_role:flash_executor_to_arbitrage_executor:contract=${address.toLowerCase()}:grantee=${fle}`
+        : status === "identity_not_configured"
+          ? `${operatorKey} missing — the operator grant cannot be proven`
+          : status === "operator_not_armed"
+            ? `missing_onchain_role:caller_to_flash_executor:contract=${address.toLowerCase()}:grantee=${operator}`
+            : null;
 
   return {
     ran: true,
     status,
     chain_id: chainId,
     ...base,
+    ...identityFields,
+    fle_has_executor_role: fleHasRole,
+    operator_has_executor_role: operatorHasRole,
+    fle_reported_executor: fleReported,
     bytecode_size: bytecodeSize,
-    paused,
-    access_control_admin: accessControlAdmin,
     latency_ms: latency,
-    error:
-      accessControlAdmin === null
-        ? "getRoleAdmin(EXECUTOR_ROLE) reverted — contract does not expose AccessControl"
-        : null,
+    error,
     checked_at: new Date().toISOString(),
   };
 }
