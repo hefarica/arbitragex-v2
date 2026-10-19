@@ -222,19 +222,59 @@ pub struct SequenceContext {
     successful_calls: u64,
 }
 
+/// EVM block env for the paper path, taken from the pinned block header.
+///
+/// `timestamp` is the load-bearing field: with the default 0, any contract
+/// that subtracts `block.timestamp - lastUpdate` — Aave's
+/// `ReserveLogic.updateState` does exactly that on every reserve touch —
+/// underflows and reverts `Panic(0x11)` before a single swap runs. That made
+/// 100 % of the variance-benchmark population revert, amount- and
+/// route-invariant. The other fields track the header so the env is not a
+/// "genesis" context either, EXCEPT `basefee`: the paper path forwards an
+/// explicit `gas_price` and revm rejects a tx whose gas price is below the
+/// base fee, so the base fee is deliberately left at its default.
+fn block_env_from_header(
+    header: &ethers::types::Block<ethers::types::TxHash>,
+    block_number: u64,
+) -> BlockEnv {
+    let mut block = BlockEnv {
+        number: U256::from(block_number),
+        ..BlockEnv::default()
+    };
+    block.timestamp = U256::from(header.timestamp.as_u64());
+    if header.gas_limit <= ethers::types::U256::from(u64::MAX) {
+        block.gas_limit = header.gas_limit.as_u64();
+    }
+    if let Some(a) = header.author {
+        block.beneficiary = Address::from_slice(a.as_bytes());
+    }
+    if let Some(m) = header.mix_hash {
+        block.prevrandao = Some(revm::primitives::B256::from(m.0));
+    }
+    block
+}
+
 impl SequenceContext {
     /// Build a fresh context around a freshly-constructed `LazyDb`. The
     /// `chain_id` and `block_number` define the REVM environment that
     /// every step shares — they are NEVER mutated by `call()`.
     pub fn new(lazy_db: LazyDb, chain_id: u64, block_number: u64) -> Self {
+        // Block CONTEXT must match the forked state. `BlockEnv::default()` has
+        // timestamp 0; over fork state at block B that made Aave's reserve
+        // update compute `uint256(block.timestamp) - uint256(lastUpdateTimestamp)`
+        // → underflow → `Panic(0x11)` (0x4e487b71…0011) on EVERY route that
+        // touched a reserve, before any swap. See `block_env_from_header`.
+        let block = match lazy_db.pinned_header() {
+            Ok(Some(header)) => block_env_from_header(&header, block_number),
+            _ => BlockEnv {
+                number: U256::from(block_number),
+                ..BlockEnv::default()
+            },
+        };
         let cache_db = CacheDB::new(lazy_db);
         let mut cfg = CfgEnv::default();
         cfg.chain_id = chain_id;
         cfg.spec = SpecId::OSAKA; // SIM-11 note (2026-09-24): paper path pins OSAKA regardless of the forked block's actual hardfork; verified path derives from header;
-        let block = BlockEnv {
-            number: U256::from(block_number),
-            ..BlockEnv::default()
-        };
         let evm = Context::mainnet()
             .with_db(cache_db)
             .with_block(block)
@@ -1316,5 +1356,34 @@ mod tests {
             reason: "x".into(),
         };
         assert!(!h.is_success());
+    }
+
+    /// The paper `BlockEnv` must carry the pinned header's timestamp/context,
+    /// not the default 0 — a zero timestamp makes Aave's `updateState`
+    /// underflow (`Panic(0x11)`) on every reserve-touching route.
+    #[test]
+    fn block_env_from_header_is_not_a_genesis_context() {
+        let header = ethers::types::Block::<ethers::types::TxHash> {
+            timestamp: ethers::types::U256::from(1_792_410_893u64),
+            gas_limit: ethers::types::U256::from(30_000_000u64),
+            author: Some(ethers::types::H160::repeat_byte(0x11)),
+            mix_hash: Some(ethers::types::H256::repeat_byte(0x22)),
+            ..Default::default()
+        };
+        let env = block_env_from_header(&header, 26_226_569);
+
+        assert_eq!(env.number, U256::from(26_226_569u64));
+        assert_eq!(env.timestamp, U256::from(1_792_410_893u64));
+        assert_ne!(
+            env.timestamp,
+            U256::ZERO,
+            "timestamp 0 is the Aave `updateState` underflow, not a valid block"
+        );
+        assert_eq!(env.gas_limit, 30_000_000);
+        assert_eq!(env.beneficiary, Address::repeat_byte(0x11));
+        assert_eq!(
+            env.prevrandao,
+            Some(revm::primitives::B256::repeat_byte(0x22))
+        );
     }
 }
