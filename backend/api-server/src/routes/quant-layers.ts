@@ -24,10 +24,14 @@ import {
   mergeFair,
   type FairRef,
   type LegInput,
+  type LedgerCosts,
   type PnlView,
   type RouteView,
 } from "../quant/layers.js";
-import { getTradingConfigForChain } from "../simulation/tradingConfigSnapshot.js";
+import {
+  getTradingConfigForChain,
+  type TradingConfigSnapshot,
+} from "../simulation/tradingConfigSnapshot.js";
 
 interface Logger {
   info?: (o: unknown, m?: string) => void;
@@ -72,6 +76,13 @@ interface Row {
   principal_usd: number | string | null;
   gross_usd: number | string | null;
   net_usd: number | string | null;
+  /** C-16: ledger de costes del productor (la fila manda). */
+  gas_usd: number | string | null;
+  flash_fee_usd: number | string | null;
+  bribe_usd: number | string | null;
+  other_costs_usd: number | string | null;
+  /** Bloque de cotización: existe en el ledger, la query lo tiraba. */
+  quote_block: number | string | null;
   detected_at: string;
 }
 
@@ -105,6 +116,11 @@ const REPRESENTATIVE_QUERY = `
       (o.economics->>'amount_in_usd')::float  AS principal_usd,
       (o.economics->>'gross_profit_usd')::float AS gross_usd,
       (o.economics->>'net_profit_usd')::float  AS net_usd,
+      (o.economics->>'gas_usd')::float         AS gas_usd,
+      (o.economics->>'flash_fee_usd')::float   AS flash_fee_usd,
+      (o.economics->>'bribe_usd')::float       AS bribe_usd,
+      (o.economics->>'other_costs_usd')::float AS other_costs_usd,
+      (o.economics->>'quote_block')::bigint    AS quote_block,
       to_char(o.detected_at, 'HH24:MI:SS')     AS detected_at
     FROM opportunities o
     WHERE o.detected_at >= NOW() - ($1::int * INTERVAL '1 minute')
@@ -130,6 +146,40 @@ function human(wei: string, decimals: number | undefined): number | null {
   if (!Number.isFinite(n)) return null;
   const d = Number.isInteger(decimals) ? (decimals as number) : 18;
   return n / 10 ** d;
+}
+
+/**
+ * C-16 — el ledger de costes de la fila, tal cual. Si la fila no trae ninguno de
+ * los cuatro (pre-migración), null ⇒ la capa lo declara `config_ladder`; si
+ * trae algunos pero no todos, se pasa igual y `buildPnl` falla cerrado
+ * (`measured_incomplete`). Nunca se completa con la constante.
+ */
+function rowCosts(row: Row): LedgerCosts | null {
+  const gasUsd = num(row.gas_usd);
+  const flashUsd = num(row.flash_fee_usd);
+  const tipUsd = num(row.bribe_usd);
+  const otherCostsUsd = num(row.other_costs_usd);
+  if (gasUsd == null && flashUsd == null && tipUsd == null && otherCostsUsd == null) return null;
+  return { gasUsd, flashUsd, tipUsd, otherCostsUsd };
+}
+
+/**
+ * C-16 — `resolve_gas_price_gwei(0.0, 0.0)` del productor, replicado en TS para
+ * PUBLICAR los supuestos del ledger (no se usa para calcular el coste: el coste
+ * es el `gas_usd` de la fila). Con `DynamicBasefeePlusTip` y sin señal viva:
+ * 0 + max(1, 0) = 1 gwei.
+ */
+function resolveGasGwei(snap: TradingConfigSnapshot): number {
+  switch (snap.gas_price_strategy) {
+    case "fixed":
+      return snap.fixed_gas_price_gwei ?? 0;
+    case "dynamic_basefee_plus_tip":
+      return 0 + Math.max(1, 0);
+    case "percentile_75":
+      return 0;
+    default:
+      return 0;
+  }
 }
 
 export function mountQuantLayers(
@@ -208,11 +258,13 @@ export function mountQuantLayers(
       );
 
       const priceUsdByToken = new Map<string, number>();
+      const snapshots = new Map<number, TradingConfigSnapshot>();
       let oracleChains = 0;
       for (const chainId of new Set(parsed.map((p) => (Number.isFinite(p.row.chain_id) ? p.row.chain_id : 1)))) {
         const snap = await getTradingConfigForChain(deps.redis ?? null, chainId);
         if (snap == null) continue;
         oracleChains += 1;
+        snapshots.set(chainId, snap);
         const symbols = await loadTokenSymbols(pool);
         for (const [address, symbol] of symbols) {
           const px = snap.token_prices_usd[symbol];
@@ -232,17 +284,144 @@ export function mountQuantLayers(
       for (const p of parsed) {
         const legs = buildLegs(p.legs as Array<LegInput>, fair, DEFAULT_QUANT_CONFIG);
         for (const [k, v] of Object.entries(fairBasisCounts(legs))) basisTotals[k] = (basisTotals[k] ?? 0) + v;
+        const quoteBlock = num(p.row.quote_block);
         const route = buildRoutes(p.row.route_group_key, legs, DEFAULT_QUANT_CONFIG, {
           maxBlockAgeBlocks: null,
+          quoteBlock: quoteBlock != null ? Math.trunc(quoteBlock) : null,
         });
         const principalUsd = num(p.row.principal_usd);
         const grossUsd = num(p.row.gross_usd);
         const finalUsd = principalUsd != null && grossUsd != null ? principalUsd + grossUsd : null;
-        const pnl = buildPnl(route, { finalUsd, principalUsd }, DEFAULT_QUANT_CONFIG);
+        const pnl = buildPnl(
+          route,
+          {
+            finalUsd,
+            principalUsd,
+            costs: rowCosts(p.row),
+            measuredNetUsd: num(p.row.net_usd),
+          },
+          DEFAULT_QUANT_CONFIG,
+        );
         routes.push(route);
         pnls.push(pnl);
       }
       const dashboard = buildDashboard(routes, pnls, topN);
+
+      // ── 4. C-16 · reconciliación con denominador explícito ─────────────────
+      // La capa deja de ser segunda contabilidad sólo si CADA campo cuadra con
+      // el ledger de la fila: net, gross y los cuatro componentes. Δmax ≤ 0.005.
+      const pnlByKey = new Map(pnls.map((p) => [p.routeKey, p]));
+      const excluded: Record<string, number> = {};
+      const reconRows: Array<{
+        route_group_key: string;
+        net_delta_usd: number | null;
+        gross_delta_usd: number | null;
+        gas_delta_usd: number | null;
+        flash_delta_usd: number | null;
+        bribe_delta_usd: number | null;
+        other_delta_usd: number | null;
+      }> = [];
+      let nPresent = 0;
+      let netOk = 0;
+      let grossOk = 0;
+      let gasOk = 0;
+      let flashOk = 0;
+      let bribeOk = 0;
+      let otherOk = 0;
+      let maxNetDelta = 0;
+      let maxGrossDelta = 0;
+      let maxComponentDelta = 0;
+      for (const p of parsed) {
+        const costs = rowCosts(p.row);
+        const costsPresent =
+          costs != null &&
+          costs.gasUsd != null &&
+          costs.flashUsd != null &&
+          costs.tipUsd != null &&
+          costs.otherCostsUsd != null;
+        if (!costsPresent) {
+          excluded["cost_components_incomplete"] = (excluded["cost_components_incomplete"] ?? 0) + 1;
+          continue;
+        }
+        const pnl = pnlByKey.get(p.row.route_group_key);
+        const grossLedger = num(p.row.gross_usd);
+        const netLedger = num(p.row.net_usd);
+        if (pnl == null || pnl.netUsd == null || pnl.grossUsd == null || grossLedger == null || netLedger == null) {
+          excluded["principal_or_gross_unmeasured"] = (excluded["principal_or_gross_unmeasured"] ?? 0) + 1;
+          continue;
+        }
+        nPresent += 1;
+        const netDelta = Math.abs(pnl.netUsd - netLedger);
+        const grossDelta = Math.abs(pnl.grossUsd - grossLedger);
+        const gasDelta = Math.abs((pnl.gasUsd as number) - (costs.gasUsd as number));
+        const flashDelta = Math.abs((pnl.flashUsd as number) - (costs.flashUsd as number));
+        const bribeDelta = Math.abs((pnl.tipUsd as number) - (costs.tipUsd as number));
+        const otherDelta = Math.abs((pnl.otherCostsUsd as number) - (costs.otherCostsUsd as number));
+        if (netDelta <= 0.005) netOk += 1;
+        if (grossDelta <= 0.005) grossOk += 1;
+        if (gasDelta <= 0.005) gasOk += 1;
+        if (flashDelta <= 0.005) flashOk += 1;
+        if (bribeDelta <= 0.005) bribeOk += 1;
+        if (otherDelta <= 0.005) otherOk += 1;
+        maxNetDelta = Math.max(maxNetDelta, netDelta);
+        maxGrossDelta = Math.max(maxGrossDelta, grossDelta);
+        maxComponentDelta = Math.max(maxComponentDelta, gasDelta, flashDelta, bribeDelta, otherDelta);
+        reconRows.push({
+          route_group_key: p.row.route_group_key,
+          net_delta_usd: netDelta,
+          gross_delta_usd: grossDelta,
+          gas_delta_usd: gasDelta,
+          flash_delta_usd: flashDelta,
+          bribe_delta_usd: bribeDelta,
+          other_delta_usd: otherDelta,
+        });
+      }
+      for (const nc of notComputed) {
+        excluded[nc.reason] = (excluded[nc.reason] ?? 0) + 1;
+      }
+      const reconciliation = {
+        window: "request" as const,
+        tolerance_usd: 0.005,
+        n_present: nPresent,
+        n_excluded: Object.values(excluded).reduce((a, b) => a + b, 0),
+        excluded_by_reason: excluded,
+        evidence: nPresent >= 10,
+        evidence_note:
+          nPresent >= 10
+            ? "N_present >= 10: el cuadre cuenta como evidencia."
+            : "N_present < 10: NO es evidencia — amplía la ventana antes de usarlo.",
+        net: { ok: netOk, n: nPresent, max_abs_delta_usd: maxNetDelta },
+        gross: { ok: grossOk, n: nPresent, max_abs_delta_usd: maxGrossDelta },
+        components: {
+          gas_usd: { ok: gasOk, n: nPresent },
+          flash_fee_usd: { ok: flashOk, n: nPresent },
+          bribe_usd: { ok: bribeOk, n: nPresent },
+          other_costs_usd: { ok: otherOk, n: nPresent },
+          max_abs_delta_usd: maxComponentDelta,
+        },
+        rows: reconRows,
+      };
+
+      // ── 5. C-16 · supuestos publicados del gas (ESTIMADO, no medido) ───────
+      const gasAssumptionsByChain = Array.from(snapshots.entries()).map(([chainId, snap]) => {
+        const units = snap.gas_estimate_units;
+        const gwei = resolveGasGwei(snap);
+        const nativeUsd = snap.base_token_price_usd;
+        const sample = parsed.find(
+          (p) => p.row.chain_id === chainId && num(p.row.gas_usd) != null,
+        );
+        const sampleGas = sample != null ? num(sample.row.gas_usd) : null;
+        const impliedNativeUsd =
+          sampleGas != null && units > 0 && gwei > 0 ? sampleGas / ((units * gwei * 1e9) / 1e18) : null;
+        return {
+          chain_id: chainId,
+          strategy: snap.gas_price_strategy,
+          units,
+          gwei,
+          native_usd: nativeUsd,
+          implied_native_usd: impliedNativeUsd,
+        };
+      });
 
       res.setHeader("Cache-Control", "private, no-cache, no-store");
       res.json({
@@ -261,6 +440,22 @@ export function mountQuantLayers(
           pnl: pnls,
           dashboard,
         },
+        reconciliation,
+        cost_provenance: {
+          gas_usd: "estimado_ledger",
+          flash_fee_usd: "estimado_kernel",
+          bribe_usd: "estimado_kernel",
+          other_costs_usd: "estimado_kernel",
+          note:
+            "Ningún componente es una inclusión on-chain: gas_usd es la estimación del ledger (units×gwei×native, sin receipt) y los otros tres son estimaciones del kernel.",
+        },
+        gas_assumptions: {
+          source:
+            "trading_config: gas_estimate_units × resolve_gas_price_gwei(0,0) × base_token_price_usd (misma fórmula que gas_cost_usd() del productor)",
+          by_chain: gasAssumptionsByChain,
+        },
+        out_of_band_count: pnls.filter((p) => p.verdict === "OUT_OF_BAND").length,
+        leg_value_jump_count: routes.filter((r) => r.status === "LEG_VALUE_JUMP").length,
         not_computed: notComputed.slice(0, 50),
         not_computed_count: notComputed.length,
         notes: [
@@ -269,8 +464,12 @@ export function mountQuantLayers(
           "QUANT-DEDUP-01: una fila por ruta (route_group_key), la de mejor net medido — las re-detecciones no inflan el embudo ni el Top.",
           "QUANT-SIZING-NULL-01: sizing_usd = null cuando no hay bound vinculante (no computado), nunca 0 disfrazado de tamaño.",
           "bound_usd = 0.5% × profundidad: en el wire no viaja la profundidad por pata, así que el bound queda 'no computado' y el sizing usa el principal medido.",
-          "QUANT-PNL-01: net_usd = gross MEDIDO − escalera (gas + flash + tip + haircut). La desviación contra la cadena fair se publica aparte (deviation_vs_fair_usd) y NO suma al coste: el impacto ya está dentro del gross medido, sumarla contaría la misma pérdida dos veces.",
-          "verdict: EJECUTAR ⇔ net_bps ≥ 200 (2%), MARGINAL ⇔ 0 < net_bps < 200.",
+          "QUANT-PNL-01: la desviación contra la cadena fair se publica aparte (deviation_vs_fair_usd) y NO suma al coste: el impacto ya está dentro del gross medido, sumarla contaría la misma pérdida dos veces.",
+          "C-16: los costes son los cuatro componentes del ledger de la fila (gas_usd + flash_fee_usd + bribe_usd + other_costs_usd), no la constante 6+4/hop. Si la fila no los trae, la capa falla cerrado (measured_incomplete) en vez de inventarlos.",
+          "C-16: ningún componente se llama «real». gas_usd es ESTIMADO por el ledger; flash/bribe/other son ESTIMADOS por el kernel. gas_assumptions publica units/gwei/native_usd usados por el productor.",
+          "C-16: OUT_OF_BAND = el principal medido cae fuera de la banda [minBoundUsd, capitalUsd×utilizationCap]. Es una bandera de política declarada, no un umbral de coste: se publican principal y gross, y NO se publica ningún bps.",
+          "C-16: LEG_VALUE_JUMP = |value_out(i) − value_in(i+1)| / value_in(i+1) > 1 bp. Σw y sizing se publican null; el salto de unidades se arregla aguas arriba, no se esconde en un bps.",
+          "verdict: EJECUTAR ⇔ net_bps ≥ 200 (2%), MARGINAL ⇔ 0 < net_bps < 200. RECHAZAR ⇔ coste > gross. OUT_OF_BAND no es un veredicto de viabilidad.",
         ],
       });
     } catch (err) {

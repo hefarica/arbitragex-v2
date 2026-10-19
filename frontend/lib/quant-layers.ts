@@ -25,9 +25,11 @@ export type QuantStatus =
   | "INSUFFICIENT_DEPTH"
   | "SLIPPAGE_OR_SIZE"
   | "NET_BELOW_TARGET"
+  | "LEG_VALUE_JUMP"
+  | "OUT_OF_BAND"
   | "QUOTE_INCOMPLETE";
 
-export type QuantVerdict = "EJECUTAR" | "MARGINAL" | "RECHAZAR" | "NO VIABLE";
+export type QuantVerdict = "EJECUTAR" | "MARGINAL" | "RECHAZAR" | "NO VIABLE" | "OUT_OF_BAND";
 
 export interface QuantConfig {
   slippageBps: number;
@@ -81,6 +83,9 @@ export interface QuantRoute {
   /** Rentabilidad TEÓRICA del ciclo: e^(−Σw) − 1, en %. */
   discoveryReturnPct: number | null;
   signal: boolean;
+  /** C-16: aristas de continuidad comprobadas y peor salto de valor medido. */
+  legsChecked: number;
+  maxValueJumpRatio: number | null;
   bindingBoundUsd: number | null;
   /** QUANT-SIZING-NULL-01: null = no computado (sin bound vinculante no hay tamaño defendible). */
   sizingUsd: number | null;
@@ -96,13 +101,18 @@ export interface QuantPnl {
   hops: number;
   status: QuantStatus;
   sizingUsd: number | null;
+  /** `measured` = amount_in_usd de la fila; `model` = sizing del modelo. */
+  principalSource: "measured" | "model" | null;
   finalUsd: number | null;
   grossUsd: number | null;
   grossBps: number | null;
   gasUsd: number | null;
   flashUsd: number | null;
   tipUsd: number | null;
+  /** Bribe/relay del ledger. */
+  otherCostsUsd: number | null;
   haircutUsd: number | null;
+  costBasis: "measured" | "measured_incomplete" | "config_ladder";
   /**
    * QUANT-PNL-01 — desviación de la cadena medida contra la cadena `fair` (≥ 0).
    * DIAGNÓSTICO: el impacto ya está dentro del gross medido, así que NO suma a
@@ -114,6 +124,9 @@ export interface QuantPnl {
   totalCostUsd: number | null;
   netUsd: number | null;
   netBps: number | null;
+  bandUsd: { minUsd: number; maxUsd: number };
+  inBand: boolean | null;
+  netDeltaUsd: number | null;
   verdict: QuantVerdict;
   whyNot: string | null;
 }
@@ -158,9 +171,53 @@ export interface QuantLayersResponse {
     pnl: QuantPnl[];
     dashboard: QuantDashboard;
   };
+  /** C-16 — cuadre con el ledger de cada fila (net, gross y los cuatro componentes). */
+  reconciliation: QuantReconciliation;
+  cost_provenance: Record<string, string>;
+  gas_assumptions: {
+    source: string;
+    by_chain: Array<{
+      chain_id: number;
+      strategy: string;
+      units: number;
+      gwei: number;
+      native_usd: number;
+      implied_native_usd: number | null;
+    }>;
+  };
+  out_of_band_count: number;
+  leg_value_jump_count: number;
   not_computed: QuantLayerNotComputed[];
   not_computed_count: number;
   notes: string[];
+}
+
+export interface QuantReconciliation {
+  window: "request";
+  tolerance_usd: number;
+  n_present: number;
+  n_excluded: number;
+  excluded_by_reason: Record<string, number>;
+  evidence: boolean;
+  evidence_note: string;
+  net: { ok: number; n: number; max_abs_delta_usd: number };
+  gross: { ok: number; n: number; max_abs_delta_usd: number };
+  components: {
+    gas_usd: { ok: number; n: number };
+    flash_fee_usd: { ok: number; n: number };
+    bribe_usd: { ok: number; n: number };
+    other_costs_usd: { ok: number; n: number };
+    max_abs_delta_usd: number;
+  };
+  rows: Array<{
+    route_group_key: string;
+    net_delta_usd: number | null;
+    gross_delta_usd: number | null;
+    gas_delta_usd: number | null;
+    flash_delta_usd: number | null;
+    bribe_delta_usd: number | null;
+    other_delta_usd: number | null;
+  }>;
 }
 
 /** El snapshot que viaja del Server Component al Client Component (R1). */
@@ -276,6 +333,8 @@ export function verdictVariant(v: QuantVerdict | string): BadgeProps["variant"] 
       return "warning";
     case "RECHAZAR":
       return "destructive";
+    case "OUT_OF_BAND":
+      return "secondary";
     default:
       return "secondary";
   }
@@ -292,7 +351,10 @@ export function statusVariant(s: QuantStatus | string): BadgeProps["variant"] {
     case "INSUFFICIENT_DEPTH":
     case "SLIPPAGE_OR_SIZE":
     case "NET_BELOW_TARGET":
+    case "OUT_OF_BAND":
       return "warning";
+    case "LEG_VALUE_JUMP":
+      return "destructive";
     case "QUOTE_INCOMPLETE":
       return "destructive";
     default:
