@@ -1583,6 +1583,7 @@ impl SizeOptimizer {
                         net_negative: true,
                         net_economics: own_capital.then(|| {
                             crate::net_bps_ranking::RouteNetEconomics::from_kernel(
+                                candidate.opportunity.chain_id,
                                 0.0,
                                 profit_usd,
                                 gas_cost,
@@ -1686,6 +1687,7 @@ impl SizeOptimizer {
                         net_negative: true,
                         net_economics: Some(
                             crate::net_bps_ranking::RouteNetEconomics::from_kernel(
+                                candidate.opportunity.chain_id,
                                 start_amount_usd,
                                 g,
                                 gas_cost,
@@ -1717,6 +1719,7 @@ impl SizeOptimizer {
             0.0
         };
         let net_economics = Some(crate::net_bps_ranking::RouteNetEconomics::from_kernel(
+            candidate.opportunity.chain_id,
             start_amount_usd,
             gross_usd,
             gas_cost,
@@ -2233,6 +2236,7 @@ impl SizeOptimizer {
                     estimated_net_profit_usd: net_usd,
                     net_negative: true,
                     net_economics: Some(crate::net_bps_ranking::RouteNetEconomics::from_kernel(
+                        candidate.opportunity.chain_id,
                         start_amount_usd,
                         gross_usd,
                         gas_cost,
@@ -2272,6 +2276,7 @@ impl SizeOptimizer {
                     estimated_net_profit_usd: net_usd,
                     net_negative: true,
                     net_economics: Some(crate::net_bps_ranking::RouteNetEconomics::from_kernel(
+                        candidate.opportunity.chain_id,
                         start_amount_usd,
                         gross_usd,
                         gas_cost,
@@ -2301,6 +2306,7 @@ impl SizeOptimizer {
         let flashloan_fee_usd = borrow_usd * financing_mode.fee_bps() / 10_000.0;
         let net_usd = gross_usd - gas_cost - ops_overhead - flashloan_fee_usd;
         let net_economics = Some(crate::net_bps_ranking::RouteNetEconomics::from_kernel(
+            candidate.opportunity.chain_id,
             start_amount_usd,
             gross_usd,
             gas_cost,
@@ -2862,6 +2868,7 @@ impl SizeOptimizer {
                     estimated_net_profit_usd: net_usd,
                     net_negative: true,
                     net_economics: Some(crate::net_bps_ranking::RouteNetEconomics::from_kernel(
+                        candidate.opportunity.chain_id,
                         start_amount_usd,
                         profit_usd,
                         gas_cost,
@@ -2928,6 +2935,7 @@ impl SizeOptimizer {
                     estimated_net_profit_usd: net_usd,
                     net_negative: true,
                     net_economics: Some(crate::net_bps_ranking::RouteNetEconomics::from_kernel(
+                        candidate.opportunity.chain_id,
                         start_amount_usd,
                         profit_usd,
                         gas_cost,
@@ -2979,6 +2987,7 @@ impl SizeOptimizer {
         let start_amount_usd =
             (clamped_to_i128(amount_in) as f64) / 10f64.powi(decimals as i32) * token_price_usd;
         let net_economics = Some(crate::net_bps_ranking::RouteNetEconomics::from_kernel(
+            candidate.opportunity.chain_id,
             start_amount_usd,
             gross_usd,
             gas_cost,
@@ -3300,6 +3309,7 @@ impl SizeOptimizer {
                             net_negative: true,
                             net_economics: Some(
                                 crate::net_bps_ranking::RouteNetEconomics::from_kernel(
+                                    candidate.opportunity.chain_id,
                                     start_amount_usd,
                                     computed_usd,
                                     gas_cost,
@@ -3351,6 +3361,7 @@ impl SizeOptimizer {
         let start_amount_usd =
             (clamped_to_i128(amount_in) as f64) / 10f64.powi(decimals as i32) * token_price_usd;
         let net_economics = Some(crate::net_bps_ranking::RouteNetEconomics::from_kernel(
+            candidate.opportunity.chain_id,
             start_amount_usd,
             gross_usd,
             gas_cost,

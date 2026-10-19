@@ -697,3 +697,79 @@ describe("SIM-COST-NONNEGATIVE-01 — a cost component is never a credit", () =>
     }
   });
 });
+
+// ── C-06 · ONE COST TRUTH (2026-10-19) ──────────────────────────────────────
+//
+// Live anchor: opportunity 32c3eba2-585e-4f79-9577-e8142afa777e
+// (2026-10-18T20:49Z, 1 USDC, chain 1). Before C-06 the kernel published
+// gas 0.58596035 + ops 0.01 = 0.59596035 and the simulator published
+// 1.1052578581009687 by adding components the kernel never charged:
+// lp 0.003 + slippage 0.005 + failure 0.0004 + flash 0.0009 + relay 0.50
+// (delta 0.50930, itemized). With the kernel's closed object present, the
+// simulator must publish THAT ladder — no component in one and not the other.
+
+describe("C-06 — the kernel's closed economics is the one cost truth", () => {
+  const kernel = {
+    computation_status: "computed",
+    gas_usd: 0.5859603499999999,
+    flash_fee_usd: 0,
+    bribe_usd: 0.5,
+    other_costs_usd: 0.01,
+    total_cost_usd: 1.09596035,
+    net_profit_usd: -1.0959603500116077,
+  } as const;
+
+  function usdcRow(over: Partial<SimulatorRow> = {}): SimulatorRow {
+    return baseRow({
+      amount_in_wei: "1000000",
+      token_in: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      token_in_symbol: "USDC",
+      token_in_decimals: 6,
+      expected_profit_usd: -1.1607838339398091e-11,
+      economics: kernel,
+      ...over,
+    });
+  }
+
+  it("publishes the kernel components part by part (no second ladder)", () => {
+    const r = forwardSimulate(usdcRow(), baseCfg());
+    expect(r).not.toBeNull();
+    const cb = r!.cost_breakdown;
+
+    expect(cb.gas_usd).toBeCloseTo(kernel.gas_usd, 12);
+    expect(cb.flashloan_fee_usd).toBeCloseTo(kernel.flash_fee_usd, 12);
+    expect(cb.relay_fee_usd).toBeCloseTo(kernel.bribe_usd, 12);
+    expect(cb.ops_overhead_usd).toBeCloseTo(kernel.other_costs_usd, 12);
+    // Components already inside the measured gross / outside sheet-07 are
+    // NOT charged a second time.
+    expect(cb.lp_fees_usd).toBe(0);
+    expect(cb.slippage_usd).toBe(0);
+    expect(cb.failure_buffer_usd).toBe(0);
+    expect(cb.copied_buffer_usd).toBe(0);
+    expect(cb.capital_cost_usd).toBe(0);
+
+    const kernelSum =
+      kernel.gas_usd + kernel.flash_fee_usd + kernel.bribe_usd + kernel.other_costs_usd;
+    expect(r!.costs_total_usd).toBeCloseTo(kernelSum, 9);
+    expect(r!.costs_total_usd).toBeCloseTo(kernel.total_cost_usd, 6);
+    expect(r!.net_usd).toBeCloseTo(kernel.net_profit_usd, 6);
+    expect(r!.net_usd).toBeCloseTo(r!.gross_usd - r!.costs_total_usd, 6);
+    expect(r!.notes).toContain("kernel-economics-ssot");
+  });
+
+  it("refuses a kernel whose total disagrees with its own components (R8)", () => {
+    const r = forwardSimulate(
+      usdcRow({
+        economics: { ...kernel, total_cost_usd: 2.0 },
+      }),
+      baseCfg(),
+    );
+    expect(r).toBeNull();
+  });
+
+  it("declares the legacy ladder when the kernel object is absent", () => {
+    const r = forwardSimulate(usdcRow({ economics: null }), baseCfg());
+    expect(r).not.toBeNull();
+    expect(r!.notes).toContain("kernel-economics-absent-legacy-ladder");
+  });
+});
