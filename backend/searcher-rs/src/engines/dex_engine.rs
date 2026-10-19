@@ -798,6 +798,17 @@ impl DexEngine {
         // round-trip cost for WETH/DAI vs 1-10 bps of venue gap), so the erased
         // branch was the majority: an unauditable loss wearing an equilibrium's
         // label. R8: a real loss stays a loss, a real equilibrium stays zero.
+        // C-01 (2026-10-18): a ZERO sell-leg output is NOT a price. Until now
+        // it fell through to the `returned < probe_amount` branch below and was
+        // published as a MEASURED 100 % loss whose gross is exactly
+        // `-probe_value` (live PG: `gross == -amount_in_usd`, ROI -100.02 %,
+        // e.g. -2342.81 on a 1 WETH probe). A zero quote means the sell leg had
+        // no usable state (empty / uncatalogued pool, zero liquidity): that is
+        // an instrument gap (`QuoteUnavailable`), never a market verdict. R8:
+        // absence of a measurement is not a measurement of absence.
+        if returned.is_zero() {
+            return V3GrossOutcome::QuoteUnavailable;
+        }
         if returned == probe_amount {
             // Exactly the probe back — the ONE true equilibrium. The emitter
             // publishes it as a MEASURED zero (`Some(0.0)`).
@@ -3276,5 +3287,217 @@ mod tests {
             .into_iter()
             .find(|c| c.rejection_reason.as_deref() == Some("spread_negative_round_trip"))
             .expect("a constant quote MEASURES a loss, never an equilibrium")
+    }
+
+    // ── C-01a · CONTROL POSITIVO del camino de detección → economía ─────────
+    //
+    // Fixture de ESTADO GRABADO: dos pools V2 con reservas fijas (sin RPC, sin
+    // mocks de cotización; el único oráculo es el `TradingConfigState`) y un
+    // bloque observado declarado en el intent. El beneficio se calcula FUERA
+    // del pipeline con la fórmula CPMM escrita aquí, y el gross emitido por el
+    // motor debe coincidir con él dentro de ±1e-6 USD. El escalar de la fila
+    // debe ser ESE MISMO número (nunca dos verdades paralelas).
+    //
+    // LÍMITE: el objeto cerrado (`economics`) no lo construye el motor para los
+    // candidatos aceptados — lo ensambla el evaluador/sizer. La cláusula 2 de
+    // C-01 (referencia desde el MISMO objeto cerrado con bloque fijado) se
+    // prueba en ESA capa; este control cubre detección + escalar de fila.
+
+    /// CPMM de Uniswap V2 escrita en el test — la referencia externa. No llama
+    /// a `amm_math`: si el kernel y esta fórmula discrepan, el test lo dice.
+    fn oracle_v2_out(amount_in: U256, reserve_in: U256, reserve_out: U256, fee_bps: u32) -> U256 {
+        let fee_factor = U256::from(10_000u32 - fee_bps);
+        let with_fee = amount_in * fee_factor;
+        with_fee * reserve_out / (reserve_in * U256::from(10_000u32) + with_fee)
+    }
+
+    /// Round trip encadenado A→B (compra) → B→A (venta), en unidades raw de
+    /// token_in. Devuelve el mejor de los dos sentidos, como el kernel.
+    fn oracle_cycle_profit(
+        probe: U256,
+        a_in: U256,
+        a_out: U256,
+        b_in: U256,
+        b_out: U256,
+        fee_bps: u32,
+    ) -> U256 {
+        let ab = oracle_v2_out(
+            oracle_v2_out(probe, a_in, a_out, fee_bps),
+            b_out,
+            b_in,
+            fee_bps,
+        );
+        let ba = oracle_v2_out(
+            oracle_v2_out(probe, b_in, b_out, fee_bps),
+            a_out,
+            a_in,
+            fee_bps,
+        );
+        let best = if ab >= ba { ab } else { ba };
+        best.saturating_sub(probe)
+    }
+
+    #[tokio::test]
+    async fn positive_cycle_control_matches_an_external_cpmm_oracle() {
+        // Token canónicos: el oráculo de precio solo resuelve direcciones
+        // conocidas (WETH = precio base del operador; USDC = tabla canónica),
+        // así que la fixture usa WETH→USDC, no direcciones sintéticas.
+        let tok_in: Address = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
+            .parse()
+            .expect("WETH");
+        let tok_out: Address = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+            .parse()
+            .expect("USDC");
+        let e18 = U256::from(10u128).pow(U256::from(18u32));
+        let usdc = U256::from(10u128).pow(U256::from(6u32));
+
+        // Estado grabado: pool A a 3.000 USD/ETH (1:1 con el precio base del
+        // config); pool B cotiza el ETH un 2 % más barato ⇒ comprar USDC en B y
+        // vender USDC en A.
+        let a_in = U256::from(1_000u32) * e18; // 1.000 WETH
+        let a_out = U256::from(3_000_000u32) * usdc; // 3.000.000 USDC
+        let b_in = U256::from(1_000u32) * e18; // 1.000 WETH
+        let b_out = U256::from(3_060_000u32) * usdc; // 3.060.000 USDC (2 % gap)
+
+        let mut cfg = make_cfg();
+        // Coste operativo no nulo para que el net no sea trivialmente el gross.
+        cfg.ops_overhead_usd_per_attempt = 0.25;
+
+        // Probe = 1 unidad nativa de token_in (18 decimales ⇒ 1e18).
+        let probe = e18;
+        let profit_units = oracle_cycle_profit(probe, a_in, a_out, b_in, b_out, 30);
+        assert!(
+            !profit_units.is_zero(),
+            "la fixture debe medir un ciclo POSITIVO; si no, el control no prueba nada"
+        );
+        let oracle_usd = profit_units.low_u128() as f64 / 1e18 * cfg.base_token_price_usd;
+        assert!(oracle_usd > 0.0);
+
+        let pool_a = make_pool(addr(0x10), tok_in, tok_out, ProtocolType::V2);
+        let pool_b = make_pool(addr(0x11), tok_in, tok_out, ProtocolType::V2);
+        let mut intent = make_intent(tok_in, tok_out);
+        intent.source_event = crate::route_intent::DetectionSource::NewBlock;
+        intent.observed_block_number = Some(26_221_945);
+        let impact = make_impact(vec![pool_a, pool_b]);
+        let engine =
+            make_engine_with_reserves(vec![(addr(0x10), a_in, a_out), (addr(0x11), b_in, b_out)])
+                .await;
+
+        let candidates = engine
+            .build_from_impacted_pairs(&intent, &impact, Some(&cfg))
+            .await
+            .expect("engine must not error");
+
+        // El motor emite AMBAS orientaciones del par; la que mide el ciclo
+        // positivo es la que trae gross (la contraria devuelve 0 y el camino V2
+        // la satura a `None`). El control selecciona la orientación rentable,
+        // que es la única que puede pasar el camino caliente.
+        let c = candidates
+            .into_iter()
+            .filter(|c| c.rejection_reason.is_none() && c.gross_profit_usd.is_some())
+            .max_by(|x, y| {
+                x.gross_profit_usd
+                    .unwrap_or(f64::NEG_INFINITY)
+                    .total_cmp(&y.gross_profit_usd.unwrap_or(f64::NEG_INFINITY))
+            })
+            .expect("un ciclo positivo debe ser ACEPTADO a nivel de motor con gross medido");
+
+        let gross = c.gross_profit_usd.expect("gross medido");
+        assert!(
+            (gross - oracle_usd).abs() <= 1e-6,
+            "gross del motor {gross} != oráculo externo {oracle_usd} (tolerancia 1e-6 USD)"
+        );
+
+        // El escalar de la fila es el MISMO número que el gross medido: no hay
+        // una segunda verdad en esta capa.
+        assert_eq!(c.opportunity.expected_profit_usd, Some(gross));
+        // LÍMITE DECLARADO (no un fallo del test): el objeto cerrado
+        // (`economics`) NO se construye en el motor para candidatos aceptados;
+        // lo ensambla el evaluador/sizer aguas abajo. La cláusula 2 de C-01
+        // ("valor de referencia del MISMO objeto cerrado con bloque fijado")
+        // se prueba en ESA capa, no aquí. Si el motor empezara a publicar el
+        // objeto, esta aserción debe cambiar con él.
+        assert!(
+            c.opportunity.economics.is_none(),
+            "el camino aceptado del motor no publica economics; si eso cambia, actualiza este control"
+        );
+        assert_eq!(c.opportunity.block_number, Some(26_221_945));
+    }
+
+    // ── C-01 / N-03 · precondición: cotización CERO no es un veredicto ──────
+    //
+    // Un output cero en el tramo de venta (pool vacía, no catalogada, sin
+    // liquidez) NO es "el mercado te quita el 100 %": es un hueco de
+    // instrumento. Antes del guard, esta fixture producía
+    // `spread_negative_round_trip` con gross = −valor_del_probe (el −2342.81
+    // vivo: gross == −amount_in_usd, ROI −100.02 %). El control debe fallar
+    // ANTES del cambio y pasar DESPUÉS.
+    #[tokio::test]
+    async fn zero_sell_leg_quote_is_an_instrument_gap_not_a_100pct_loss() {
+        struct ZeroSellV3Mock;
+        impl V3QuoteProvider for ZeroSellV3Mock {
+            fn quote_exact_input_single(
+                &self,
+                pool: Address,
+                _token_in: Address,
+                _token_out: Address,
+                amount_in: U256,
+                _fee_bps: u32,
+            ) -> Pin<Box<dyn Future<Output = anyhow::Result<U256>> + Send + '_>> {
+                Box::pin(async move {
+                    if pool == addr(0x10) {
+                        Ok(amount_in) // identidad: la compra devuelve el probe
+                    } else {
+                        Ok(U256::zero()) // la venta no cotiza
+                    }
+                })
+            }
+        }
+
+        // WETH (canónico y con precio de operador) para que el camino
+        // pre-fix publique el gross: la pérdida del 100 % mide el probe entero.
+        let tok_in: Address = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
+            .parse()
+            .expect("WETH");
+        let tok_out: Address = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+            .parse()
+            .expect("USDC");
+        let cfg = make_cfg();
+
+        let catalog = Arc::new(V3FeeCatalog::new());
+        catalog.record_observed(addr(0x10), tok_in, tok_out, 500);
+        catalog.record_observed(addr(0x11), tok_in, tok_out, 500);
+        let projector = Arc::new(StateProjector::new(
+            Arc::new(ReservesCache::new()),
+            Some(Arc::new(ZeroSellV3Mock)),
+            catalog,
+        ));
+        let engine = DexEngine::new(Arc::new(ReservesCache::new()), None, Some(projector));
+        let pool_a = make_pool(addr(0x10), tok_in, tok_out, ProtocolType::V3);
+        let pool_b = make_pool(addr(0x11), tok_in, tok_out, ProtocolType::V3);
+        let intent = make_intent(tok_in, tok_out);
+        let impact = make_impact(vec![pool_a, pool_b]);
+
+        let candidates = engine
+            .build_from_impacted_pairs(&intent, &impact, Some(&cfg))
+            .await
+            .expect("engine must not error");
+
+        let c = candidates
+            .into_iter()
+            .find(|c| c.rejection_reason.is_some())
+            .expect("la fila debe ser un rechazo con etiqueta");
+
+        assert_eq!(
+            c.rejection_reason.as_deref(),
+            Some("v3_quote_unavailable"),
+            "una cotización de venta CERO es un hueco de instrumento, no una pérdida del 100 %"
+        );
+        assert!(
+            c.gross_profit_usd.is_none(),
+            "sin cotización de venta no hay gross que publicar (R8), got {:?}",
+            c.gross_profit_usd
+        );
+        assert!(c.opportunity.expected_profit_usd.is_none());
     }
 }
