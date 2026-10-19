@@ -628,6 +628,17 @@ pub fn execute_multistep_revm(
         }
     };
     let pinned_block = lazy.pinned_block_number();
+    // SIM-REVERT-TRACE-01: with the `revert-trace` feature the SAME production
+    // context is built with a tracer attached; the default keeps the zero-size
+    // `NoopInspector`. One context, one execution path — never a fork.
+    #[cfg(feature = "revert-trace")]
+    let mut sctx =
+        SequenceContext::<simulator_v2::sequence_runner::RevertTracer>::new_with_revert_tracer(
+            lazy,
+            config.chain_id,
+            pinned_block,
+        );
+    #[cfg(not(feature = "revert-trace"))]
     let mut sctx = SequenceContext::new(lazy, config.chain_id, pinned_block);
 
     // 1b. Resolve the FlashLoanExecutor `.to()` — either the env-driven

@@ -495,10 +495,13 @@ pub fn paper_stack_for_round_trip(
 /// empty read (no contract at the provider address), a non-32-byte return, or
 /// the zero address each return a typed error — never an invented Pool.
 #[cfg(feature = "v2-simulator")]
-pub fn resolve_aave_pool_from_provider(
-    sctx: &mut simulator_v2::sequence_runner::SequenceContext,
+pub fn resolve_aave_pool_from_provider<I>(
+    sctx: &mut simulator_v2::sequence_runner::SequenceContext<I>,
     chain_id: u64,
-) -> Result<Address, PaperStackError> {
+) -> Result<Address, PaperStackError>
+where
+    I: simulator_v2::sequence_runner::ContextInspector,
+{
     let provider = shared_rs::chains::aave_pool_addresses_provider(chain_id)
         .ok_or(PaperStackError::AavePoolProviderMissing { chain_id })?;
     let provider = simulator_v2::AlloyAddress::from_slice(provider.as_bytes());
@@ -539,10 +542,13 @@ pub fn resolve_aave_pool_from_provider(
 /// `DeployMainnet.s.sol` sequence (SC-13 grant included). Fail-closed on every
 /// step — a partial stack is never returned.
 #[cfg(feature = "v2-simulator")]
-pub fn deploy_paper_executor_stack(
-    sctx: &mut simulator_v2::sequence_runner::SequenceContext,
+pub fn deploy_paper_executor_stack<I>(
+    sctx: &mut simulator_v2::sequence_runner::SequenceContext<I>,
     spec: &PaperStackSpec,
-) -> Result<PaperExecutorStack, PaperStackError> {
+) -> Result<PaperExecutorStack, PaperStackError>
+where
+    I: simulator_v2::sequence_runner::ContextInspector,
+{
     use simulator_v2::sequence_runner::SequenceDeploy;
 
     fn to_alloy(a: Address) -> simulator_v2::AlloyAddress {
@@ -748,15 +754,18 @@ pub fn deploy_paper_executor_stack(
 /// own constructor and return the PROXY address. Fail-closed: a revert/halt of
 /// the proxy deployment is surfaced through `wrap` (never a partial stack).
 #[cfg(feature = "v2-simulator")]
-fn deploy_erc1967_proxy(
-    sctx: &mut simulator_v2::sequence_runner::SequenceContext,
+fn deploy_erc1967_proxy<I>(
+    sctx: &mut simulator_v2::sequence_runner::SequenceContext<I>,
     spec: &PaperStackSpec,
     admin: simulator_v2::AlloyAddress,
     logic: simulator_v2::AlloyAddress,
     initialize_data: Vec<u8>,
     label: &'static str,
     wrap: fn(String) -> PaperStackError,
-) -> Result<simulator_v2::AlloyAddress, PaperStackError> {
+) -> Result<simulator_v2::AlloyAddress, PaperStackError>
+where
+    I: simulator_v2::sequence_runner::ContextInspector,
+{
     use simulator_v2::sequence_runner::{DeployOutcome, SequenceDeploy};
 
     let proxy_code = decode_fixture(ERC1967_PROXY_BYTECODE_HEX, "ERC1967Proxy.bytecode.hex")?;
@@ -787,14 +796,17 @@ fn deploy_erc1967_proxy(
 }
 
 #[cfg(feature = "v2-simulator")]
-fn exec_setup_call(
-    sctx: &mut simulator_v2::sequence_runner::SequenceContext,
+fn exec_setup_call<I>(
+    sctx: &mut simulator_v2::sequence_runner::SequenceContext<I>,
     spec: &PaperStackSpec,
     to: simulator_v2::AlloyAddress,
     calldata: Vec<u8>,
     label: &'static str,
     wrap: fn(String) -> PaperStackError,
-) -> Result<(), PaperStackError> {
+) -> Result<(), PaperStackError>
+where
+    I: simulator_v2::sequence_runner::ContextInspector,
+{
     use simulator_v2::sequence_runner::{CallOutcome, SequenceCall};
     let from = simulator_v2::AlloyAddress::from_slice(spec.admin.as_bytes());
     let outcome = sctx
@@ -1375,12 +1387,15 @@ mod tests {
 
     /// Read a `public address` getter (`selector()` → 32-byte word, low 20
     /// bytes) from `to` via the non-committing `read_call`.
-    fn read_public_address(
-        sctx: &mut simulator_v2::sequence_runner::SequenceContext,
+    fn read_public_address<I>(
+        sctx: &mut simulator_v2::sequence_runner::SequenceContext<I>,
         to: Address,
         selector: [u8; 4],
         label: &str,
-    ) -> Address {
+    ) -> Address
+    where
+        I: simulator_v2::sequence_runner::ContextInspector,
+    {
         let to = simulator_v2::AlloyAddress::from_slice(to.as_bytes());
         let out = sctx
             .read_call(to, selector.to_vec(), label)

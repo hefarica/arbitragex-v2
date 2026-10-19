@@ -48,8 +48,9 @@ use revm::context_interface::result::ExecutionResult;
 use revm::context_interface::{ContextTr, TransactTo};
 use revm::database::CacheDB;
 use revm::handler::{MainBuilder, MainnetContext, MainnetEvm};
+use revm::interpreter::interpreter::EthInterpreter;
 use revm::primitives::{hardfork::SpecId, Address, Bytes, U256};
-use revm::{Context, ExecuteCommitEvm, ExecuteEvm, MainContext};
+use revm::{Context, InspectCommitEvm, InspectEvm, Inspector, MainContext};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use thiserror::Error;
@@ -214,42 +215,233 @@ pub struct SequenceResult {
 /// single `tokio::task::spawn_blocking` invocation. The caller (scanner
 /// hot path) wraps the entire simulation in `spawn_blocking` so the
 /// tokio runtime is never parked on REVM.
-pub struct SequenceContext {
-    evm: MainnetEvm<MainnetContext<CacheDB<LazyDb>>>,
+///
+/// `I` is the revm inspector attached to the inner `Evm`. It defaults to
+/// [`NoopInspector`], so every existing call site (`SequenceContext::new`,
+/// `&mut SequenceContext`, ...) is unchanged and production runs the SAME
+/// single execution path with a zero-size, do-nothing inspector (
+/// monomorphised away — there is no fork of the production context, which is
+/// the recurring defect this repo keeps paying for). The revert tracer that
+/// names a failing frame is `revert-trace`-gated.
+pub struct SequenceContext<I = NoopInspector> {
+    evm: MainnetEvm<MainnetContext<CacheDB<LazyDb>>, I>,
     reads: HashMap<String, U256>,
     gas_used_total: u64,
     hasher: Sha256,
     successful_calls: u64,
 }
 
-impl SequenceContext {
+/// No-op inspector: a zero-size type whose every hook is the `Inspector` trait
+/// default. It exists only so `SequenceContext` can carry an inspector-capable
+/// `Evm` without changing production behaviour or paying a runtime hook body.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct NoopInspector;
+
+impl<CTX> Inspector<CTX, EthInterpreter> for NoopInspector {}
+
+/// Bound for `SequenceContext<I>`. Blanket-implemented for every revm
+/// `Inspector` over the mainnet context that is also `Default`, so both
+/// `NoopInspector` and the feature-gated tracer fit without per-call-site
+/// bounds (and without the signature ripple reaching every helper).
+pub trait ContextInspector:
+    Inspector<MainnetContext<CacheDB<LazyDb>>, EthInterpreter> + Default
+{
+}
+impl<T> ContextInspector for T where
+    T: Inspector<MainnetContext<CacheDB<LazyDb>>, EthInterpreter> + Default
+{
+}
+
+/// SIM-REVERT-TRACE-01 (feature `revert-trace`): a test-only inspector that
+/// names the INNERMOST frame that reverted — address, depth, pc, opcode and
+/// the raw revert data — and prints one greppable
+/// `VARIANCE_BENCH_REVERT_FRAME=` line. The first `call_end`/`create_end`
+/// whose result is a revert is the origin (frames unwrap innermost-first), so
+/// a `Panic(uint256)` is attributed to the contract that PANICKED, not to the
+/// `catch` that re-encoded it higher up. Compiled out entirely in production.
+#[cfg(feature = "revert-trace")]
+pub use revert_trace::RevertTracer;
+
+#[cfg(feature = "revert-trace")]
+mod revert_trace {
+    use super::{EthInterpreter, Inspector};
+    use revm::interpreter::interpreter_types::{InputsTr, Jumps};
+    use revm::interpreter::{CallInputs, CreateInputs, CreateOutcome, Interpreter};
+
+    /// The last instruction observed in the currently-executing frame.
+    #[derive(Debug, Clone)]
+    struct StepPoint {
+        address: String,
+        depth: usize,
+        pc: usize,
+        opcode: u8,
+        stack_top: Option<String>,
+        /// Top-of-stack words (top first), so the operands of a failed
+        /// checked-arithmetic check remain visible at the shared panic REVERT.
+        stack: Vec<String>,
+    }
+
+    /// The frame that produced the revert (the origin of the unwind).
+    #[derive(Debug, Clone, Default)]
+    pub struct OriginFrame {
+        /// Executing code address of the reverting frame.
+        pub address: String,
+        /// Call depth (0 = top-level).
+        pub depth: usize,
+        /// Program counter of the last instruction before the revert.
+        pub pc: usize,
+        /// Opcode at that pc.
+        pub opcode: u8,
+        /// Top of the stack at that instruction (hex), when available.
+        pub stack_top: Option<String>,
+        /// Raw revert data the frame returned (hex).
+        pub data: String,
+    }
+
+    /// Test-only tracer. Records the FIRST reverting frame (innermost) and
+    /// prints it once.
+    #[derive(Debug, Default)]
+    pub struct RevertTracer {
+        depth: usize,
+        last: Option<StepPoint>,
+        origin: Option<OriginFrame>,
+        seen: usize,
+    }
+
+    impl RevertTracer {
+        fn capture(&mut self, address: &str, data: &[u8]) {
+            let seq = self.seen;
+            self.seen += 1;
+            let (pc, opcode, stack_top, depth, stack, step_target) = match &self.last {
+                Some(s) => (
+                    s.pc,
+                    s.opcode,
+                    s.stack_top.clone(),
+                    s.depth,
+                    s.stack.clone(),
+                    Some(s.address.clone()),
+                ),
+                None => (0, 0, None, self.depth, Vec::new(), None),
+            };
+            let data_hex = format!("0x{}", hex::encode(data));
+            // One line per reverting frame, innermost-first, so the whole
+            // unwind chain is visible — not just the first.
+            println!(
+                "VARIANCE_BENCH_REVERT_FRAME={}",
+                serde_json::json!({
+                    "seq": seq,
+                    "address": address,
+                    "step_target": step_target,
+                    "depth": depth,
+                    "pc": pc,
+                    "opcode": format!("0x{opcode:02x}"),
+                    "stack_top": stack_top,
+                    "stack": stack,
+                    "data": data_hex,
+                })
+            );
+            if self.origin.is_none() {
+                self.origin = Some(OriginFrame {
+                    address: address.to_string(),
+                    depth,
+                    pc,
+                    opcode,
+                    stack_top,
+                    data: data_hex,
+                });
+            }
+        }
+
+        /// The captured origin frame, if a revert was seen.
+        pub fn origin(&self) -> Option<&OriginFrame> {
+            self.origin.as_ref()
+        }
+    }
+
+    impl<CTX> Inspector<CTX, EthInterpreter> for RevertTracer {
+        fn step(&mut self, interp: &mut Interpreter<EthInterpreter>, _context: &mut CTX) {
+            let data = interp.stack.data();
+            let stack: Vec<String> = data.iter().rev().take(12).map(|v| format!("0x{v:x}")).collect();
+            let stack_top = stack.first().cloned();
+            self.last = Some(StepPoint {
+                address: format!("{:?}", interp.input.target_address()),
+                depth: self.depth,
+                pc: interp.bytecode.pc(),
+                opcode: interp.bytecode.opcode(),
+                stack_top,
+                stack,
+            });
+        }
+
+        fn call(
+            &mut self,
+            _context: &mut CTX,
+            _inputs: &mut CallInputs,
+        ) -> Option<revm::interpreter::CallOutcome> {
+            self.depth += 1;
+            None
+        }
+
+        fn call_end(
+            &mut self,
+            _context: &mut CTX,
+            inputs: &CallInputs,
+            outcome: &mut revm::interpreter::CallOutcome,
+        ) {
+            if outcome.result.result.is_revert() {
+                let address = format!("{:?}", inputs.bytecode_address);
+                let data = outcome.result.output.clone();
+                self.capture(&address, data.as_ref());
+            }
+            self.depth = self.depth.saturating_sub(1);
+        }
+
+        fn create(
+            &mut self,
+            _context: &mut CTX,
+            _inputs: &mut CreateInputs,
+        ) -> Option<CreateOutcome> {
+            self.depth += 1;
+            None
+        }
+
+        fn create_end(
+            &mut self,
+            _context: &mut CTX,
+            _inputs: &CreateInputs,
+            outcome: &mut CreateOutcome,
+        ) {
+            if outcome.result.result.is_revert() {
+                let data = outcome.result.output.clone();
+                self.capture("<create>", data.as_ref());
+            }
+            self.depth = self.depth.saturating_sub(1);
+        }
+    }
+}
+
+#[cfg(feature = "revert-trace")]
+impl SequenceContext<revert_trace::RevertTracer> {
+    /// Build a context whose inspector names the innermost reverting frame
+    /// (address + depth + pc + opcode + raw data) and prints it once.
+    pub fn new_with_revert_tracer(lazy_db: LazyDb, chain_id: u64, block_number: u64) -> Self {
+        Self::new_with_inspector(
+            lazy_db,
+            chain_id,
+            block_number,
+            revert_trace::RevertTracer::default(),
+        )
+    }
+}
+
+impl SequenceContext<NoopInspector> {
     /// Build a fresh context around a freshly-constructed `LazyDb`. The
     /// `chain_id` and `block_number` define the REVM environment that
     /// every step shares — they are NEVER mutated by `call()`.
+    ///
+    /// Uses the zero-size [`NoopInspector`] — this is the production context.
     pub fn new(lazy_db: LazyDb, chain_id: u64, block_number: u64) -> Self {
-        let cache_db = CacheDB::new(lazy_db);
-        let mut cfg = CfgEnv::default();
-        cfg.chain_id = chain_id;
-        cfg.spec = SpecId::OSAKA; // SIM-11 note (2026-09-24): paper path pins OSAKA regardless of the forked block's actual hardfork; verified path derives from header;
-        let block = BlockEnv {
-            number: U256::from(block_number),
-            ..BlockEnv::default()
-        };
-        let evm = Context::mainnet()
-            .with_db(cache_db)
-            .with_block(block)
-            .modify_cfg_chained(|c| {
-                c.chain_id = cfg.chain_id;
-                c.spec = cfg.spec;
-            })
-            .build_mainnet();
-        Self {
-            evm,
-            reads: HashMap::new(),
-            gas_used_total: 0,
-            hasher: Sha256::new(),
-            successful_calls: 0,
-        }
+        Self::new_with_inspector(lazy_db, chain_id, block_number, NoopInspector)
     }
 
     /// Build from a canonical header using the chain's supported fork schedule.
@@ -267,7 +459,7 @@ impl SequenceContext {
                 cfg.chain_id = chain_id;
                 cfg.set_spec_and_mainnet_gas_params(spec);
             })
-            .build_mainnet();
+            .build_mainnet_with_inspector(NoopInspector);
         Ok(Self {
             evm,
             reads: HashMap::new(),
@@ -275,6 +467,45 @@ impl SequenceContext {
             hasher: Sha256::new(),
             successful_calls: 0,
         })
+    }
+}
+
+impl<I> SequenceContext<I>
+where
+    I: ContextInspector,
+{
+    /// Same as [`SequenceContext::new`] with an explicit inspector. With
+    /// `I = NoopInspector` this is byte-for-byte the production context; with
+    /// the `revert-trace` feature the caller passes a `RevertTracer`.
+    pub fn new_with_inspector(
+        lazy_db: LazyDb,
+        chain_id: u64,
+        block_number: u64,
+        inspector: I,
+    ) -> Self {
+        let cache_db = CacheDB::new(lazy_db);
+        let mut cfg = CfgEnv::default();
+        cfg.chain_id = chain_id;
+        cfg.spec = SpecId::OSAKA; // SIM-11 note (2026-09-24): paper path pins OSAKA regardless of the forked block's actual hardfork; verified path derives from header;
+        let block = BlockEnv {
+            number: U256::from(block_number),
+            ..BlockEnv::default()
+        };
+        let evm = Context::mainnet()
+            .with_db(cache_db)
+            .with_block(block)
+            .modify_cfg_chained(|c| {
+                c.chain_id = cfg.chain_id;
+                c.spec = cfg.spec;
+            })
+            .build_mainnet_with_inspector(inspector);
+        Self {
+            evm,
+            reads: HashMap::new(),
+            gas_used_total: 0,
+            hasher: Sha256::new(),
+            successful_calls: 0,
+        }
     }
 
     pub fn assert_canonical(&self) -> Result<(), SequenceError> {
@@ -297,7 +528,7 @@ impl SequenceContext {
             .nonce;
         let previous = self.evm.ctx.cfg.disable_base_fee;
         self.evm.ctx.cfg.disable_base_fee = true;
-        let result = self.evm.transact(tx);
+        let result = self.evm.inspect_tx(tx);
         self.evm.ctx.cfg.disable_base_fee = previous;
         result
             .map(|r| r.result)
@@ -386,7 +617,7 @@ impl SequenceContext {
 
         let exec = self
             .evm
-            .transact_commit(tx)
+            .inspect_tx_commit(tx)
             .map_err(|e| SequenceError::TransactInfra(format!("{e}")))?;
 
         Ok(match exec {
@@ -485,7 +716,7 @@ impl SequenceContext {
 
         let exec = self
             .evm
-            .transact_commit(tx)
+            .inspect_tx_commit(tx)
             .map_err(|e| SequenceError::TransactInfra(format!("{e}")))?;
 
         let outcome = match exec {
