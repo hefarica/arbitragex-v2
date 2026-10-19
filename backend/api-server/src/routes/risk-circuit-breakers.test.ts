@@ -18,7 +18,9 @@
  *       · loadCbConfig env parsing (empty string = unset → defaults).
  *       · Trip persistence dedupe: same episode → ONE risk_events row;
  *         transition PAUSED→KILLED → second row; insert failure never throws.
- *   - Executor → BLOCKED when env missing; WARN when env present (probe pending).
+ *   - Executor → BLOCKED when env missing; UNKNOWN until the on-chain probe
+ *     answers; PASS only on healthy probe (code + paused()=false + AccessControl);
+ *     PAUSED on paused()=true; BLOCKED on EOA/wrong contract; UNKNOWN on RPC down.
  *   - RPC health → BLOCKED when RPC_HTTP_1 missing.
  *   - Global kill-switch → PASS disarmed / KILLED armed / UNKNOWN on null.
  *   - Latency/SIM_ERROR/Blacklist → state derived from readiness verifier items.
@@ -29,6 +31,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { __forTesting } from "./risk-circuit-breakers.js";
+import type { ExecutorHealthProbe } from "../services/executorHealth/onChainExecutorHealth.js";
 import { metricsText } from "@arbx/shared";
 
 const {
@@ -102,6 +105,7 @@ const baseCtx = {
   gasBurnCapUsd: null as number | null,
   gasBurnWindowRows: null as number | null,
   gasBurnWindowSecs: null as number | null,
+  executorHealth: null,
   ledger: {
     drawdown: {
       marks: null as null | Array<{ markAt: string; runs: number; pnlUsd: number }>,
@@ -963,10 +967,147 @@ describe("makeExecutorBreaker", () => {
     expect(b.state).toBe("BLOCKED");
     expect(b.severity).toBe("critical");
   });
-  it("returns WARN when EXECUTOR_1 present but on-chain probe pending", () => {
-    const b = makeExecutorBreaker({ ...baseCtx, envExecutor: true });
-    expect(b.state).toBe("WARN");
-    expect(b.evidence.current_value).toBe("env_present");
+  it("returns UNKNOWN when EXECUTOR_1 present but the probe did not run", () => {
+    const b = makeExecutorBreaker({ ...baseCtx, envExecutor: true, executorHealth: null });
+    expect(b.state).toBe("UNKNOWN");
+    expect(b.evidence.current_value).toBe(null);
+  });
+
+  const probe = (over: Partial<ExecutorHealthProbe>): ExecutorHealthProbe => ({
+    ran: true,
+    status: "healthy",
+    chain_id: 1,
+    address: "0x1111111111111111111111111111111111111111",
+    rpc_host: "eth.example.com",
+    bytecode_size: 4096,
+    paused: false,
+    fle_address: "0x2222222222222222222222222222222222222222",
+    fle_has_executor_role: true,
+    operator_address: "0x3333333333333333333333333333333333333333",
+    operator_has_executor_role: true,
+    fle_reported_executor: "0x1111111111111111111111111111111111111111",
+    latency_ms: 42,
+    error: null,
+    checked_at: "2026-10-19T04:00:00Z",
+    ...over,
+  });
+
+  it("returns PASS only when the on-chain probe is healthy", () => {
+    const b = makeExecutorBreaker({ ...baseCtx, envExecutor: true, executorHealth: probe({}) });
+    expect(b.state).toBe("PASS");
+    expect(b.evidence.current_value).toBe("healthy");
+    expect(b.blocks).toEqual([]);
+    expect(b.evidence.detail).toContain("paused()=false");
+  });
+
+  it("PASS detail names both role holders and the wiring, not getRoleAdmin", () => {
+    const b = makeExecutorBreaker({ ...baseCtx, envExecutor: true, executorHealth: probe({}) });
+    expect(b.evidence.detail).toContain("hasRole(EXECUTOR_ROLE,FLE)=true");
+    expect(b.evidence.detail).toContain("hasRole(EXECUTOR_ROLE,operator)=true");
+    expect(b.evidence.detail).not.toContain("getRoleAdmin");
+  });
+
+  it("returns UNKNOWN when the execution identity is not configured (never PASS)", () => {
+    const b = makeExecutorBreaker({
+      ...baseCtx,
+      envExecutor: true,
+      executorHealth: probe({
+        status: "identity_not_configured",
+        operator_address: null,
+        operator_has_executor_role: null,
+        error: "SIGNER_ADDRESS missing — the operator grant cannot be proven",
+      }),
+    });
+    expect(b.state).toBe("UNKNOWN");
+    expect(b.evidence.detail).toContain("SIGNER_ADDRESS");
+    expect(b.required_action).toContain("FLASHLOAN_EXECUTOR_");
+  });
+
+  it("returns BLOCKED when the FLE holds no EXECUTOR_ROLE", () => {
+    const b = makeExecutorBreaker({
+      ...baseCtx,
+      envExecutor: true,
+      executorHealth: probe({ status: "not_armed", fle_has_executor_role: false }),
+    });
+    expect(b.state).toBe("BLOCKED");
+    expect(b.required_action).toContain("grantRole(EXECUTOR_ROLE, FLE)");
+  });
+
+  it("returns BLOCKED when the operator holds no EXECUTOR_ROLE", () => {
+    const b = makeExecutorBreaker({
+      ...baseCtx,
+      envExecutor: true,
+      executorHealth: probe({ status: "operator_not_armed", operator_has_executor_role: false }),
+    });
+    expect(b.state).toBe("BLOCKED");
+    expect(b.required_action).toContain("grantRole(EXECUTOR_ROLE, SIGNER)");
+  });
+
+  it("returns BLOCKED when the FLE points at another ArbitrageExecutor", () => {
+    const b = makeExecutorBreaker({
+      ...baseCtx,
+      envExecutor: true,
+      executorHealth: probe({ status: "wiring_mismatch" }),
+    });
+    expect(b.state).toBe("BLOCKED");
+    expect(b.evidence.detail).toContain("different ArbitrageExecutor");
+  });
+
+  it("returns PAUSED when the executor is deployed but paused on-chain", () => {
+    const b = makeExecutorBreaker({
+      ...baseCtx,
+      envExecutor: true,
+      executorHealth: probe({ status: "paused", paused: true }),
+    });
+    expect(b.state).toBe("PAUSED");
+    expect(b.action).toBe("pause");
+    expect(b.operator_required).toBe(true);
+  });
+
+  it("returns BLOCKED when the address holds no bytecode (EOA)", () => {
+    const b = makeExecutorBreaker({
+      ...baseCtx,
+      envExecutor: true,
+      executorHealth: probe({
+        status: "no_code",
+        bytecode_size: 0,
+        paused: null,
+        fle_address: null,
+        fle_has_executor_role: null,
+        operator_address: null,
+        operator_has_executor_role: null,
+        fle_reported_executor: null,
+      }),
+    });
+    expect(b.state).toBe("BLOCKED");
+    expect(b.severity).toBe("critical");
+    expect(b.evidence.detail).toContain("no bytecode");
+  });
+
+  it("returns BLOCKED when code exists but the executor surface is missing", () => {
+    const b = makeExecutorBreaker({
+      ...baseCtx,
+      envExecutor: true,
+      executorHealth: probe({
+        status: "wrong_contract",
+        paused: null,
+        fle_has_executor_role: null,
+        operator_has_executor_role: null,
+        error: "paused() reverted",
+      }),
+    });
+    expect(b.state).toBe("BLOCKED");
+    expect(b.evidence.detail).toContain("paused() reverted");
+  });
+
+  it("returns UNKNOWN (never PASS) when RPC is down", () => {
+    const b = makeExecutorBreaker({
+      ...baseCtx,
+      envExecutor: true,
+      executorHealth: probe({ ran: false, status: "rpc_unavailable", error: "eth_getCode failed: timeout" }),
+    });
+    expect(b.state).toBe("UNKNOWN");
+    expect(b.evidence.current_value).toBe(null);
   });
 });
 
