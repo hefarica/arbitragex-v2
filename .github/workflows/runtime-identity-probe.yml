@@ -58,6 +58,11 @@ jobs:
       EXPECTED_PROBE_SHA256: 0fa9e0411d847b25fdd5b311005294e76dea1bf3326ca992d05d31676084876b # lowercase (sha256sum output)
 
     steps:
+      - name: Checkout (needed for scripts/arbx-env-deploy)
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          fetch-depth: 1
+
       - name: Materialize the probe and assert its provenance hash
         run: |
           set -euo pipefail
@@ -185,6 +190,51 @@ jobs:
           ssh-keyscan -T 10 -p "$VPS_PORT" -H "$VPS_HOST" > ~/.ssh/known_hosts
           test -s ~/.ssh/known_hosts
           echo "ssh material ready (key never echoed)"
+
+      - name: C-15b — dry-run the 3-key env fragment against /opt/arbitragex-v2/.env (no write)
+        # Same writer/transport as PR #982 (arbx_remote.sh + arbx_env_upsert.sh),
+        # in `dryrun` mode: it upserts into a TEMP COPY and diffs it against the
+        # real file. The real .env is hashed before/after and must be identical.
+        # Only the 3 managed keys are printed from the diff (no context lines,
+        # no other .env values) so the transcript stays value-safe.
+        run: |
+          set -euo pipefail
+          umask 077
+          cat > /tmp/arbx_env_fragment.env <<'FRAG'
+          ARBX_ORCHESTRATOR_MODE=v1
+          ARBX_PAPER_EXECUTOR_MODE=on
+          ARBX_SIMULATOR_V2_READY=false
+          FRAG
+          echo "fragment_sha256=$(sha256sum /tmp/arbx_env_fragment.env | awk '{print $1}')"
+          echo "--- fragment (names and values; no secrets) ---"
+          cat /tmp/arbx_env_fragment.env
+          SC="scp -P $VPS_PORT -i $HOME/.ssh/deploy_key -o BatchMode=yes -o StrictHostKeyChecking=yes"
+          $SC /tmp/arbx_env_fragment.env "$VPS_USER@$VPS_HOST:/tmp/arbx_env_fragment.env"
+          $SC scripts/arbx-env-deploy/arbx_env_upsert.sh "$VPS_USER@$VPS_HOST:/tmp/arbx_env_upsert.sh"
+          $SC scripts/arbx-env-deploy/arbx_remote.sh "$VPS_USER@$VPS_HOST:/tmp/arbx_remote.sh"
+          ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" \
+            -o ConnectTimeout=15 -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE'
+          set -uo pipefail
+          ENVP=/opt/arbitragex-v2/.env
+          before="$(sha256sum "$ENVP" | cut -d' ' -f1)"
+          chmod 600 /tmp/arbx_env_fragment.env /tmp/arbx_env_upsert.sh /tmp/arbx_remote.sh
+          bash /tmp/arbx_remote.sh dryrun "$ENVP" > /tmp/c15b_dryrun.out 2>&1
+          rc=$?
+          after="$(sha256sum "$ENVP" | cut -d' ' -f1)"
+          echo "dryrun_rc=$rc"
+          echo "env_sha256_before=$before"
+          echo "env_sha256_after=$after"
+          [ "$before" = "$after" ] && echo "real_env_unchanged=true" || echo "real_env_unchanged=FALSE"
+          echo "--- managed keys in the diff (only these lines) ---"
+          grep -E '^[+-]ARBX_(ORCHESTRATOR_MODE|PAPER_EXECUTOR_MODE|SIMULATOR_V2_READY)=' /tmp/c15b_dryrun.out || echo "(no managed-key diff line)"
+          echo "--- diff size ---"
+          echo "changed_lines=$(grep -cE '^[+-][^+-]' /tmp/c15b_dryrun.out || true)"
+          echo "--- dryrun tail ---"
+          tail -n 3 /tmp/c15b_dryrun.out
+          rm -f /tmp/c15b_dryrun.out
+          exit $rc
+          REMOTE
 
       - name: Run the probe on the deploy host (read-only)
         id: probe
