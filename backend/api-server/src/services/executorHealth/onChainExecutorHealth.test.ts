@@ -79,9 +79,14 @@ describe("probeExecutorHealth — positive control", () => {
   it("asks exactly getCode + paused() + getRoleAdmin(EXECUTOR_ROLE)", async () => {
     const seen: string[] = [];
     const impl = (async (_url: string, init: RequestInit) => {
-      const body = JSON.parse(String(init.body)) as { method: string; params?: Array<{ data?: string }> };
-      seen.push(`${body.method}:${body.params?.[0]?.data ?? ""}`);
-      const data = body.params?.[0]?.data ?? "";
+      const body = JSON.parse(String(init.body)) as {
+        method: string;
+        params?: Array<string | { data?: string }>;
+      };
+      const first = body.params?.[0];
+      // eth_getCode carries the address as params[0]; eth_call carries an object.
+      seen.push(`${body.method}:${typeof first === "string" ? first : (first?.data ?? "")}`);
+      const data = typeof first === "string" ? first : (first?.data ?? "");
       const reply =
         body.method === "eth_getCode"
           ? { result: CODE }
