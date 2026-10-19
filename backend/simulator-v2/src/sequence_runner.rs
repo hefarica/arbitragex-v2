@@ -760,8 +760,16 @@ impl SequenceContext {
 // ---------------------------------------------------------------------------
 
 /// Attempt to decode a standard Solidity `Error(string)` revert payload;
-/// fall back to a hex-encoded leading-32-byte slice. Matches the
+/// fall back to a hex-encoded leading-slice. Matches the
 /// behaviour of `revm_runner::decode_revert_reason` for consistency.
+///
+/// PANIC-CODE-01 (2026-10-19): the fallback used to cap at 32 bytes, which is
+/// ONE BYTE SHORT of a `Panic(uint256)` payload (4-byte selector + one 32-byte
+/// ABI word = 36). Measured on the G-SIM-1 variance harness: 15 of 21 routes
+/// carried `multistep_call_revert:0x4e487b71` followed by 28 zero bytes, so the
+/// tag said "Solidity panic" and lost the code (0x01 assert, 0x11 overflow,
+/// 0x32 array bound). The cap is now 36 so the reason survives intact; longer
+/// payloads still fall back to their leading 36 bytes.
 fn decode_revert_reason(output: &Bytes) -> String {
     const ERROR_SELECTOR: [u8; 4] = [0x08, 0xc3, 0x79, 0xa0];
     if output.len() >= 68 && output[0..4] == ERROR_SELECTOR {
@@ -774,7 +782,7 @@ fn decode_revert_reason(output: &Bytes) -> String {
             }
         }
     }
-    let end = output.len().min(32);
+    let end = output.len().min(36);
     format!("0x{}", hex::encode(&output[..end]))
 }
 
@@ -1218,6 +1226,25 @@ mod tests {
         assert_eq!(
             decode_revert_reason(&Bytes::from(vec![0xde, 0xad, 0xbe, 0xef])),
             "0xdeadbeef"
+        );
+    }
+
+    /// PANIC-CODE-01: a Solidity `Panic(uint256)` payload is 36 bytes
+    /// (selector + one ABI word). The fallback must carry the WHOLE payload so
+    /// the code (0x01 assert / 0x11 overflow / 0x32 array bound) is readable —
+    /// the old 32-byte cap cut exactly that byte off and turned every panic
+    /// into an indistinguishable `0x4e487b71…`.
+    #[test]
+    fn decode_revert_reason_keeps_the_panic_code() {
+        let mut payload = vec![0x4e, 0x48, 0x7b, 0x71];
+        let mut code = [0u8; 32];
+        code[31] = 0x11; // Panic(0x11) = arithmetic overflow
+        payload.extend_from_slice(&code);
+        let reason = decode_revert_reason(&Bytes::from(payload));
+        assert_eq!(reason.len(), 2 + 72, "selector + one ABI word, in hex");
+        assert!(
+            reason.ends_with("11"),
+            "the panic code must survive the fallback, got {reason}"
         );
     }
 
