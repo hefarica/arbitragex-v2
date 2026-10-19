@@ -24,6 +24,7 @@ import {
   buildRouteDiscoveryOutcomesRouter,
   ROLLUP_MAINTAIN_INTERVAL_MS,
   ROLLUP_MAINTAIN_WINDOW_HOURS,
+  withRollupMaintainLock,
 } from "./route-discovery-outcomes-api.js";
 
 /** One canned answer per query the summary runs, keyed by SQL fragment. */
@@ -322,11 +323,23 @@ describe("route-discovery-outcomes top-up — RDO-503-CONVERGE", () => {
 // "series unavailable" the owner saw on a healthy backend. The maintainer
 // closes that gap without any reader.
 describe("route-discovery-outcomes rollup maintainer — RDO-503-CONVERGE", () => {
-  function convergeStub(insertRowCount: (call: number) => number | "throw") {
+  function convergeStub(
+    insertRowCount: (call: number) => number | "throw",
+    opts: { lockWon?: boolean } = {},
+  ) {
     const inserts: Array<{ sql: string; params: unknown[] }> = [];
+    const lockCalls: string[] = [];
     const pool = {
       connect: async () => ({
         query: async (sql: string, params: unknown[] = []) => {
+          if (sql.includes("pg_try_advisory_lock")) {
+            lockCalls.push(sql);
+            return { rows: [{ got: opts.lockWon ?? true }], rowCount: 1 };
+          }
+          if (sql.includes("pg_advisory_unlock")) {
+            lockCalls.push(sql);
+            return { rows: [{ pg_advisory_unlock: true }], rowCount: 1 };
+          }
           if (sql === "BEGIN" || sql.startsWith("SET LOCAL") || sql === "COMMIT" || sql === "ROLLBACK")
             return { rows: [], rowCount: 0 };
           if (sql.includes("INSERT INTO route_discovery_outcome_rollup_5m")) {
@@ -335,21 +348,27 @@ describe("route-discovery-outcomes rollup maintainer — RDO-503-CONVERGE", () =
           }
           return { rows: [], rowCount: 0 };
         },
-        release: () => {},
+        release: () => {
+          lockCalls.push("release");
+        },
       }),
     } as unknown as pg.Pool;
-    return { pool, inserts };
+    return { pool, inserts, lockCalls };
   }
 
   it("keeps the rollup current on its interval with no reader at all", async () => {
     vi.useFakeTimers();
     try {
-      const { pool, inserts } = convergeStub(() => 6);
+      const { pool, inserts, lockCalls } = convergeStub(() => 6);
       const wiring = buildRouteDiscoveryOutcomes(pool, { maintain: true });
       expect(inserts.length).toBe(0); // interval-only: nothing at build time
 
       await vi.advanceTimersByTimeAsync(ROLLUP_MAINTAIN_INTERVAL_MS);
       expect(inserts.length).toBeGreaterThan(0);
+      // The singleton lock is taken and given back (the second writer guard).
+      expect(lockCalls.some((s) => s.includes("pg_try_advisory_lock"))).toBe(true);
+      expect(lockCalls.some((s) => s.includes("pg_advisory_unlock"))).toBe(true);
+      expect(lockCalls).toContain("release");
       // It maintains the panels' default 24h window (minus the in-progress
       // bucket and the ceil() alignment of the head edge), not an arbitrary
       // range.
@@ -366,6 +385,40 @@ describe("route-discovery-outcomes rollup maintainer — RDO-503-CONVERGE", () =
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  // RDO-503-CONVERGE-2: with N replicas there would be N maintainers on the same
+  // table. The replica that loses the advisory lock must do NOTHING — no read,
+  // no aggregation — and must not pretend to have unlocked anything.
+  it("a replica that loses the singleton lock does no work at all", async () => {
+    vi.useFakeTimers();
+    try {
+      const { pool, inserts, lockCalls } = convergeStub(() => 6, { lockWon: false });
+      const wiring = buildRouteDiscoveryOutcomes(pool, { maintain: true });
+      await vi.advanceTimersByTimeAsync(ROLLUP_MAINTAIN_INTERVAL_MS);
+      expect(lockCalls.some((s) => s.includes("pg_try_advisory_lock"))).toBe(true);
+      expect(lockCalls.some((s) => s.includes("pg_advisory_unlock"))).toBe(false);
+      expect(inserts.length).toBe(0);
+      wiring.maintainer.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // The correctness backstop is the table's PRIMARY KEY + ON CONFLICT DO NOTHING,
+  // NOT the lock: a losing replica (or a concurrent read-path top-up) can only
+  // waste work. Pin that the maintenance INSERT keeps the conflict clause.
+  it("the maintenance INSERT stays idempotent under concurrent writers (ON CONFLICT DO NOTHING)", async () => {
+    const { pool, inserts } = convergeStub(() => 6);
+    const wiring = buildRouteDiscoveryOutcomes(pool, { maintain: true });
+    // Drive one pass synchronously through the exported lock helper (no timers).
+    await withRollupMaintainLock(pool, async () => {
+      const res = await request(appFor(pool)).get("/api/v1/route-discovery-outcomes/summary?hours=24");
+      expect(res.status).toBe(200);
+    });
+    expect(inserts.length).toBeGreaterThan(0);
+    for (const i of inserts) expect(i.sql).toMatch(/ON CONFLICT DO NOTHING/);
+    wiring.maintainer.stop();
   });
 
   it("no pool → no timer (and it must not throw)", async () => {

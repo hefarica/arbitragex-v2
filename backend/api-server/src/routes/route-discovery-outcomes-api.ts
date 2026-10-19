@@ -37,6 +37,18 @@
  * batch costs at most 6 buckets and earlier batches stay committed; the
  * coverage check is still the only thing that decides 200 vs the honest 503,
  * so nothing here can ever serve an undercounted series.
+ *
+ * RDO-503-CONVERGE-2 (2026-10-19): the background maintainer is a SECOND WRITER
+ * (before it, only a reader ever wrote the rollup). Under N replicas it takes a
+ * session advisory lock so exactly one replica maintains per interval; the
+ * correctness backstop is the rollup's PRIMARY KEY (dim, key, bucket_ms) plus
+ * ON CONFLICT DO NOTHING, so a losing replica or a concurrent read-path top-up
+ * can only waste work — never duplicate a bucket, never lose a committed batch.
+ *
+ * ACCEPTANCE (operator directive 2026-10-19): "if you open the panel to check
+ * convergence you are exercising the on-read path again, so you pass for the
+ * wrong reason." The maintainer is proven with the PANEL CLOSED: no read for
+ * >5 min, then read — if the window is already covered, the maintainer exists.
  */
 
 import { Router, type Request, type Response } from "express";
@@ -57,6 +69,37 @@ import pg from "pg";
 export const ROLLUP_MAINTAIN_INTERVAL_MS = 5 * 60_000;
 /** Window the maintainer keeps current — the panels' default 24h read. */
 export const ROLLUP_MAINTAIN_WINDOW_HOURS = 24;
+/**
+ * Advisory-lock key for the maintainer singleton ("RDO1" as an int32). Stable
+ * across replicas; unrelated to any other advisory lock in the service.
+ */
+export const ROLLUP_MAINTAIN_LOCK_KEY = 0x52444f31;
+
+/**
+ * Run `fn` only if this replica WINS the rollup-maintainer advisory lock.
+ * Session-scoped, released in `finally`; a replica that does not get the lock
+ * skips its interval (the winner is doing the same work). The lock only avoids
+ * duplicated effort — correctness rests on the rollup's PRIMARY KEY and the
+ * top-up's ON CONFLICT DO NOTHING.
+ */
+export async function withRollupMaintainLock(
+  pool: pg.Pool,
+  fn: () => Promise<void>,
+): Promise<boolean> {
+  const client = await pool.connect();
+  try {
+    const r = await client.query("SELECT pg_try_advisory_lock($1) AS got", [ROLLUP_MAINTAIN_LOCK_KEY]);
+    if (r.rows[0]?.["got"] !== true) return false;
+    try {
+      await fn();
+    } finally {
+      await client.query("SELECT pg_advisory_unlock($1)", [ROLLUP_MAINTAIN_LOCK_KEY]).catch(() => {});
+    }
+    return true;
+  } finally {
+    client.release();
+  }
+}
 
 export interface RouteDiscoveryOutcomesWiring {
   router: Router;
@@ -456,12 +499,24 @@ export function buildRouteDiscoveryOutcomes(
   // ── RDO-503-CONVERGE hardening: keep the rollup current without a reader ──
   // Interval-only (first pass after one interval), unref'd so it can never hold
   // the process open, and a no-op when the pool is absent.
+  //
+  // SINGLETON (RDO-503-CONVERGE-2): the maintainer is a SECOND WRITER on the
+  // rollup — before this change only a reader ever wrote it. With N api-server
+  // replicas there would be N maintainers aggregating the same buckets at the
+  // same time. A session advisory lock makes exactly ONE replica the writer per
+  // interval. The correctness backstop is NOT the lock: it is the table's
+  // PRIMARY KEY (dim, key, bucket_ms) plus the top-up's ON CONFLICT DO NOTHING,
+  // so a replica that lost the race — or a read-path top-up running at the same
+  // moment — can only waste work, never duplicate a bucket, and never discard
+  // the progress of a batch that already committed.
   const maintainer = { stop: () => {} };
   if (opts.maintain && pool) {
     const timer = setInterval(() => {
-      const now = Date.now();
-      const edges = windowEdges(now - ROLLUP_MAINTAIN_WINDOW_HOURS * 3600_000, now);
-      void ensureRollups(edges.rollFrom, edges.rollTo).catch(() => {
+      void withRollupMaintainLock(pool, async () => {
+        const now = Date.now();
+        const edges = windowEdges(now - ROLLUP_MAINTAIN_WINDOW_HOURS * 3600_000, now);
+        await ensureRollups(edges.rollFrom, edges.rollTo);
+      }).catch(() => {
         // Best-effort maintenance: the coverage check in the read path stays the
         // only thing that decides 200 vs the honest 503. A failed pass is
         // retried on the next interval; it must never crash the process.
