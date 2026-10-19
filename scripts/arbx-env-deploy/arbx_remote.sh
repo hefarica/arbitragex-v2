@@ -43,6 +43,7 @@ case "$mode" in
     # than it was found.
     bak="${envp}.rollback.$(date +%Y%m%d_%H%M%S)"
     cp -p "$envp" "$bak"
+    before_sha="$(sha256sum "$envp" | cut -d' ' -f1)"
     restore() {
       echo "ROLLBACK: restoring $envp from $bak and recreating" >&2
       cat "$bak" > "$envp"
@@ -72,6 +73,16 @@ case "$mode" in
       *searcher-rs*api-server* | *api-server*searcher-rs*) echo "verify ok: running = [$running]" ;;
       *) echo "VERIFY FAILED: running services = [$running]" >&2; restore; exit 1 ;;
     esac
+    # APPLY RECEIPT (2026-10-19): this flow does NOT pass through git, so the
+    # only durable trace of "what changed and when" is written here, next to the
+    # .env: timestamps + sha256 before/after + the rollback copy. No values, no
+    # secrets — key names only, so the file is safe to read and to share.
+    receipt="${envp}.apply.log"
+    printf '%s before=%s after=%s rollback=%s\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$before_sha" "$(sha256sum "$envp" | cut -d' ' -f1)" "$(basename "$bak")" \
+      >> "$receipt"
+    chmod 600 "$receipt" 2>/dev/null || true
+    echo "receipt appended: $receipt"
     echo "--- searcher-rs ---"; $dc logs searcher-rs --tail 25 2>&1 | grep -E 'scanner.subscribed|scanner.no_rpc|ERROR' || true
     echo "--- api-server ---";  $dc logs api-server  --tail 15 2>&1 | grep -E 'SECURE_BOOT|listening|error' || true
     ;;

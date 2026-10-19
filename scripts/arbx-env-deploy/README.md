@@ -44,21 +44,29 @@ ssh arbx 'bash /opt/arbitragex-v2/scripts/arbx-env-deploy/arbx_env_upsert.sh /op
 - Override the workbook path with `--xlsx <path>` or `ARBX_CONFIG_XLSX`. The fragment is
   gitignored (`*.env`); edit the **catalog** sheets and regenerate — never hand-edit the fragment.
 
-## Source of truth — who owns what
+## El flujo real, y quién es dueño de qué
 
-- The **Excel is an EDITOR**. It never is the canonical state: a workbook that
-  lives on a Windows box cannot be diffed, reviewed, rolled back or audited, and
-  it is how live credentials ended up inside a shared file.
-- The **SSOT is the versioned artifact** the editor emits (`rpc_catalog.json` /
-  the generated fragment in the repo), and on the host the `RPC_HTTP_<chain>` /
-  `RPC_WS_<chain>` keys of `/opt/arbitragex-v2/.env` in the G-RPC-1 format
-  (`.env.example:58-73`: `token=url,token=url`, at least TWO providers per chain).
-- **Secrets never live in the sheet.** The workbook carries `proveedor` + a URL
-  template; the value comes from the secret store and lands in the host `.env`
-  only. A sheet with a live key in it is a leak, not a canonical file.
-- **Transport is not canon.** Writing over SSH without validate → apply →
-  verify → rollback is a hand edit with a nicer UI. `arbx_remote.sh apply` is the
-  only writer, and it refuses to run without the guards below.
+El camino que se usa hoy **no pasa por el repo**: el macro exporta el fragmento
+desde el `.xlsm`, PowerShell lo copia por `scp` a `/tmp` del VPS, y
+`arbx_remote.sh apply` lo aplica sobre `/opt/arbitragex-v2/.env` y recrea los
+servicios. Git aporta los scripts, no los valores. Eso hay que decirlo así, no
+como si el repo fuera la fuente de verdad.
+
+Con ese flujo, la propiedad queda:
+
+- **El Excel es el EDITOR.** Nadie más lo edita, y nunca es canónico: no se
+  puede diffear, revisar ni revertir.
+- **El canónico de los valores es el `.env` del host**, escrito por UN solo
+  escritor (`arbx_remote.sh apply`), con copia `.rollback_*` y un recibo
+  `.env.apply.log` que anota **fecha + sha256 antes/después + copia de rollback**
+  —sin valores y sin secretos—. Ése es el rastro de auditoría, porque git no ve
+  este archivo.
+- **El repo es dueño de lo que sí puede revisarse:** los scripts, el esquema del
+  fragmento, y el catálogo de proveedores **sin claves**. Una hoja con una clave
+  viva dentro es una fuga, no un canónico.
+- **El transporte no es el canónico.** Escribir por SSH sin validar → aplicar →
+  verificar → revertir es una edición a mano con mejor interfaz. `apply` es el
+  único escritor y no corre sin sus guardas.
 
 ## Guarantees (proven by `test_upsert.sh` — run it, do not cite it)
 Run: `bash scripts/arbx-env-deploy/test_upsert.sh` → `17/17 checks passed`.
