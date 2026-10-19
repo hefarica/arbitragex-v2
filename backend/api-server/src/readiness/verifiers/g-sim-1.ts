@@ -287,7 +287,7 @@ export async function verifyGSIM1(opts?: {
       const backend = caps.simulator_backend ?? "no reportado";
       const reason =
         pending.length === 0
-          ? `simulator-v2 IMPLEMENTADO (${modules.length} módulos, backend ${backend} disponible); ${checklist} completa; hard blocker de checklist resuelto — único paso restante: ARBX_SIMULATOR_V2_READY=false`
+          ? `simulator-v2 IMPLEMENTADO (${modules.length} módulos, backend ${backend} disponible); ${checklist} completa; hard blocker de checklist resuelto — único paso restante: ARBX_SIMULATOR_V2_READY=true`
           : `simulator-v2 IMPLEMENTADO (${modules.length} módulos, backend ${backend} disponible); ${checklist}; hard blocker hasta completar: ${pendingList}${staleNote}${failedNote}${registryNote}`;
       return {
         ...base,
