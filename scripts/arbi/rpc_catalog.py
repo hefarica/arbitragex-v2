@@ -41,6 +41,21 @@ WANTED_CHAINS = {
     "BSC Mainnet", "Avalanche", "Linea", "Scroll", "Blast", "Gnosis",
 }
 
+# Nombre de cadena en el Excel -> chain_id (la verdad de cadena vive en configs/app.toml).
+CHAIN_IDS = {
+    "Ethereum Mainnet": 1,
+    "BSC Mainnet": 56,
+    "Polygon Mainnet": 137,
+    "Arbitrum One": 42161,
+    "Optimism": 10,
+    "Base": 8453,
+    "Avalanche": 43114,
+    "Gnosis": 100,
+    "Linea": 59144,
+    "Scroll": 534352,
+    "Blast": 81457,
+}
+
 # Proveedor -> variable de entorno para la clave (el catálogo guarda `${VAR}`, nunca el valor).
 PROVIDER_KEY_ENV = {
     "Alchemy": "ALCHEMY_API_KEY",
@@ -110,6 +125,48 @@ def build_catalog(entries: list[RpcEntry]) -> dict:
         "secrets_sanitized": secrets_found,
         "chains": {k: chains[k] for k in sorted(chains)},
     }
+
+
+# ─────────────────────────── emisión G-RPC-1 (.env) ────────────────────────────
+
+def emit_env(catalog: dict, min_providers: int = 2) -> tuple[str, list[str]]:
+    """Emite el bloque `.env` con el formato de G-RPC-1 (`RPC_HTTP_<chain_id>` /
+    `RPC_WS_<chain_id>` = CSV de `name=url`). Devuelve (texto, avisos).
+
+    El Excel no inventa formato: emite ESTE. Candidatos, no prioridades — el
+    `HttpRpcPool` (backend/shared-rs/src/rpc_failover.rs) elige por latencia medida
+    (EWMA + circuit breaker); una prioridad declarada no es una latencia medida.
+    """
+    warnings: list[str] = []
+    lines = [
+        "# ── G-RPC-1 — catálogo de RPC (generado por scripts/arbi/rpc_catalog.py) ──",
+        "# Formato: CSV de `nombre=url` por cadena. ≥2 proveedores por cadena (G-RPC-1);",
+        "# con uno solo el pool no puede hacer failover y emite warn al arrancar.",
+        "# Las claves van saneadas a ${VAR}: el valor vive en el almacén de secretos",
+        "# (docs/operations/SECRETS_POLICY.md), NUNCA en este fichero.",
+        "# Candidatos, no prioridades: el pool elige por latencia MEDIDA (EWMA).",
+        "",
+    ]
+    for chain in sorted(catalog.get("chains", {}), key=lambda c: CHAIN_IDS.get(c, 10**9)):
+        cid = CHAIN_IDS.get(chain)
+        if cid is None:
+            warnings.append(f"{chain}: sin chain_id conocido — no se emite")
+            continue
+        by_proto: dict[str, list[str]] = {"HTTP": [], "WSS": []}
+        for e in catalog["chains"][chain]:
+            name = e["provider"].lower().replace(" ", "")
+            by_proto.setdefault(e["protocol"], []).append(f"{name}={e['url']}")
+        for proto in ("HTTP", "WSS"):
+            toks = by_proto.get(proto) or []
+            if not toks:
+                continue
+            if len(toks) < min_providers:
+                warnings.append(f"{chain} {proto}: {len(toks)} proveedor(es) < {min_providers} — failover imposible")
+            lines.append(f"RPC_{proto}_{cid}={','.join(toks)}")
+        if not by_proto.get("HTTP") and not by_proto.get("WSS"):
+            warnings.append(f"{chain}: sin entradas")
+        lines.append("")
+    return "\n".join(lines) + "\n", warnings
 
 
 # ─────────────────────────────── sonda de latencia ─────────────────────────────
@@ -183,6 +240,11 @@ def main() -> int:
     pe.add_argument("--xlsm", required=True)
     pe.add_argument("--out", default=os.path.join(here, "rpc_catalog.json"))
 
+    pv = sub.add_parser("emit-env", help="catálogo -> bloque .env en formato G-RPC-1")
+    pv.add_argument("--catalog", default=os.path.join(here, "rpc_catalog.json"))
+    pv.add_argument("--out", default="rpc_catalog.env")
+    pv.add_argument("--min-providers", type=int, default=2)
+
     pp = sub.add_parser("probe", help="catálogo -> latencias medidas y orden de conexión")
     pp.add_argument("--catalog", default=os.path.join(here, "rpc_catalog.json"))
     pp.add_argument("--chain", action="append", default=None)
@@ -199,6 +261,17 @@ def main() -> int:
             json.dump(cat, fh, indent=2, ensure_ascii=False)
         total = sum(len(v) for v in cat["chains"].values())
         print(f"cadenas={len(cat['chains'])} rpcs={total} secretos_saneados={cat['secrets_sanitized']} -> {args.out}")
+        return 0
+
+    if args.cmd == "emit-env":
+        cat = json.load(open(args.catalog, encoding="utf-8"))
+        text, warnings = emit_env(cat, args.min_providers)
+        with open(args.out, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        for w in warnings:
+            print(f"::warning:: {w}")
+        print(text)
+        print(f"-> {args.out}  (avisos: {len(warnings)})")
         return 0
 
     cat = json.load(open(args.catalog, encoding="utf-8"))

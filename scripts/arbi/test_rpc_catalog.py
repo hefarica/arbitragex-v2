@@ -49,8 +49,28 @@ def test_build_catalog():
     check("entrada pública presente", any(e["provider"] == "PublicNode" for e in cat["chains"]["Ethereum Mainnet"]))
 
 
+def test_emit_env():
+    print("emit_env (G-RPC-1)")
+    entries = [
+        rc.RpcEntry("Ethereum Mainnet", "HTTP", "Alchemy", "https://eth-mainnet.g.alchemy.com/v2/SUPERSECRETKEY123456"),
+        rc.RpcEntry("Ethereum Mainnet", "HTTP", "PublicNode", "https://ethereum-rpc.publicnode.com/"),
+        rc.RpcEntry("Ethereum Mainnet", "HTTP", "DRPC", "https://eth.drpc.org/"),
+        rc.RpcEntry("Base", "HTTP", "DRPC", "https://base.drpc.org/"),
+    ]
+    cat = rc.build_catalog(entries)
+    text, warns = rc.emit_env(cat)
+    check("clave G-RPC-1 de Ethereum (chain 1)", "RPC_HTTP_1=" in text)
+    check("clave G-RPC-1 de Base (8453)", "RPC_HTTP_8453=" in text)
+    check("formato name=url", "publicnode=https://ethereum-rpc.publicnode.com/" in text)
+    check("el secreto NO está en el .env emitido", "SUPERSECRETKEY123456" not in text)
+    check("Alchemy queda con ${VAR}", "${ALCHEMY_API_KEY}" in text)
+    # Base tiene UN proveedor -> aviso de failover imposible
+    check("avisa cuando hay <2 proveedores", any("Base HTTP" in w for w in warns), str(warns))
+    check("Ethereum (3 proveedores) sin aviso", not any("Ethereum Mainnet HTTP" in w for w in warns))
+
+
 def main():
-    for t in (test_sanitize, test_build_catalog):
+    for t in (test_sanitize, test_build_catalog, test_emit_env):
         t()
     print()
     if FAILED:
