@@ -361,7 +361,12 @@ mod revert_trace {
     impl<CTX> Inspector<CTX, EthInterpreter> for RevertTracer {
         fn step(&mut self, interp: &mut Interpreter<EthInterpreter>, _context: &mut CTX) {
             let data = interp.stack.data();
-            let stack: Vec<String> = data.iter().rev().take(12).map(|v| format!("0x{v:x}")).collect();
+            let stack: Vec<String> = data
+                .iter()
+                .rev()
+                .take(12)
+                .map(|v| format!("0x{v:x}"))
+                .collect();
             let stack_top = stack.first().cloned();
             self.last = Some(StepPoint {
                 address: format!("{:?}", interp.input.target_address()),
