@@ -1,0 +1,190 @@
+name: ARBI 95% watchdog (forcing signal, 10-min)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ARBI-95-WATCHDOG-01 (2026-10-19, MANTIS) — señal forzante cada 10 minutos.
+#
+# QUÉ PIDIÓ EL DUEÑO: un mecanismo que cada 10 minutos le recuerde que, si el
+# sistema está por debajo del 95 %, hay que revisar y despertar al equipo.
+#
+# QUÉ HACE ESTE WORKFLOW: cada ~10 min mide el criterio del 95 % contra el host
+# vivo (SOLO LECTURA, por HTTPS, sin SSH) y, si está por debajo, deja una señal
+# imposible de ignorar: refresca UN issue fijado con los números y su marca de
+# tiempo, y emite un `::warning::` en el run. Si llega al 95 %, cierra el issue.
+#
+# LÍMITES DECLARADOS, no escondidos (RULE 00 / R8):
+#   1) GitHub `schedule` es BEST-EFFORT: puede retrasarse; el mínimo práctico es
+#      ~5 min; y GitHub DESACTIVA los cron de repos sin actividad ~60 días.
+#   2) Un workflow NO puede despertar a un agente de GenTeam: la única forma de
+#      despertarlo es un mensaje en la conversación. Este workflow produce la
+#      SEÑAL; el DESPERTAR lo hacen (a) el bucle @ del equipo y (b) el
+#      recordatorio diario de GenTeam. Si existe un puente (webhook/API), se
+#      activa con el secreto `ARBI_WAKE_WEBHOOK_URL` y este workflow lo llama.
+#   3) El job queda VERDE a propósito aunque el sistema esté por debajo: la
+#      doctrina del repo (gsim1-readiness-attention.yml) es que un job rojo
+#      permanente es un job que nadie lee. La señal es el issue + el warning.
+#   4) Si el host no devuelve readiness/recon, el veredicto es NO COMPUTADO, no
+#      "por debajo": no se afirma lo que no se midió.
+#
+# CRITERIO 95 % (declarado): below = (readiness.red > 0) OR (recon.total == 0).
+#   readiness.red = gates en rojo (hoy G-SIM-1).
+#   recon.total   = PnL REALIZADO en 168 h; 0 = ningún dólar llegó a la wallet.
+# Los dos números que mandan. Un gate verde sin transacción no cuenta.
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: arbi-95-watchdog
+  cancel-in-progress: true
+
+jobs:
+  watchdog:
+    name: evalúa 95% y deja señal
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    env:
+      HOST: https://arbx.ape-tv.net
+      ISSUE_TITLE: "[ARBI][<95%] watchdog — revisar y despertar (auto)"
+    steps:
+      - name: Evaluate the 95% gate (read-only, HTTPS)
+        id: gate
+        run: |
+          set -uo pipefail
+          mkdir -p out
+          curl -sS -m 20 "$HOST/api/status"                  -o out/status.json  || echo '{}' > out/status.json
+          curl -sS -m 20 "$HOST/api/readiness"               -o out/ready.json   || echo '{}' > out/ready.json
+          curl -sS -m 20 "$HOST/api/recon/summary?hours=168" -o out/recon.json   || echo '{}' > out/recon.json
+          python3 - <<'PY'
+          import json, os
+
+          def load(p):
+              try:
+                  return json.load(open(p))
+              except Exception:
+                  return {}
+
+          st = load("out/status.json"); rd = load("out/ready.json"); rc = load("out/recon.json")
+
+          summary = rd.get("summary") if isinstance(rd.get("summary"), dict) else None
+          totals = rc.get("totals") if isinstance(rc.get("totals"), dict) else None
+          computed = (summary is not None) and (totals is not None)
+
+          red = int(summary.get("red") or 0) if summary else 0
+          raw_total = totals.get("total") if totals else None
+          total = int(raw_total) if isinstance(raw_total, int) else -1
+
+          sha = ((st.get("deploy") or {}).get("sha") or "unknown")
+          services = st.get("services") or {}
+          svc_ok = sum(1 for v in services.values() if isinstance(v, dict) and v.get("ok"))
+          svc_n = len(services)
+          red_ids = [i.get("id") for i in (rd.get("items") or []) if i.get("status") != "green"]
+
+          below = bool(computed and ((red > 0) or (total == 0)))
+
+          lines = [
+              "sha_servido=%s" % sha,
+              "servicios_ok=%d/%d" % (svc_ok, svc_n),
+              "readiness_red=%d" % red,
+              "readiness_red_ids=%s" % (",".join(str(x) for x in red_ids) or "none"),
+              "recon_total_168h=%d" % total,
+              "below95=%s" % str(below).lower(),
+              "computed=%s" % str(computed).lower(),
+          ]
+          open("out/report.txt", "w").write("\n".join(lines) + "\n")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+              fh.write("below=%s\n" % str(below).lower())
+              fh.write("computed=%s\n" % str(computed).lower())
+              fh.write("sha=%s\n" % sha)
+              fh.write("red=%d\n" % red)
+              fh.write("total=%d\n" % total)
+          print("\n".join(lines))
+          PY
+
+      - name: Step summary
+        if: always()
+        run: |
+          {
+            echo "### ARBI 95% watchdog"
+            echo ""
+            echo '```'
+            cat out/report.txt 2>/dev/null || echo "sin reporte"
+            echo '```'
+            echo ""
+            echo "Criterio: below95 = readiness.red > 0 OR recon.total == 0."
+            echo "UTC: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Not computed — warn, never claim "below"
+        if: steps.gate.outputs.computed != 'true'
+        run: |
+          echo "::warning::VIGIA NO COMPUTADO — el host no devolvió readiness/recon. Esto NO afirma que esté por debajo del 95%: afirma que no se midió."
+
+      - name: Force the signal (below 95%)
+        if: steps.gate.outputs.below == 'true'
+        run: |
+          echo "::warning::ARBI por debajo del 95% — $(tr '\n' ' ' < out/report.txt). Revisar y despertar. Ver issue fijado."
+
+      - name: Refresh the pinned issue (below 95%)
+        if: steps.gate.outputs.below == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          BODY="$(mktemp)"
+          {
+            echo "El sistema está **por debajo del 95 %**. Este issue se refresca cada ~10 min."
+            echo ""
+            echo '```'
+            cat out/report.txt
+            echo '```'
+            echo ""
+            echo "- Criterio: \`below95 = readiness.red > 0 OR recon.total == 0\`"
+            echo "- Objetivo: \`recon total>0\` (un dólar REALIZADO) y \`passed>0\`."
+            echo "- Refrescado: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo ""
+            echo "Plan y cola de tarjetas: ver \`notes/plan-95.md\` en el workspace del equipo."
+          } > "$BODY"
+          NUM=$(gh issue list --state open --limit 100 --json number,title \
+                  --jq ".[] | select(.title == \"$ISSUE_TITLE\") | .number" | head -n 1)
+          if [ -n "$NUM" ]; then
+            gh issue edit "$NUM" --body-file "$BODY"
+            echo "refreshed issue #$NUM"
+          else
+            gh issue create --title "$ISSUE_TITLE" --body-file "$BODY"
+          fi
+
+      - name: Close the issue (at/above 95%)
+        if: steps.gate.outputs.below != 'true' && steps.gate.outputs.computed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          NUM=$(gh issue list --state open --limit 100 --json number,title \
+                  --jq ".[] | select(.title == \"$ISSUE_TITLE\") | .number" | head -n 1)
+          if [ -n "$NUM" ]; then
+            gh issue close "$NUM" --comment "El sistema alcanzó el 95 % ($(date -u +%Y-%m-%dT%H:%M:%SZ))."
+            echo "closed issue #$NUM"
+          else
+            echo "nothing below threshold and no open issue"
+          fi
+
+      - name: Optional wake bridge (webhook)
+        if: steps.gate.outputs.below == 'true'
+        env:
+          WAKE_URL: ${{ secrets.ARBI_WAKE_WEBHOOK_URL }}
+        run: |
+          if [ -z "${WAKE_URL:-}" ]; then
+            echo "ARBI_WAKE_WEBHOOK_URL no configurado — la señal queda en el issue + warning."
+            echo "(Un workflow no puede despertar a un agente de GenTeam; si existe un puente, se activa con este secreto.)"
+            exit 0
+          fi
+          curl -sS -m 15 -X POST "$WAKE_URL" \
+            -H 'content-type: application/json' \
+            --data "{\"source\":\"arbi-95-watchdog\",\"below95\":true,\"sha\":\"${{ steps.gate.outputs.sha }}\",\"readiness_red\":\"${{ steps.gate.outputs.red }}\",\"recon_total_168h\":\"${{ steps.gate.outputs.total }}\",\"at\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
