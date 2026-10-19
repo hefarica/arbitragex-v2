@@ -188,7 +188,15 @@ def _rpc_timed(url: str, method: str = "eth_chainId", timeout: float = 8.0) -> t
         return False, (time.perf_counter() - t0) * 1000.0, f"{type(exc).__name__}: {exc}"[:120]
 
 
+def percentile(sorted_vals: list[float], p: float) -> float:
+    if not sorted_vals:
+        return float("nan")
+    idx = min(len(sorted_vals) - 1, int(round(p * (len(sorted_vals) - 1))))
+    return sorted_vals[idx]
+
+
 def probe_url(url: str, samples: int = 5, timeout: float = 8.0) -> dict:
+    """Mide un endpoint. Declara SIEMPRE n (muestras ok / total): un p50 sin n no existe."""
     lat: list[float] = []
     last_err = ""
     for _ in range(samples):
@@ -198,14 +206,39 @@ def probe_url(url: str, samples: int = 5, timeout: float = 8.0) -> dict:
         else:
             last_err = err
     if not lat:
-        return {"ok": False, "n_ok": 0, "p50_ms": None, "p95_ms": None, "error": last_err or "sin respuesta"}
-    lat_sorted = sorted(lat)
-    p50 = statistics.median(lat_sorted)
-    p95 = lat_sorted[min(len(lat_sorted) - 1, int(round(0.95 * (len(lat_sorted) - 1))))]
-    return {"ok": True, "n_ok": len(lat), "p50_ms": round(p50, 1), "p95_ms": round(p95, 1), "error": ""}
+        return {"ok": False, "n_ok": 0, "n_total": samples,
+                "p50_ms": None, "p95_ms": None, "p99_ms": None, "min_ms": None, "max_ms": None,
+                "error": last_err or "sin respuesta"}
+    s = sorted(lat)
+    return {
+        "ok": True, "n_ok": len(s), "n_total": samples,
+        "p50_ms": round(statistics.median(s), 1),
+        "p95_ms": round(percentile(s, 0.95), 1),
+        "p99_ms": round(percentile(s, 0.99), 1),
+        "min_ms": round(s[0], 1), "max_ms": round(s[-1], 1),
+        "error": "",
+    }
 
 
-def probe_catalog(catalog: dict, chains: Optional[list[str]], samples: int, timeout: float) -> dict:
+def run_controls(good_url: str, dead_url: str, samples: int, timeout: float) -> dict:
+    """CONTROL de la sonda: un endpoint que sabemos bueno y uno que sabemos muerto.
+    Si la sonda no los distingue, el instrumento está roto y ningún p50 vale."""
+    g = probe_url(good_url, samples, timeout)
+    d = probe_url(dead_url, samples, timeout)
+    ok = bool(g["ok"]) and not bool(d["ok"])
+    return {
+        "known_good": {"url": good_url, **g},
+        "known_dead": {"url": dead_url, **d},
+        "distinguishes": ok,
+        "verdict": ("la sonda distingue bueno de muerto" if ok
+                    else "CONTROL FALLIDO: la sonda no distingue bueno de muerto — sus números no valen"),
+    }
+
+
+def probe_catalog(catalog: dict, chains: Optional[list[str]], samples: int, timeout: float,
+                  control_good: str, control_dead: str) -> dict:
+    started = time.time()
+    controls = run_controls(control_good, control_dead, samples, timeout)
     result: dict[str, list[dict]] = {}
     for chain, entries in catalog.get("chains", {}).items():
         if chains and chain not in chains:
@@ -215,7 +248,8 @@ def probe_catalog(catalog: dict, chains: Optional[list[str]], samples: int, time
             if e["protocol"] != "HTTP":
                 continue  # la sonda mide HTTP; WSS se ordena aparte, sin fingir
             if e.get("url_has_env_var"):
-                scored.append({**e, "ok": None, "p50_ms": None, "p95_ms": None,
+                scored.append({**e, "ok": None, "n_ok": 0, "n_total": 0,
+                               "p50_ms": None, "p95_ms": None, "p99_ms": None,
                                "error": "requiere ${VAR}: no se sondea sin clave"})
                 continue
             m = probe_url(e["url"], samples, timeout)
@@ -224,11 +258,41 @@ def probe_catalog(catalog: dict, chains: Optional[list[str]], samples: int, time
         scored.sort(key=lambda s: (s["p50_ms"] is None, s["p50_ms"] if s["p50_ms"] is not None else 1e9))
         for i, s in enumerate(scored):
             s["rank"] = i + 1
-            s["use"] = ("primary" if i == 0 and s["p50_ms"] is not None
-                        else ("failover" if s["p50_ms"] is not None else "unprobed"))
+            # EVIDENCIA, no selector: el HttpRpcPool elige por EWMA. Esto sólo dice
+            # quién fue el más rápido EN ESTA VENTANA.
+            s["use"] = ("fastest_measured" if i == 0 and s["p50_ms"] is not None
+                        else ("measured" if s["p50_ms"] is not None else "unprobed"))
         result[chain] = scored
-    return {"_comment": "Orden de conexión por LATENCIA MEDIDA (p50). primary = el más rápido medido.",
-            "samples": samples, "chains": result}
+    ended = time.time()
+    return {
+        "_comment": ("EVIDENCIA de latencia, NO selector. El HttpRpcPool "
+                     "(backend/shared-rs/src/rpc_failover.rs) elige por EWMA + circuit breaker; "
+                     "este orden es el de ESTA ventana y no debe cablearse como prioridad."),
+        "samples_per_endpoint": samples,
+        "window": {
+            "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(started)),
+            "ended_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ended)),
+            "duration_s": round(ended - started, 1),
+        },
+        "controls": controls,
+        "chains": result,
+    }
+
+
+def compare_runs(a: dict, b: dict) -> dict:
+    """Criterio de muerte: si dos corridas dan ordenamientos distintos sin cambio de red,
+    la sonda mide RUIDO y va antes que cualquier ajuste."""
+    out: dict = {"chains": {}, "unstable": []}
+    for chain in sorted(set(a.get("chains", {})) & set(b.get("chains", {}))):
+        order_a = [e["provider"] for e in a["chains"][chain] if e.get("p50_ms") is not None]
+        order_b = [e["provider"] for e in b["chains"][chain] if e.get("p50_ms") is not None]
+        same = order_a == order_b
+        out["chains"][chain] = {"a": order_a, "b": order_b, "same_order": same}
+        if not same:
+            out["unstable"].append(chain)
+    out["verdict"] = ("estable: mismo ordenamiento en las dos corridas" if not out["unstable"]
+                      else f"INESTABLE en {out['unstable']} — posible ruido; va antes que cualquier ajuste")
+    return out
 
 
 def main() -> int:
@@ -250,7 +314,14 @@ def main() -> int:
     pp.add_argument("--chain", action="append", default=None)
     pp.add_argument("--samples", type=int, default=5)
     pp.add_argument("--timeout", type=float, default=8.0)
+    pp.add_argument("--control-good", default="https://ethereum-rpc.publicnode.com/")
+    pp.add_argument("--control-dead", default="https://eth.llamarpc.com")
     pp.add_argument("--out", default="rpc_latency.json")
+
+    pc = sub.add_parser("compare", help="dos corridas -> estabilidad del ordenamiento (criterio de muerte)")
+    pc.add_argument("--a", required=True)
+    pc.add_argument("--b", required=True)
+    pc.add_argument("--out", default="rpc_stability.json")
 
     args = ap.parse_args()
 
@@ -274,17 +345,34 @@ def main() -> int:
         print(f"-> {args.out}  (avisos: {len(warnings)})")
         return 0
 
+    if args.cmd == "compare":
+        a = json.load(open(args.a, encoding="utf-8"))
+        b = json.load(open(args.b, encoding="utf-8"))
+        cmp = compare_runs(a, b)
+        with open(args.out, "w", encoding="utf-8") as fh:
+            json.dump(cmp, fh, indent=2, ensure_ascii=False)
+        for chain, d in cmp["chains"].items():
+            mark = "OK " if d["same_order"] else "DIFF"
+            print(f"{mark} {chain}: {d['a']} vs {d['b']}")
+        print(cmp["verdict"])
+        return 0
+
     cat = json.load(open(args.catalog, encoding="utf-8"))
-    res = probe_catalog(cat, args.chain, args.samples, args.timeout)
+    res = probe_catalog(cat, args.chain, args.samples, args.timeout, args.control_good, args.control_dead)
     with open(args.out, "w", encoding="utf-8") as fh:
         json.dump(res, fh, indent=2, ensure_ascii=False)
+    ctl = res["controls"]
+    print(f"CONTROLES: bueno={ctl['known_good']['ok']} muerto={ctl['known_dead']['ok']} -> {ctl['verdict']}")
+    print(f"VENTANA: {res['window']['started_at']} .. {res['window']['ended_at']} "
+          f"({res['window']['duration_s']}s) · n={res['samples_per_endpoint']} por endpoint")
     for chain, entries in res["chains"].items():
         print(f"\n== {chain}")
         for e in entries:
             if e["p50_ms"] is None:
-                print(f"   - {e['provider']:<11} {e['use']:<8} ({e['error']})")
+                print(f"   - {e['provider']:<11} {e['use']:<16} n={e['n_ok']}/{e['n_total']} ({e['error']})")
             else:
-                print(f"   {e['rank']:>2}. {e['provider']:<11} {e['use']:<8} p50={e['p50_ms']:>7.1f}ms p95={e['p95_ms']:>7.1f}ms")
+                print(f"   {e['rank']:>2}. {e['provider']:<11} {e['use']:<16} "
+                      f"n={e['n_ok']}/{e['n_total']} p50={e['p50_ms']:>7.1f} p95={e['p95_ms']:>7.1f} p99={e['p99_ms']:>7.1f} ms")
     return 0
 
 

@@ -69,8 +69,53 @@ def test_emit_env():
     check("Ethereum (3 proveedores) sin aviso", not any("Ethereum Mainnet HTTP" in w for w in warns))
 
 
+def test_percentile():
+    print("percentile")
+    v = [10.0, 20.0, 30.0, 40.0, 100.0]
+    check("p50", rc.percentile(v, 0.50) == 30.0, rc.percentile(v, 0.50))
+    check("p99 tope = max", rc.percentile(v, 0.99) == 100.0)
+    check("vacío -> nan", rc.percentile([], 0.5) != rc.percentile([], 0.5))
+
+
+def test_controls():
+    print("run_controls (sonda que DISTINGUE)")
+    orig = rc._rpc_timed
+
+    def fake(url, method="eth_chainId", timeout=8.0):
+        if "good" in url:
+            return True, 12.0, ""
+        return False, 5.0, "HTTPError: 525"
+    rc._rpc_timed = fake
+    try:
+        ok = rc.run_controls("http://good", "http://dead", samples=3, timeout=1)
+        check("distingue bueno de muerto", ok["distinguishes"] is True)
+        check("veredicto positivo", "distingue" in ok["verdict"])
+
+        def broken(url, method="eth_chainId", timeout=8.0):
+            return True, 10.0, ""  # miente: todo "bueno"
+        rc._rpc_timed = broken
+        bad = rc.run_controls("http://good", "http://dead", samples=3, timeout=1)
+        check("sonda rota se detecta (no distingue)", bad["distinguishes"] is False)
+        check("veredicto nombra el fallo", "CONTROL FALLIDO" in bad["verdict"])
+    finally:
+        rc._rpc_timed = orig
+
+
+def test_compare_runs():
+    print("compare_runs (criterio de muerte)")
+    a = {"chains": {"X": [{"provider": "p", "p50_ms": 10}, {"provider": "q", "p50_ms": 20}]}}
+    b = {"chains": {"X": [{"provider": "p", "p50_ms": 11}, {"provider": "q", "p50_ms": 19}]}}
+    r = rc.compare_runs(a, b)
+    check("mismo orden => estable", r["unstable"] == [])
+    c = {"chains": {"X": [{"provider": "q", "p50_ms": 9}, {"provider": "p", "p50_ms": 22}]}}
+    r2 = rc.compare_runs(a, c)
+    check("orden invertido => inestable", r2["unstable"] == ["X"])
+    check("veredicto nombra ruido", "INESTABLE" in r2["verdict"])
+
+
 def main():
-    for t in (test_sanitize, test_build_catalog, test_emit_env):
+    for t in (test_sanitize, test_build_catalog, test_emit_env,
+              test_percentile, test_controls, test_compare_runs):
         t()
     print()
     if FAILED:
