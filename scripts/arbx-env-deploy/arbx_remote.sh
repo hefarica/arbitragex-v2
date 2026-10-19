@@ -29,9 +29,30 @@ case "$mode" in
     rm -f "$cand"
     ;;
   apply)
+    # CONCURRENCY (2026-10-19): two sources (Excel macro + frontend) can call
+    # apply at the same time. Without a lock the two upserts interleave and the
+    # resulting .env is neither one fragment nor the other. flock -n fails CLEAN
+    # instead of queueing: a second apply is an operator error, not a retry.
+    LOCK="${TMPDIR:-/tmp}/arbx_env_apply.lock"
+    exec 9>"$LOCK"
+    flock -n 9 || { echo "another apply is in progress (lock $LOCK); refusing to interleave" >&2; exit 7; }
+
+    # ROLLBACK (2026-10-19): a backup that is never restored is not a rollback.
+    # The pre-apply bytes are kept aside and put back if the recreate or the
+    # service check fails, so a bad fragment can never leave the stack worse
+    # than it was found.
+    bak="${envp}.rollback.$(date +%Y%m%d_%H%M%S)"
+    cp -p "$envp" "$bak"
+    restore() {
+      echo "ROLLBACK: restoring $envp from $bak and recreating" >&2
+      cat "$bak" > "$envp"
+      chmod 600 "$envp"
+      ( cd "$(dirname "$envp")" && docker compose -f docker/compose.prod.yml up -d --force-recreate --no-deps searcher-rs api-server ) >&2 || true
+    }
+
     bash "$ups" "$envp" "$frag" --backup
     chmod 600 "$envp"
-    echo ".env updated in place (timestamped .bak_* written on the VPS)"
+    echo ".env updated in place (timestamped .bak_* written on the VPS; rollback copy: $bak)"
     cd "$(dirname "$envp")"
     # compose.prod.yml interpolates ${GITHUB_TOKEN}; compose's default project env is docker/.env
     # which lacks it -> a harmless 'not set' warning on stderr. Export it (from the real .env if
@@ -40,9 +61,17 @@ case "$mode" in
     # up -d --force-recreate (NOT restart): `docker compose restart` keeps the container's
     # original create-time environment, so .env changes never reach the process. Recreate
     # reloads env_file/.env into the new container. --no-deps avoids touching dependencies.
-    docker compose -f docker/compose.prod.yml up -d --force-recreate --no-deps searcher-rs api-server
+    if ! docker compose -f docker/compose.prod.yml up -d --force-recreate --no-deps searcher-rs api-server; then
+      restore; exit 1
+    fi
     sleep 15
     dc="docker compose -f docker/compose.prod.yml"
+    # VERIFY: both services must be RUNNING before the apply may claim success.
+    running="$($dc ps --services --filter status=running 2>/dev/null | sort | tr '\n' ' ')"
+    case "$running" in
+      *searcher-rs*api-server* | *api-server*searcher-rs*) echo "verify ok: running = [$running]" ;;
+      *) echo "VERIFY FAILED: running services = [$running]" >&2; restore; exit 1 ;;
+    esac
     echo "--- searcher-rs ---"; $dc logs searcher-rs --tail 25 2>&1 | grep -E 'scanner.subscribed|scanner.no_rpc|ERROR' || true
     echo "--- api-server ---";  $dc logs api-server  --tail 15 2>&1 | grep -E 'SECURE_BOOT|listening|error' || true
     ;;
