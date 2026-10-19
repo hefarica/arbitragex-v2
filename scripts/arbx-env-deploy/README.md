@@ -32,12 +32,21 @@ generate them from the **`RPC Providers`** (Chain · Protocolo · Proveedor · U
 
 ```bash
 python scripts/arbx-env-deploy/gen_rpc_env_from_xlsx.py        # -> rpc_env_generated.env (review it)
-# apply idempotently to the VPS .env, then recreate the env-consuming services:
-scp scripts/arbx-env-deploy/rpc_env_generated.env arbx:/tmp/rpc.env
-ssh arbx 'bash /opt/arbitragex-v2/scripts/arbx-env-deploy/arbx_env_upsert.sh /opt/arbitragex-v2/.env /tmp/rpc.env --backup \
-  && docker compose -f /opt/arbitragex-v2/docker/compose.prod.yml up -d --force-recreate --no-deps searcher-rs api-server \
-  && rm -f /tmp/rpc.env'
+# ONE writer only. Never call arbx_env_upsert.sh directly on /opt: that path has
+# no backup, no rollback, no flock and no verify (2026-10-19: the old example
+# here did exactly that, so the manual route was unprotected).
+scp -p scripts/arbx-env-deploy/rpc_env_generated.env arbx:/tmp/arbx_env_fragment.env
+scp -p scripts/arbx-env-deploy/arbx_env_upsert.sh     arbx:/tmp/arbx_env_upsert.sh
+scp -p scripts/arbx-env-deploy/arbx_remote.sh         arbx:/tmp/arbx_remote.sh
+ssh -o BatchMode=yes arbx 'bash /tmp/arbx_remote.sh dryrun /opt/arbitragex-v2/.env'   # review the diff
+ssh -o BatchMode=yes arbx 'bash /tmp/arbx_remote.sh apply  /opt/arbitragex-v2/.env'   # backup+upsert+verify+rollback
 ```
+- **Fragment lifecycle:** it holds secrets on BOTH sides. On the VPS it is
+  0600 on arrival (the runner forces `umask 077` + `chmod 600`) and shredded on
+  exit; on Windows delete it after a successful apply — it is not a keepsake.
+- **Host key:** `BatchMode=yes` prevents prompts, but the key trust comes from
+  your `~/.ssh/config` (`StrictHostKeyChecking`), not from these scripts. Keep
+  that file reviewed.
 - Emits per-**mainnet** `RPC_HTTP_<chainId>`/`RPC_WS_<chainId>` in the exact `token=url,token=url`
   format the hot-path consumes (`shared-rs/rpc_failover.rs`); keyless public endpoints only.
   Testnets keep their dedicated `*_RPC_URL` vars. Re-run = byte-identical (idempotent).

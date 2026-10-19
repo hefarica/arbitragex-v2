@@ -5,6 +5,10 @@
 # Expects /tmp/arbx_fragment.env and /tmp/arbx_env_upsert.sh already scp'd.
 # Self-cleans the secret-bearing fragment on exit (trap).
 set -euo pipefail
+# TRANSPORT-HYGIENE-01 (2026-10-19): the fragment carries live secrets and lands
+# in a world-readable /tmp. Everything this process creates is 0600 from here on,
+# and the fragment is tightened BEFORE it is ever read by the upsert.
+umask 077
 
 mode="${1:?mode (dryrun|apply) required}"
 envp="${2:?env path required}"
@@ -16,6 +20,7 @@ trap cleanup EXIT
 
 [ -f "$envp" ] || { echo "ENV not found: $envp" >&2; exit 3; }
 [ -f "$frag" ] || { echo "fragment not uploaded: $frag" >&2; exit 3; }
+chmod 600 "$frag" 2>/dev/null || true   # tighten before anything reads it
 [ -f "$ups" ]  || { echo "upsert not uploaded: $ups" >&2; exit 3; }
 
 case "$mode" in
