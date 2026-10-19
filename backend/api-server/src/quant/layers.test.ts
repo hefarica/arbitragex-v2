@@ -21,6 +21,14 @@ import {
 
 const cfg = DEFAULT_QUANT_CONFIG;
 
+/**
+ * C-16: la banda declarada [100, 150] aplica al principal MEDIDO. Estos tests
+ * legacy miden la escalera con principal 1000, que la banda declara
+ * OUT_OF_BAND: se ejecutan con un capital de 10.000 (techo 1.500) para que el
+ * sujeto del test siga siendo la escalera y no la bandera de política.
+ */
+const wideCfg = { ...DEFAULT_QUANT_CONFIG, capitalUsd: 10_000 };
+
 const leg = (over: Partial<LegInput>): LegInput => ({
   poolAddress: "0xpool",
   dex: "UniswapV2",
@@ -136,7 +144,7 @@ describe("quant layers · 08_ROUTE_PNL", () => {
       cfg,
     );
     const route = buildRoutes("r3", legs, cfg);
-    const pnl = buildPnl(route, { finalUsd: 1020, principalUsd: 1000 }, cfg);
+    const pnl = buildPnl(route, { finalUsd: 1020, principalUsd: 1000 }, wideCfg);
     expect(pnl.grossUsd).toBeCloseTo(20, 9);
     expect(pnl.grossBps).toBeCloseTo(200, 6);
     expect(pnl.gasUsd).toBeCloseTo(cfg.gasBaseUsd + 2 * cfg.gasPerHopUsd, 9);
@@ -168,7 +176,7 @@ describe("quant layers · 08_ROUTE_PNL", () => {
       cfg,
     );
     const route = buildRoutes("r3b", legs, cfg);
-    const pnl = buildPnl(route, { finalUsd: 980, principalUsd: 1000 }, cfg);
+    const pnl = buildPnl(route, { finalUsd: 980, principalUsd: 1000 }, wideCfg);
 
     expect(pnl.grossUsd).toBeCloseTo(-20, 9);
     // La desviación contra fair es exactamente la pérdida: por eso NO puede ser
@@ -193,7 +201,7 @@ describe("quant layers · 08_ROUTE_PNL", () => {
     const fair = new Map([[pairKey("0xAAA", "0xBBB"), { rate: 1.0, basis: "cross_section_median" as const }]]);
     const legs = buildLegs([leg({ amountIn: 1000, amountOut: 1010, depthUsd: 1e9 })], fair, cfg);
     const route = buildRoutes("r5", legs, cfg);
-    const pnl = buildPnl(route, { finalUsd: 1016, principalUsd: 1000 }, cfg); // 160 bps
+    const pnl = buildPnl(route, { finalUsd: 1016, principalUsd: 1000 }, wideCfg); // 160 bps
     expect(pnl.netBps).toBeLessThan(cfg.targetNetBps);
     expect(pnl.verdict).toBe("MARGINAL");
   });
@@ -212,7 +220,7 @@ describe("quant layers · 09_DASHBOARD", () => {
              leg({ tokenIn: "0xB", tokenOut: "0xA", amountIn: out, amountOut: out * 1.001, depthUsd: 1e6 })]
           : [leg({ amountIn: 1000, amountOut: out, depthUsd: 1e6 })];
       const r = buildRoutes(key, buildLegs(chain, fair, cfg), cfg);
-      return { r, p: buildPnl(r, { finalUsd: out * 1.001, principalUsd: 1000 }, cfg) };
+      return { r, p: buildPnl(r, { finalUsd: out * 1.001, principalUsd: 1000 }, wideCfg) };
     };
     const a = mk("ra", 1010, 2);
     const b = mk("rb", 1005, 2);
@@ -321,5 +329,180 @@ describe("QUANT-SIZING-NULL-01 · sin bound no hay tamaño, y se dice (null), no
     const legs = buildLegs([leg({ amountIn: 1000, amountOut: 1010, depthUsd: 1e6 })], fair, cfg);
     const route = buildRoutes("r-num", legs, cfg);
     expect(route.sizingUsd).toBeCloseTo(Math.min(cfg.capitalUsd, 0.005 * 1e6 * cfg.utilizationCap), 9);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// C-16 — una sola contabilidad: la fila manda.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("C-16 · ledger de costes, banda y continuidad", () => {
+  const fairFor = () =>
+    new Map([
+      [pairKey("0xAAA", "0xBBB"), { rate: 1.0, basis: "cross_section_median" as const }],
+      [pairKey("0xBBB", "0xAAA"), { rate: 1.0, basis: "cross_section_median" as const }],
+    ]);
+
+  /** Ruta de 2 patas con señal y profundidad: usable para los controles de coste. */
+  const usableRoute = (key = "c16") => {
+    const legs = buildLegs(
+      [
+        leg({ amountIn: 1000, amountOut: 1010, depthUsd: 1_000_000 }),
+        leg({ tokenIn: "0xBBB", tokenOut: "0xAAA", amountIn: 1010, amountOut: 1020, depthUsd: 1_000_000 }),
+      ],
+      fairFor(),
+      cfg,
+    );
+    return buildRoutes(key, legs, cfg);
+  };
+
+  const measuredCosts = { gasUsd: 0.6040693, flashUsd: 0, tipUsd: 0, otherCostsUsd: 0.01 };
+
+  it("el gas del ledger (0.6040693) sustituye a la constante 6+4/hop", () => {
+    const route = usableRoute();
+    const pnl = buildPnl(
+      route,
+      { finalUsd: 150 + 0.6956, principalUsd: 150, costs: measuredCosts },
+      cfg,
+    );
+    expect(pnl.costBasis).toBe("measured");
+    expect(pnl.gasUsd).toBeCloseTo(0.6040693, 9);
+    expect(pnl.flashUsd).toBe(0);
+    expect(pnl.tipUsd).toBe(0);
+    expect(pnl.otherCostsUsd).toBeCloseTo(0.01, 9);
+    expect(pnl.totalCostUsd).toBeCloseTo(0.6140693, 9);
+    // La escalera vieja habría restado 14 USD (6 + 2×4). Este aserto es el que
+    // falla antes del cambio.
+    expect(pnl.gasUsd as number).toBeLessThan(1);
+  });
+
+  it("reconcilia net y gross con el ledger de la fila (Δ ≤ 0.005)", () => {
+    const route = usableRoute();
+    const principal = 150;
+    const grossLedger = 0.6956;
+    const netLedger = grossLedger - (0.6040693 + 0 + 0 + 0.01);
+    const pnl = buildPnl(
+      route,
+      {
+        finalUsd: principal + grossLedger,
+        principalUsd: principal,
+        costs: measuredCosts,
+        measuredNetUsd: netLedger,
+      },
+      cfg,
+    );
+    expect(pnl.grossUsd).toBeCloseTo(grossLedger, 9);
+    expect(pnl.netUsd as number).toBeCloseTo(netLedger, 9);
+    expect(pnl.netDeltaUsd as number).toBeLessThanOrEqual(0.005);
+  });
+
+  it("si falta un componente del ledger falla cerrado: no inventa la escalera", () => {
+    const route = usableRoute();
+    const pnl = buildPnl(
+      route,
+      {
+        finalUsd: 150 + 1,
+        principalUsd: 150,
+        costs: { gasUsd: 0.6040693, flashUsd: null, tipUsd: 0, otherCostsUsd: 0.01 },
+      },
+      cfg,
+    );
+    expect(pnl.costBasis).toBe("measured_incomplete");
+    expect(pnl.totalCostUsd).toBeNull();
+    expect(pnl.netUsd).toBeNull();
+    expect(pnl.netBps).toBeNull();
+    expect(pnl.status).toBe("QUOTE_INCOMPLETE");
+  });
+
+  it("principal medido fuera de la banda ⇒ OUT_OF_BAND, con principal y gross, sin bps", () => {
+    const route = usableRoute();
+    const pnl = buildPnl(
+      route,
+      { finalUsd: 0.01 + 0.0001, principalUsd: 0.01, costs: measuredCosts },
+      cfg,
+    );
+    expect(pnl.status).toBe("OUT_OF_BAND");
+    expect(pnl.verdict).toBe("OUT_OF_BAND");
+    expect(pnl.inBand).toBe(false);
+    expect(pnl.sizingUsd).toBeCloseTo(0.01, 12);
+    expect(pnl.grossUsd).toBeCloseTo(0.0001, 12);
+    expect(pnl.grossBps).toBeNull();
+    expect(pnl.netBps).toBeNull();
+    expect(pnl.whyNot).toContain("banda declarada");
+  });
+
+  it("el techo de 1000 también sale OUT_OF_BAND (la banda es política, no coste)", () => {
+    const route = usableRoute();
+    const pnl = buildPnl(
+      route,
+      { finalUsd: 1000 + 0.6956, principalUsd: 1000, costs: measuredCosts },
+      cfg,
+    );
+    expect(pnl.status).toBe("OUT_OF_BAND");
+    expect(pnl.bandUsd).toEqual({ minUsd: 100, maxUsd: 150 });
+    expect(pnl.netBps).toBeNull();
+  });
+
+  it("control positivo fuera del pipeline: +3% con coste 1.11 ⇒ EJECUTAR (≥200 bps)", () => {
+    const route = usableRoute();
+    // A 150 USD (borde alto de la banda declarada): gross +3% = 4.5 USD.
+    const pnl = buildPnl(
+      route,
+      { finalUsd: 154.5, principalUsd: 150, costs: measuredCosts, measuredNetUsd: 4.5 - 0.6140693 },
+      cfg,
+    );
+    expect(pnl.netBps as number).toBeGreaterThanOrEqual(200);
+    expect(pnl.verdict).toBe("EJECUTAR");
+    // A 1000 USD el control de LEVI exige una banda que lo contenga (su propia
+    // banda [100,150] lo declara OUT_OF_BAND): capital 10.000 ⇒ techo 1.500.
+    const wide = { ...cfg, capitalUsd: 10_000 };
+    const pnl1000 = buildPnl(
+      route,
+      { finalUsd: 1030, principalUsd: 1000, costs: measuredCosts, measuredNetUsd: 30 - 0.6140693 },
+      wide,
+    );
+    expect(pnl1000.netBps as number).toBeGreaterThanOrEqual(200);
+    expect(pnl1000.verdict).toBe("EJECUTAR");
+  });
+
+  it("control negativo: −0.5% ⇒ RECHAZAR por coste, no NO VIABLE", () => {
+    const route = usableRoute();
+    const pnl = buildPnl(
+      route,
+      { finalUsd: 149.25, principalUsd: 150, costs: measuredCosts, measuredNetUsd: -0.75 - 0.6140693 },
+      cfg,
+    );
+    expect(pnl.verdict).toBe("RECHAZAR");
+    expect(pnl.status).toBe("NET_BELOW_TARGET");
+    expect(pnl.whyNot).toBe("coste > gross");
+  });
+
+  it("continuidad: un salto > 1 bp suprime Σw y sizing (LEG_VALUE_JUMP)", () => {
+    // Fila 51813500, pata 4: 74 USDT → 72.927.695.391.209 wei de DAI; la pata
+    // siguiente arranca con 74 DAI. Ratio ≈ 985× ⇒ cambio de unidades.
+    const legs = buildLegs(
+      [
+        leg({ amountIn: 74, amountOut: 72_927.695391209, depthUsd: 1_000_000 }),
+        leg({ tokenIn: "0xBBB", tokenOut: "0xAAA", amountIn: 74, amountOut: 75, depthUsd: 1_000_000 }),
+      ],
+      fairFor(),
+      cfg,
+    );
+    const route = buildRoutes("jump", legs, cfg);
+    expect(route.legsChecked).toBe(1);
+    expect(route.maxValueJumpRatio as number).toBeGreaterThan(0.0001);
+    expect(route.status).toBe("LEG_VALUE_JUMP");
+    expect(route.sumW).toBeNull();
+    expect(route.discoveryReturnPct).toBeNull();
+    expect(route.sizingUsd).toBeNull();
+    expect(route.usable).toBe(false);
+    expect(route.whyNot).toContain("salto de valor entre patas");
+  });
+
+  it("continuidad limpia: los valores encadenan y Σw/sizing se publican", () => {
+    const route = usableRoute();
+    expect(route.legsChecked).toBe(1);
+    expect(route.maxValueJumpRatio).toBe(0);
+    expect(route.sumW).not.toBeNull();
+    expect(route.status).not.toBe("LEG_VALUE_JUMP");
   });
 });
