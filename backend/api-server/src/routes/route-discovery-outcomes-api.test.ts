@@ -14,12 +14,17 @@
 // INSERT), and rows come back keyed as the merge query returns them
 // ({key, n, opportunities}) — the route's rename/split is part of the
 // contract under test.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import express, { type Request, type Response } from "express";
 import request from "supertest";
 import type pg from "pg";
 
-import { buildRouteDiscoveryOutcomesRouter } from "./route-discovery-outcomes-api.js";
+import {
+  buildRouteDiscoveryOutcomes,
+  buildRouteDiscoveryOutcomesRouter,
+  ROLLUP_MAINTAIN_INTERVAL_MS,
+  ROLLUP_MAINTAIN_WINDOW_HOURS,
+} from "./route-discovery-outcomes-api.js";
 
 /** One canned answer per query the summary runs, keyed by SQL fragment. */
 function stubPool(overrides: Record<string, pg.QueryResult> = {}): pg.Pool {
@@ -238,5 +243,152 @@ describe("route-discovery-outcomes summary — FE-0038 §47 groupings", () => {
     expect(unbounded, "raw scan of `ts_ms >= $3` without the $4 upper bound = full-window scan (the timeout)").toEqual([]);
     // Tail edges present for both dims ([$5, now) reads).
     expect(totals!.match(/route_discovery_outcomes WHERE ts_ms >= \$5/g)?.length).toBeGreaterThanOrEqual(3);
+  });
+});
+
+// RDO-503-CONVERGE (2026-10-19): the operator panel showed "Outcomes series
+// unavailable" while the backend was healthy. Root cause measured in this
+// route: the top-up was ONE 24-bucket statement ordered strictly oldest-first,
+// so (a) a batch crossing the 15s statement timeout was rolled back whole —
+// zero progress, no convergence — and (b) every poll spent its buckets on the
+// oldest gaps while the 24h window the panel reads stayed gapped (503). The
+// fix: the requested window's buckets go first, and the work commits in small
+// batches so a slow batch costs at most its own size.
+describe("route-discovery-outcomes top-up — RDO-503-CONVERGE", () => {
+  function convergeStub(insertRowCount: (call: number) => number | "throw") {
+    const inserts: Array<{ sql: string; params: unknown[] }> = [];
+    let call = 0;
+    const pool = {
+      connect: async () => ({
+        query: async (sql: string, params: unknown[] = []) => {
+          if (sql === "BEGIN" || sql.startsWith("SET LOCAL") || sql === "COMMIT" || sql === "ROLLBACK")
+            return { rows: [], rowCount: 0 };
+          if (sql.includes("INSERT INTO route_discovery_outcome_rollup_5m")) {
+            call += 1;
+            inserts.push({ sql, params });
+            const n = insertRowCount(call);
+            if (n === "throw") throw new Error("canceling statement due to statement timeout");
+            return { rows: [], rowCount: n };
+          }
+          if (sql.includes("AS missing")) return { rows: [{ missing: 0, oldest_missing: "0" }], rowCount: 1 };
+          if (sql.includes("sum(total)::bigint AS total"))
+            return { rows: [{ total: "0", opportunities: "0" }], rowCount: 1 };
+          if (sql.includes("dim = '")) return { rows: [], rowCount: 0 };
+          return { rows: [], rowCount: 0 };
+        },
+        release: () => {},
+      }),
+    } as unknown as pg.Pool;
+    return { pool, inserts };
+  }
+
+  it("fills the REQUESTED window's buckets first, in committed batches (not one all-or-nothing statement)", async () => {
+    // Every batch reports a full insert, so the top-up keeps going until the
+    // per-request bucket budget is spent.
+    const { pool, inserts } = convergeStub(() => 6);
+    const res = await request(appFor(pool)).get("/api/v1/route-discovery-outcomes/summary?hours=24");
+
+    expect(res.status).toBe(200);
+    // Batched: more than one statement, so a later failure cannot erase the
+    // earlier committed buckets.
+    expect(inserts.length).toBeGreaterThan(1);
+    // Each statement is bounded well under the 24-bucket request budget.
+    expect(inserts[0].params[2]).toBe(6);
+    // And it is told WHICH window to prioritise (old code passed []).
+    expect(inserts[0].params[0]).toEqual(expect.any(Number));
+    expect(inserts[0].params[1]).toEqual(expect.any(Number));
+    expect(Number(inserts[0].params[1])).toBeGreaterThan(Number(inserts[0].params[0]));
+    // The window-first ordering clause is the mechanism under test.
+    expect(inserts[0].sql).toMatch(
+      /ORDER BY \(g\.bucket >= \$1::bigint AND g\.bucket <= \$2::bigint\) DESC, g\.bucket ASC/,
+    );
+    // 24 buckets / 6 per statement = 4 statements.
+    expect(inserts.length).toBe(4);
+  });
+
+  it("a batch that dies keeps the committed progress and lets the coverage check decide (never a blanket query_failed)", async () => {
+    // Batch 1 dies (statement timeout). The old single-statement top-up turned
+    // this into 503 query_failed even when the window was already covered.
+    const { pool, inserts } = convergeStub(() => "throw");
+    const res = await request(appFor(pool)).get("/api/v1/route-discovery-outcomes/summary?hours=24");
+    expect(inserts.length).toBe(1); // it does not retry the same dead batch
+    expect(res.status).toBe(200); // coverage check said the window is covered
+  });
+});
+
+// RDO-503-CONVERGE hardening: the top-up only ran inside a read. With the
+// operator panel closed (most of the time) no read happens, so the rollup fell
+// behind and the next visitor paid the whole backlog inside one request — the
+// "series unavailable" the owner saw on a healthy backend. The maintainer
+// closes that gap without any reader.
+describe("route-discovery-outcomes rollup maintainer — RDO-503-CONVERGE", () => {
+  function convergeStub(insertRowCount: (call: number) => number | "throw") {
+    const inserts: Array<{ sql: string; params: unknown[] }> = [];
+    const pool = {
+      connect: async () => ({
+        query: async (sql: string, params: unknown[] = []) => {
+          if (sql === "BEGIN" || sql.startsWith("SET LOCAL") || sql === "COMMIT" || sql === "ROLLBACK")
+            return { rows: [], rowCount: 0 };
+          if (sql.includes("INSERT INTO route_discovery_outcome_rollup_5m")) {
+            inserts.push({ sql, params });
+            return { rows: [], rowCount: insertRowCount(inserts.length) };
+          }
+          return { rows: [], rowCount: 0 };
+        },
+        release: () => {},
+      }),
+    } as unknown as pg.Pool;
+    return { pool, inserts };
+  }
+
+  it("keeps the rollup current on its interval with no reader at all", async () => {
+    vi.useFakeTimers();
+    try {
+      const { pool, inserts } = convergeStub(() => 6);
+      const wiring = buildRouteDiscoveryOutcomes(pool, { maintain: true });
+      expect(inserts.length).toBe(0); // interval-only: nothing at build time
+
+      await vi.advanceTimersByTimeAsync(ROLLUP_MAINTAIN_INTERVAL_MS);
+      expect(inserts.length).toBeGreaterThan(0);
+      // It maintains the panels' default 24h window (minus the in-progress
+      // bucket and the ceil() alignment of the head edge), not an arbitrary
+      // range.
+      const from = Number(inserts[0].params[0]);
+      const to = Number(inserts[0].params[1]);
+      const span = to - from;
+      expect(span).toBeLessThan(ROLLUP_MAINTAIN_WINDOW_HOURS * 3600_000);
+      expect(span).toBeGreaterThanOrEqual(ROLLUP_MAINTAIN_WINDOW_HOURS * 3600_000 - 2 * 300_000);
+
+      wiring.maintainer.stop();
+      const stopped = inserts.length;
+      await vi.advanceTimersByTimeAsync(ROLLUP_MAINTAIN_INTERVAL_MS * 3);
+      expect(inserts.length).toBe(stopped); // stopped means stopped
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("no pool → no timer (and it must not throw)", async () => {
+    vi.useFakeTimers();
+    try {
+      const wiring = buildRouteDiscoveryOutcomes(null, { maintain: true });
+      expect(typeof wiring.maintainer.stop).toBe("function");
+      await vi.advanceTimersByTimeAsync(ROLLUP_MAINTAIN_INTERVAL_MS * 3);
+      wiring.maintainer.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("the router-only entry point never starts a timer (back-compat)", async () => {
+    vi.useFakeTimers();
+    try {
+      const { pool, inserts } = convergeStub(() => 6);
+      buildRouteDiscoveryOutcomesRouter(pool);
+      await vi.advanceTimersByTimeAsync(ROLLUP_MAINTAIN_INTERVAL_MS * 3);
+      expect(inserts.length).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

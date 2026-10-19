@@ -30,6 +30,16 @@ const FETCH_TIMEOUT_MS = 65000;
 
 export type OutcomesStatus = "CONNECTING" | "LIVE" | "STALE";
 
+/**
+ * RDO-503-REASON-UI: recovery detail the route carries on a
+ * `rollup_backfilling` 503. Kept here (the wire's read-side) so the panel copy
+ * helper consumes the same shape the hook parses.
+ */
+export interface OutcomesUnavailableDetail {
+  missing_buckets?: number;
+  retry_after_s?: number;
+}
+
 export interface OutcomeTotals {
   total: number | null;
   opportunities: number | null;
@@ -83,12 +93,19 @@ export interface UseRouteDiscoveryOutcomesResult {
   updatedAt: number | null;
   /** Verbatim upstream 503 reason (R8) when the series is unavailable. */
   unavailableReason: string | null;
+  /**
+   * RDO-503-REASON-UI: the route's own recovery detail on a
+   * `rollup_backfilling` 503 (missing_buckets / retry_after_s). Surfaced so the
+   * panel can say WHY and WHEN it recovers instead of guessing a cause.
+   */
+  unavailableDetail: OutcomesUnavailableDetail | null;
 }
 
 type RawSummary = {
   ok?: boolean;
   window_hours?: unknown;
   reason?: unknown;
+  detail?: { missing_buckets?: unknown; retry_after_s?: unknown } | null;
   data?: {
     totals?: Record<string, unknown> | null;
     by_reason?: unknown;
@@ -99,6 +116,17 @@ type RawSummary = {
     by_pair?: unknown;
   } | null;
 } | null;
+
+function toDetail(raw: unknown): OutcomesUnavailableDetail | null {
+  if (!raw || typeof raw !== "object") return null;
+  const d = raw as { missing_buckets?: unknown; retry_after_s?: unknown };
+  const detail: OutcomesUnavailableDetail = {};
+  const n = toNum(d.missing_buckets);
+  const r = toNum(d.retry_after_s);
+  if (n !== null) detail.missing_buckets = n;
+  if (r !== null) detail.retry_after_s = r;
+  return Object.keys(detail).length > 0 ? detail : null;
+}
 
 function toNum(v: unknown): number | null {
   if (typeof v === "number") return Number.isFinite(v) ? v : null;
@@ -120,6 +148,7 @@ export function useRouteDiscoveryOutcomes(hours: number): UseRouteDiscoveryOutco
   const [status, setStatus] = useState<OutcomesStatus>("CONNECTING");
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
   const [unavailableReason, setUnavailableReason] = useState<string | null>(null);
+  const [unavailableDetail, setUnavailableDetail] = useState<OutcomesUnavailableDetail | null>(null);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -131,6 +160,7 @@ export function useRouteDiscoveryOutcomes(hours: number): UseRouteDiscoveryOutco
       const t = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
       let json: RawSummary = null;
       let httpReason: string | null = null;
+      let httpDetail: OutcomesUnavailableDetail | null = null;
       try {
         const res = await fetch(`${base}/api/route-discovery-outcomes/summary?hours=${hours}`, {
           credentials: "include",
@@ -140,9 +170,12 @@ export function useRouteDiscoveryOutcomes(hours: number): UseRouteDiscoveryOutco
           json = (await res.json()) as RawSummary;
         } else {
           // R8: surface the api-server 503 reason verbatim — never mask as "ok".
+          // RDO-503-REASON-UI: carry the route's own recovery detail too, so the
+          // panel names the observed cause instead of guessing one.
           try {
-            const b = (await res.json()) as { reason?: unknown };
+            const b = (await res.json()) as { reason?: unknown; detail?: unknown };
             httpReason = typeof b?.reason === "string" ? b.reason : `http_${res.status}`;
+            httpDetail = toDetail(b?.detail);
           } catch {
             httpReason = `http_${res.status}`;
           }
@@ -186,6 +219,7 @@ export function useRouteDiscoveryOutcomes(hours: number): UseRouteDiscoveryOutco
         );
         setWindowHours(toNum(json.window_hours));
         setUnavailableReason(null);
+        setUnavailableDetail(null);
         setStatus("LIVE");
         setUpdatedAt(Date.now());
         // FE-0038 §47 groupings — same tolerant parse as by_chain.
@@ -216,6 +250,7 @@ export function useRouteDiscoveryOutcomes(hours: number): UseRouteDiscoveryOutco
         );
       } else {
         setUnavailableReason(httpReason ?? "no_data");
+        setUnavailableDetail(httpDetail);
         setStatus("STALE");
       }
     };
@@ -239,5 +274,6 @@ export function useRouteDiscoveryOutcomes(hours: number): UseRouteDiscoveryOutco
     status,
     updatedAt,
     unavailableReason,
+    unavailableDetail,
   };
 }

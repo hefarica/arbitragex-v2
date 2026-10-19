@@ -19,16 +19,55 @@
  * 15s honest budget can never hold (miration 115 header). The summary now
  * aggregates the 5-minute rollup (`route_discovery_outcome_rollup_5m`,
  * migration 115) for COMPLETE buckets and scans RAW only for the two ≤5-min
- * window edges. ensureRollups() tops the rollup up oldest-missing-first
- * (≤24 buckets/request, INSERT .. ON CONFLICT DO NOTHING — idempotent); if
- * the requested window still has coverage gaps the route answers the SAME
- * honest 503 (reason=rollup_backfilling) rather than silently undercounting.
+ * window edges. ensureRollups() tops the rollup up (≤24 buckets/request,
+ * INSERT .. ON CONFLICT DO NOTHING — idempotent); if the requested window
+ * still has coverage gaps the route answers the SAME honest 503
+ * (reason=rollup_backfilling) rather than silently undercounting.
+ *
+ * RDO-503-CONVERGE (2026-10-19): the top-up used to be ONE 24-bucket statement
+ * ordered strictly oldest-first. Two consequences, both measured from the
+ * operator panel ("Gate-C / Route Outcomes analytics — series unavailable"):
+ *   - a batch that crossed the 15s statement timeout was rolled back WHOLE —
+ *     zero progress, so a rollup that fell behind could not catch up; and
+ *   - every poll spent its 24 buckets on the OLDEST gaps, so a 24h window
+ *     stayed gapped (503) while the route re-counted buckets nobody was
+ *     reading.
+ * Now the top-up runs in small committed batches (6 buckets/statement, inside
+ * a 12s wall-clock budget) and fills the CALLER'S window buckets first. A slow
+ * batch costs at most 6 buckets and earlier batches stay committed; the
+ * coverage check is still the only thing that decides 200 vs the honest 503,
+ * so nothing here can ever serve an undercounted series.
  */
 
 import { Router, type Request, type Response } from "express";
 import pg from "pg";
 
-export function buildRouteDiscoveryOutcomesRouter(pool: pg.Pool | null): Router {
+/**
+ * RDO-503-CONVERGE hardening — the rollup maintainer.
+ *
+ * The top-up used to run ONLY inside a read request. With the operator panel
+ * closed (most of the time) nobody reads, so no bucket is filled, and the next
+ * visitor pays the WHOLE backlog inside one request — the measured "series
+ * unavailable" on a healthy backend. This maintainer keeps the rollup within a
+ * couple of buckets of now so a read never has a backlog to clear.
+ *
+ * Interval-only (first pass after one interval) and unref'd, like the other
+ * background guards in index.ts. Never runs when there is no pool.
+ */
+export const ROLLUP_MAINTAIN_INTERVAL_MS = 5 * 60_000;
+/** Window the maintainer keeps current — the panels' default 24h read. */
+export const ROLLUP_MAINTAIN_WINDOW_HOURS = 24;
+
+export interface RouteDiscoveryOutcomesWiring {
+  router: Router;
+  /** Stop handle for the interval maintainer (no-op when it never started). */
+  maintainer: { stop: () => void };
+}
+
+export function buildRouteDiscoveryOutcomes(
+  pool: pg.Pool | null,
+  opts: { maintain?: boolean } = {},
+): RouteDiscoveryOutcomesWiring {
   const router = Router();
 
   const unavailable = (res: Response, reason: string) =>
@@ -53,6 +92,18 @@ export function buildRouteDiscoveryOutcomesRouter(pool: pg.Pool | null): Router 
   // Rollup top-up work bound per request: 24 buckets ≈ ≤7s of one-time
   // per-bucket aggregation inside the same 15s budget; steady state is 0-1.
   const ROLLUP_TOPUP_BUCKETS = 24;
+  // RDO-503-CONVERGE (2026-10-19): the 24 buckets are committed in SMALL
+  // statements, not one. With a single 24-bucket statement a batch that
+  // crossed the 15s statement timeout was rolled back WHOLE — zero progress,
+  // so a rollup that fell behind could never catch up and the panel stayed
+  // "series unavailable" forever. At 6 buckets per statement a slow bucket
+  // costs at most 6, every earlier batch is already committed, and the next
+  // poll resumes where this one stopped.
+  const ROLLUP_TOPUP_BATCH = 6;
+  // Wall-clock bound for the whole top-up inside one request (the FE fetch
+  // budget is 65s and the edge caches 15s — 12s keeps the route responsive
+  // while still closing a window-sized gap in a single poll).
+  const ROLLUP_TOPUP_BUDGET_MS = 12_000;
 
   const timedQuery = (sql: string, params: unknown[]) => {
     const run = async (): Promise<pg.QueryResult> => {
@@ -105,8 +156,12 @@ export function buildRouteDiscoveryOutcomesRouter(pool: pg.Pool | null): Router 
         SELECT 1 FROM route_discovery_outcome_rollup_5m rr
         WHERE rr.dim = '__totals__' AND rr.bucket_ms = g.bucket
       )
-      ORDER BY 1
-      LIMIT ${ROLLUP_TOPUP_BUCKETS}
+      -- RDO-503-CONVERGE: the buckets the caller's window NEEDS ($1..$2) are
+      -- filled FIRST; the older gaps still get filled (this is not a scan
+      -- reduction), but they can never again block a read of a window that is
+      -- already coverable. Postgres sorts true before false under DESC.
+      ORDER BY (g.bucket >= $1::bigint AND g.bucket <= $2::bigint) DESC, g.bucket ASC
+      LIMIT $3
     )
     INSERT INTO route_discovery_outcome_rollup_5m (dim, key, bucket_ms, n, opportunities, with_reserves, profit_gt0)
     SELECT agg.dim, agg.key, t.bucket, agg.n, agg.opportunities, agg.with_reserves, agg.profit_gt0
@@ -146,7 +201,31 @@ export function buildRouteDiscoveryOutcomesRouter(pool: pg.Pool | null): Router 
     ) agg
     ON CONFLICT DO NOTHING`;
 
-  const ensureRollups = () => timedQuery(ENSURE_ROLLUP_SQL, []);
+  const ensureRollups = async (windowFrom: number, windowTo: number) => {
+    const deadline = Date.now() + ROLLUP_TOPUP_BUDGET_MS;
+    let remaining = ROLLUP_TOPUP_BUCKETS;
+    while (remaining > 0 && Date.now() < deadline) {
+      const take = Math.min(ROLLUP_TOPUP_BATCH, remaining);
+      let inserted = 0;
+      try {
+        const r = await timedQuery(ENSURE_ROLLUP_SQL, [windowFrom, windowTo, take]);
+        inserted = r.rowCount ?? 0;
+      } catch {
+        // RDO-503-CONVERGE: the top-up is best-effort maintenance, never the
+        // source of truth. A batch that failed or hit the statement timeout
+        // keeps whatever earlier batches already COMMITTED and hands the
+        // verdict back to the coverage check below — which still answers the
+        // same honest 503 if the window is short (never an undercount), and
+        // answers 200 the moment the window IS covered. Rethrowing here would
+        // turn a slow maintenance batch into a hard query_failed for a series
+        // that may well be complete.
+        break;
+      }
+      remaining -= take;
+      // Fewer rows than asked = no gaps left (or none inside the window).
+      if (inserted < take) return;
+    }
+  };
 
   // How many COMPLETE buckets the window expects but the rollup still lacks.
   // The demand starts at the OLDEST DATA BUCKET, not at `since` — a window
@@ -263,14 +342,17 @@ export function buildRouteDiscoveryOutcomesRouter(pool: pg.Pool | null): Router 
     const hours = clampInt(req.query.hours, 24, 1, 336);
     const since = Date.now() - hours * 3600 * 1000;
     try {
-      // 1) Top the rollup up (idempotent, oldest gap first) BEFORE reading it.
-      await ensureRollups();
-
-      // 2) Window edges. If the rollup serves part of the window, verify the
-      //    coverage is complete — a gapped window would UNDERCOUNT silently,
-      //    so it answers the same honest 503 instead (recoverable: the top-up
-      //    converges across polls and the next request succeeds).
+      // 1) Window edges first — pure math, no DB — so the top-up below knows
+      //    which buckets THIS request needs (RDO-503-CONVERGE).
       const edges = windowEdges(since, Date.now());
+
+      // 2) Top the rollup up (idempotent, window buckets first) BEFORE reading it.
+      await ensureRollups(edges.rollFrom, edges.rollTo);
+
+      // 3) If the rollup serves part of the window, verify the coverage is
+      //    complete — a gapped window would UNDERCOUNT silently, so it answers
+      //    the same honest 503 instead (recoverable: the top-up converges
+      //    across polls and the next request succeeds).
       if (edges.useRollup) {
         const gaps = await coverageGaps(edges.rollFrom, edges.rollTo);
         const missing = Number(gaps.rows[0]?.missing ?? 0);
@@ -371,5 +453,33 @@ export function buildRouteDiscoveryOutcomesRouter(pool: pg.Pool | null): Router 
     }
   });
 
-  return router;
+  // ── RDO-503-CONVERGE hardening: keep the rollup current without a reader ──
+  // Interval-only (first pass after one interval), unref'd so it can never hold
+  // the process open, and a no-op when the pool is absent.
+  const maintainer = { stop: () => {} };
+  if (opts.maintain && pool) {
+    const timer = setInterval(() => {
+      const now = Date.now();
+      const edges = windowEdges(now - ROLLUP_MAINTAIN_WINDOW_HOURS * 3600_000, now);
+      void ensureRollups(edges.rollFrom, edges.rollTo).catch(() => {
+        // Best-effort maintenance: the coverage check in the read path stays the
+        // only thing that decides 200 vs the honest 503. A failed pass is
+        // retried on the next interval; it must never crash the process.
+      });
+    }, ROLLUP_MAINTAIN_INTERVAL_MS);
+    timer.unref?.();
+    maintainer.stop = () => clearInterval(timer);
+  }
+
+  return { router, maintainer };
+}
+
+/**
+ * Router-only entry point (back-compat): same route, no background maintainer.
+ * Callers that own the process lifecycle (index.ts) use
+ * buildRouteDiscoveryOutcomes(pool, { maintain: true }) so the rollup is kept
+ * current even when nobody is reading the panel.
+ */
+export function buildRouteDiscoveryOutcomesRouter(pool: pg.Pool | null): Router {
+  return buildRouteDiscoveryOutcomes(pool).router;
 }

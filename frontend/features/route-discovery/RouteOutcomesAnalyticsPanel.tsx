@@ -42,6 +42,7 @@ import {
   type OutcomePairRow,
 } from "@/lib/hooks/useRouteDiscoveryOutcomes";
 import { Freshness, ReadOnlyBadge, StatusPill } from "./premium-ui";
+import { OUTCOMES_POLL_SECONDS, outcomesUnavailableCopy } from "./unavailable-copy";
 
 const WINDOWS: Array<{ label: string; hours: number }> = [
   { label: "24h", hours: 24 },
@@ -200,7 +201,7 @@ export function RouteOutcomesAnalyticsPanel() {
   const [hours, setHours] = React.useState(24);
   // FE-0038: distinct query window ⇒ a distinct poll is legitimate (it is
   // not the same datum twice); the panel owns its window selector.
-  const { byCartridge, byPair, groupingsServed, windowHours, status, updatedAt, unavailableReason } =
+  const { byCartridge, byPair, groupingsServed, windowHours, status, updatedAt, unavailableReason, unavailableDetail } =
     useRouteDiscoveryOutcomes(hours);
   const hasData = status === "LIVE";
 
@@ -246,13 +247,11 @@ export function RouteOutcomesAnalyticsPanel() {
             <AlertCircleIcon className="h-4 w-4" />
             <AlertTitle>Analytics series unavailable</AlertTitle>
             <AlertDescription className="text-sm">
-              The outcomes summary could not be read
-              {unavailableReason ? (
-                <>
-                  {" "}(<span className="font-mono">{unavailableReason}</span>)
-                </>
-              ) : null}
-              . Polling /api/route-discovery-outcomes/summary every 8s — never a
+              {/* RDO-503-REASON-UI: same reason-faithful copy as the Gate-C
+                  panel, and the same 60s cadence — this panel kept saying
+                  "every 8s" after RDO-SUMMARY-HANG raised POLL_MS. */}
+              {outcomesUnavailableCopy(unavailableReason, unavailableDetail)} Polling
+              /api/route-discovery-outcomes/summary every {OUTCOMES_POLL_SECONDS}s — never a
               fabricated row (R8).
             </AlertDescription>
           </Alert>
