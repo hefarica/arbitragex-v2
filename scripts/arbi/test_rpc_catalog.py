@@ -65,8 +65,8 @@ def test_emit_env():
     check("el secreto NO está en el .env emitido", "SUPERSECRETKEY123456" not in text)
     check("Alchemy queda con ${VAR}", "${ALCHEMY_API_KEY}" in text)
     # Base tiene UN proveedor -> aviso de failover imposible
-    check("avisa cuando hay <2 proveedores", any("Base HTTP" in w for w in warns), str(warns))
-    check("Ethereum (3 proveedores) sin aviso", not any("Ethereum Mainnet HTTP" in w for w in warns))
+    check("avisa cuando hay <2 proveedores", any("8453" in w and "failover" in w for w in warns), str(warns))
+    check("Ethereum (3 proveedores) sin aviso", not any(w.startswith("chain 1 ") for w in warns), str(warns))
 
 
 def test_percentile():
@@ -113,8 +113,63 @@ def test_compare_runs():
     check("veredicto nombra ruido", "INESTABLE" in r2["verdict"])
 
 
+def _model_two_chains():
+    entries = [
+        rc.RpcEntry("Ethereum Mainnet", "HTTP", "PublicNode", "https://ethereum-rpc.publicnode.com/"),
+        rc.RpcEntry("Ethereum Mainnet", "HTTP", "DRPC", "https://eth.drpc.org/"),
+        rc.RpcEntry("Base", "HTTP", "DRPC", "https://base.drpc.org/"),
+        rc.RpcEntry("Base", "HTTP", "PublicNode", "https://base-rpc.publicnode.com/"),
+    ]
+    return rc.model_from_catalog(rc.build_catalog(entries))
+
+
+def test_isomorphism():
+    print("isomorfismo (round-trip)")
+    m = _model_two_chains()
+    text = rc.emit_env_from_model(m)
+    back = rc.model_from_env(text)
+    check("modelo -> env -> modelo == modelo", back == m, f"{back} != {m}")
+
+
+def test_idempotence():
+    print("idempotencia")
+    m = _model_two_chains()
+    t1 = rc.emit_env_from_model(m)
+    t2 = rc.emit_env_from_model(rc.model_from_env(t1))
+    check("aplicar dos veces => mismo byte", t1 == t2)
+    # reinyección: aplicar el resultado no cambia nada
+    t3 = rc.emit_env_from_model(rc.model_from_env(t2))
+    check("tercera aplicación tampoco", t2 == t3)
+
+
+def test_polymorphic():
+    print("polimorfismo (env de entrada)")
+    # un env con URL desnuda debe nombrarse 'primary', como el pool
+    env = "RPC_HTTP_1=https://ethereum-rpc.publicnode.com/\n"
+    m = rc.model_from_env(env)
+    check("URL desnuda -> primary", m[1]["HTTP"].get("primary") == "https://ethereum-rpc.publicnode.com/")
+    # un env bien formado normaliza igual que el catálogo
+    m2 = _model_two_chains()
+    check("env -> modelo -> env estable", rc.model_from_env(rc.emit_env_from_model(m2)) == m2)
+
+
+def test_validate():
+    print("validación fail-closed")
+    good = _model_two_chains()
+    check("modelo bueno sin errores", rc.validate_model(good) == [])
+    one = {1: {"HTTP": {"solo": "https://x.example/"}, "WSS": {}}}
+    check("1 proveedor => error de failover", any("failover" in e for e in rc.validate_model(one)))
+    leak = {1: {"HTTP": {"a": "https://eth-mainnet.g.alchemy.com/v2/SECRETKEY1234567890", "b": "https://b.example/"}, "WSS": {}}}
+    check("clave embebida => error de fuga", any("fuga" in e for e in rc.validate_model(leak)))
+    safe = {1: {"HTTP": {"a": "https://eth-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}", "b": "https://b.example/"}, "WSS": {}}}
+    check("${VAR} no es fuga", rc.validate_model(safe) == [])
+    bad_url = {1: {"HTTP": {"a": "ftp://x", "b": "https://b.example/"}, "WSS": {}}}
+    check("URL no válida => error", any("URL no válida" in e for e in rc.validate_model(bad_url)))
+
+
 def main():
-    for t in (test_sanitize, test_build_catalog, test_emit_env,
+    for t in (test_sanitize, test_build_catalog, test_emit_env, test_isomorphism,
+              test_idempotence, test_polymorphic, test_validate,
               test_percentile, test_controls, test_compare_runs):
         t()
     print()

@@ -15,8 +15,19 @@ Dos cosas, y las dos con artefacto:
      p50/p95. Eso es "engancharse siempre al mejor con menor latencia": no por
      fama del proveedor, por número medido.
 
-R8 / RULE 00: un RPC que no responde se marca `ok=false` con su causa; nunca se
-le asigna una latencia inventada.
+R8 / RULE 00: un RPC que no responde se marca `ok=false` con su causa; nunca se le
+asigna una latencia inventada.
+
+RELACIÓN CON LO YA EXISTENTE (honestidad de instrumento, 2026-10-19):
+  `scripts/arbx-env-deploy/gen_rpc_env_from_xlsx.py` YA emite
+  `RPC_HTTP_<chain_id>` / `RPC_WS_<chain_id>` desde la MISMA hoja `RPC Providers`,
+  en el formato exacto del `.env`, con un denylist de proveedores muertos.
+  Es decir: el `extract` / `emit-env` / `apply` de este módulo es un SEGUNDO
+  instrumento para lo mismo. El superviviente es `gen_rpc_env_from_xlsx.py`
+  (ya está cableado en la macro y en el README). Lo que este módulo aporta y
+  aquel NO tiene es la **sonda de latencia** (`probe` / `compare`): evidencia
+  medida con ventana y control, frente a una lista declarada. La parte duplicada
+  queda como candidata a retirada/plegado en la reconciliación de instrumentos.
 """
 
 from __future__ import annotations
@@ -129,44 +140,94 @@ def build_catalog(entries: list[RpcEntry]) -> dict:
 
 # ─────────────────────────── emisión G-RPC-1 (.env) ────────────────────────────
 
-def emit_env(catalog: dict, min_providers: int = 2) -> tuple[str, list[str]]:
-    """Emite el bloque `.env` con el formato de G-RPC-1 (`RPC_HTTP_<chain_id>` /
-    `RPC_WS_<chain_id>` = CSV de `name=url`). Devuelve (texto, avisos).
+ENV_HEADER = [
+    "# ── G-RPC-1 — catálogo de RPC (generado por scripts/arbi/rpc_catalog.py) ──",
+    "# Formato: CSV de `nombre=url` por cadena. ≥2 proveedores por cadena (G-RPC-1);",
+    "# con uno solo el pool no puede hacer failover y emite warn al arrancar.",
+    "# Las claves van saneadas a ${VAR}: el valor vive en el almacén de secretos",
+    "# (docs/operations/SECRETS_POLICY.md), NUNCA en este fichero.",
+    "# Candidatos, no prioridades: el pool elige por latencia MEDIDA (EWMA).",
+    "# Este fichero es IDEMPOTENTE: aplicarlo dos veces da el mismo byte.",
+    "",
+]
 
-    El Excel no inventa formato: emite ESTE. Candidatos, no prioridades — el
-    `HttpRpcPool` (backend/shared-rs/src/rpc_failover.rs) elige por latencia medida
-    (EWMA + circuit breaker); una prioridad declarada no es una latencia medida.
-    """
-    warnings: list[str] = []
-    lines = [
-        "# ── G-RPC-1 — catálogo de RPC (generado por scripts/arbi/rpc_catalog.py) ──",
-        "# Formato: CSV de `nombre=url` por cadena. ≥2 proveedores por cadena (G-RPC-1);",
-        "# con uno solo el pool no puede hacer failover y emite warn al arrancar.",
-        "# Las claves van saneadas a ${VAR}: el valor vive en el almacén de secretos",
-        "# (docs/operations/SECRETS_POLICY.md), NUNCA en este fichero.",
-        "# Candidatos, no prioridades: el pool elige por latencia MEDIDA (EWMA).",
-        "",
-    ]
-    for chain in sorted(catalog.get("chains", {}), key=lambda c: CHAIN_IDS.get(c, 10**9)):
+_ENV_LINE = re.compile(r"^RPC_(HTTP|WSS)_(\d+)=(.*)$")
+
+
+def model_from_catalog(catalog: dict) -> dict[int, dict[str, dict[str, str]]]:
+    """Excel/catálogo -> modelo interno `{chain_id: {'HTTP': {nombre: url}, 'WSS': {...}}}`."""
+    model: dict[int, dict[str, dict[str, str]]] = {}
+    for chain, entries in catalog.get("chains", {}).items():
         cid = CHAIN_IDS.get(chain)
         if cid is None:
-            warnings.append(f"{chain}: sin chain_id conocido — no se emite")
             continue
-        by_proto: dict[str, list[str]] = {"HTTP": [], "WSS": []}
-        for e in catalog["chains"][chain]:
+        slot = model.setdefault(cid, {"HTTP": {}, "WSS": {}})
+        for e in entries:
             name = e["provider"].lower().replace(" ", "")
-            by_proto.setdefault(e["protocol"], []).append(f"{name}={e['url']}")
-        for proto in ("HTTP", "WSS"):
-            toks = by_proto.get(proto) or []
-            if not toks:
+            slot.setdefault(e["protocol"], {})[name] = e["url"]
+    return model
+
+
+def model_from_env(text: str) -> dict[int, dict[str, dict[str, str]]]:
+    """G-RPC-1 `.env` -> modelo interno. Entrada POLIMÓRFICA: acepta `nombre=url` y
+    una URL desnuda (se nombra `primary`, como el pool)."""
+    model: dict[int, dict[str, dict[str, str]]] = {}
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        m = _ENV_LINE.match(line)
+        if not m:
+            continue
+        proto, cid, rest = m.group(1), int(m.group(2)), m.group(3).strip()
+        if not rest:
+            continue
+        slot = model.setdefault(cid, {"HTTP": {}, "WSS": {}})
+        for tok in rest.split(","):
+            tok = tok.strip()
+            if not tok:
                 continue
-            if len(toks) < min_providers:
-                warnings.append(f"{chain} {proto}: {len(toks)} proveedor(es) < {min_providers} — failover imposible")
-            lines.append(f"RPC_{proto}_{cid}={','.join(toks)}")
-        if not by_proto.get("HTTP") and not by_proto.get("WSS"):
-            warnings.append(f"{chain}: sin entradas")
+            name, url = (tok.split("=", 1) if "=" in tok else ("primary", tok))
+            slot.setdefault(proto, {})[name.strip().lower()] = url.strip()
+    return model
+
+
+def emit_env_from_model(model: dict[int, dict[str, dict[str, str]]]) -> str:
+    """Modelo -> texto G-RPC-1, DETERMINISTA (claves ordenadas) => idempotente."""
+    lines = list(ENV_HEADER)
+    for cid in sorted(model):
+        for proto in ("HTTP", "WSS"):
+            d = model[cid].get(proto) or {}
+            if not d:
+                continue
+            toks = ",".join(f"{k}={d[k]}" for k in sorted(d))
+            lines.append(f"RPC_{proto}_{cid}={toks}")
         lines.append("")
-    return "\n".join(lines) + "\n", warnings
+    return "\n".join(lines) + "\n"
+
+
+def validate_model(model: dict[int, dict[str, dict[str, str]]], min_providers: int = 2) -> list[str]:
+    """Fail-closed: devuelve la lista de errores. Vacía = se puede aplicar."""
+    errs: list[str] = []
+    for cid in sorted(model):
+        for proto in ("HTTP", "WSS"):
+            d = model[cid].get(proto) or {}
+            if not d:
+                continue
+            if len(d) < min_providers:
+                errs.append(f"chain {cid} {proto}: {len(d)} proveedor(es) < {min_providers} — failover imposible")
+            for name, url in sorted(d.items()):
+                if not re.match(r"^(https?|wss?)://", url):
+                    errs.append(f"chain {cid} {proto} {name}: URL no válida: {url}")
+                elif "${" not in url and has_embedded_secret(url):
+                    errs.append(f"chain {cid} {proto} {name}: URL con clave embebida (fuga): {url}")
+    return errs
+
+
+def emit_env(catalog: dict, min_providers: int = 2) -> tuple[str, list[str]]:
+    """Compatibilidad: catálogo -> (texto G-RPC-1, avisos de validación)."""
+    model = model_from_catalog(catalog)
+    return emit_env_from_model(model), validate_model(model, min_providers)
 
 
 # ─────────────────────────────── sonda de latencia ─────────────────────────────
@@ -318,6 +379,16 @@ def main() -> int:
     pp.add_argument("--control-dead", default="https://eth.llamarpc.com")
     pp.add_argument("--out", default="rpc_latency.json")
 
+    pa = sub.add_parser("apply", help="normaliza desde xlsm/env/json, valida y emite G-RPC-1 (idempotente)")
+    pa.add_argument("--from", dest="src", required=True)
+    pa.add_argument("--format", choices=["auto", "xlsm", "env", "json"], default="auto")
+    pa.add_argument("--out", default="rpc_catalog.env")
+    pa.add_argument("--min-providers", type=int, default=2)
+
+    pval = sub.add_parser("validate", help="valida un .env G-RPC-1 (fail-closed)")
+    pval.add_argument("--file", required=True)
+    pval.add_argument("--min-providers", type=int, default=2)
+
     pc = sub.add_parser("compare", help="dos corridas -> estabilidad del ordenamiento (criterio de muerte)")
     pc.add_argument("--a", required=True)
     pc.add_argument("--b", required=True)
@@ -343,6 +414,43 @@ def main() -> int:
             print(f"::warning:: {w}")
         print(text)
         print(f"-> {args.out}  (avisos: {len(warnings)})")
+        return 0
+
+    if args.cmd == "apply":
+        fmt = args.format
+        if fmt == "auto":
+            ext = os.path.splitext(args.src)[1].lower()
+            fmt = {"xlsm": "xlsm", "json": "json"}.get(ext.lstrip("."), "env")
+        if fmt == "xlsm":
+            model = model_from_catalog(build_catalog(extract(args.src)))
+        elif fmt == "json":
+            model = model_from_catalog(json.load(open(args.src, encoding="utf-8")))
+        else:
+            model = model_from_env(open(args.src, encoding="utf-8").read())
+        errs = validate_model(model, args.min_providers)
+        if errs:
+            for e in errs:
+                print(f"::error:: {e}")
+            print(f"NO SE APLICA: {len(errs)} error(es) de validación (fail-closed)")
+            return 1
+        text = emit_env_from_model(model)
+        if os.path.exists(args.out) and open(args.out, encoding="utf-8").read() == text:
+            print(f"sin cambios — {args.out} ya es idéntico (idempotente)")
+        else:
+            with open(args.out, "w", encoding="utf-8") as fh:
+                fh.write(text)
+            print(f"escrito {args.out} ({len(model)} cadenas)")
+        return 0
+
+    if args.cmd == "validate":
+        model = model_from_env(open(args.file, encoding="utf-8").read())
+        errs = validate_model(model, args.min_providers)
+        for e in errs:
+            print(f"::error:: {e}")
+        if errs:
+            print(f"INVÁLIDO: {len(errs)} error(es)")
+            return 1
+        print(f"VÁLIDO: {len(model)} cadenas, ≥{args.min_providers} proveedores por cadena, sin claves embebidas")
         return 0
 
     if args.cmd == "compare":
