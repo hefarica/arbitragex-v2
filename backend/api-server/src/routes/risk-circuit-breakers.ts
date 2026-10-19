@@ -23,6 +23,8 @@
  *   - G-RPC-1 / G-SIM-1 / G-TOK-1 — the three readiness items consumed here.
  *     The full 19-item go/no-go report remains separate and unchanged.
  *   - process.env — RPC_HTTP_1, EXECUTOR_1, ARBX_TRADE_MODE, ARBX_CB_*.
+ *   - services/executorHealth — on-chain executor probe (C-15a): eth_getCode
+ *     + paused() + getRoleAdmin(EXECUTOR_ROLE). No optimistic PASS.
  *   - GET /api/v1/scoring/status (in-process via __forTesting export) — A.8.
  *   - paper_trade_runs (chain-filtered) — equity marks for the DD breaker,
  *     reason-pattern revert classification, and actual-gas-burn sums. The
@@ -63,6 +65,10 @@ import {
   type BreakerMetric,
   type TradeOutcome,
 } from "../risk/rolling-breakers.js";
+import {
+  probeExecutorHealth,
+  type ExecutorHealthProbe,
+} from "../services/executorHealth/onChainExecutorHealth.js";
 
 // ---------------------------------------------------------------------------
 // Wire contract types — mirror frontend Zod schemas exactly.
@@ -616,6 +622,11 @@ interface EvalCtx {
   gasBurnWindowSecs: number | null;
   // A.6 ledger-fed DD / revert-rate / actual-gas data.
   ledger: LedgerBreakerData;
+  /**
+   * C-15a on-chain executor probe. null = EXECUTOR_1 unset (env_missing path)
+   * or probe not run — the breaker reports UNKNOWN, never an optimistic PASS.
+   */
+  executorHealth: ExecutorHealthProbe | null;
 }
 
 /**
@@ -677,6 +688,14 @@ async function collectCtx(deps: {
   // loader so both paths share the SAME chain scope (audit 2026-10: A.5 used to
   // scan all chains while A.6 filtered chain_id — incomparable populations).
   const cb = loadCbConfig();
+
+  // C-15a — on-chain executor probe. Started here and awaited just before the
+  // return so its JSON-RPC round-trips overlap the ledger queries instead of
+  // adding their latency to the status endpoint. A probe failure yields a
+  // structured status (UNKNOWN/BLOCKED), never a rejected promise.
+  const executorHealthPromise: Promise<ExecutorHealthProbe | null> = envExecutor
+    ? probeExecutorHealth({ chainId: cb.chainId }).catch(() => null)
+    : Promise.resolve(null);
 
   // A.5 — rolling gas-burn breaker from paper_trade_runs (sim gas, ARBX_RISK_*
   // thresholds). Math is the TS mirror of shared-rs/src/risk_ledger.rs.
@@ -825,9 +844,12 @@ async function collectCtx(deps: {
     }
   }
 
+  const executorHealth = await executorHealthPromise;
+
   return {
     now,
     chainId: cb.chainId,
+    executorHealth,
     killSwitchEnabled,
     killSwitchReason,
     readiness,
@@ -1499,27 +1521,135 @@ function makeExecutorBreaker(ctx: EvalCtx): CircuitBreaker {
       required_action: "Deploy ArbitrageExecutor.sol and export EXECUTOR_1.",
     };
   }
-  // Env present, but on-chain probe is not implemented yet — honest PARTIAL.
+  const h = ctx.executorHealth;
+  if (h === null) {
+    // Env is set but the probe did not run. UNKNOWN — never an optimistic PASS.
+    return {
+      id: "executor_breaker",
+      name: "Executor contract health",
+      category: "executor",
+      state: "UNKNOWN",
+      severity: "medium",
+      action: "none",
+      evidence: {
+        source: "env_probe",
+        detail: "EXECUTOR_1 present, but the on-chain probe did not run in this evaluation.",
+        current_value: null,
+        threshold: null,
+        unit: null,
+        ref: "onchain:EXECUTOR_1",
+      },
+      blocks: ["LIVE"],
+      operator_required: false,
+      last_evaluated_at: ctx.now,
+      description: "Executor address present; on-chain evidence missing.",
+      required_action: "Re-poll the status endpoint; if UNKNOWN persists, check RPC_HTTP_<chain> and the api-server logs.",
+    };
+  }
+
+  const baseEvidence = {
+    source: "env_probe" as const,
+    threshold: null,
+    unit: null,
+    ref: "onchain:EXECUTOR_1",
+  };
+
+  // PASS requires ALL of: bytecode, paused()==false, AccessControl surface.
+  if (h.status === "healthy") {
+    return {
+      id: "executor_breaker",
+      name: "Executor contract health",
+      category: "executor",
+      state: "PASS",
+      severity: "low",
+      action: "none",
+      evidence: {
+        ...baseEvidence,
+        detail: `eth_getCode=${h.bytecode_size}B · paused()=false · getRoleAdmin(EXECUTOR_ROLE) ok${h.rpc_host ? ` · rpc=${h.rpc_host}` : ""} · ${h.latency_ms ?? "?"}ms`,
+        current_value: "healthy",
+      },
+      blocks: [],
+      operator_required: false,
+      last_evaluated_at: ctx.now,
+      description: "On-chain executor: deployed, unpaused, AccessControl wired.",
+      required_action: null,
+    };
+  }
+
+  if (h.status === "paused") {
+    return {
+      id: "executor_breaker",
+      name: "Executor contract health",
+      category: "executor",
+      state: "PAUSED",
+      severity: "high",
+      action: "pause",
+      evidence: {
+        ...baseEvidence,
+        detail: `paused()=true on the deployed executor (code ${h.bytecode_size}B)${h.rpc_host ? ` · rpc=${h.rpc_host}` : ""}`,
+        current_value: "paused",
+      },
+      blocks: ["LIVE"],
+      operator_required: true,
+      last_evaluated_at: ctx.now,
+      description: "Executor is deployed but paused on-chain.",
+      required_action: "Unpause the executor from its admin role, or record why it is paused; LIVE stays blocked.",
+    };
+  }
+
+  if (h.status === "rpc_unavailable" || h.status === "not_configured") {
+    return {
+      id: "executor_breaker",
+      name: "Executor contract health",
+      category: "executor",
+      state: "UNKNOWN",
+      severity: "medium",
+      action: "none",
+      evidence: {
+        ...baseEvidence,
+        detail: h.error ?? "on-chain probe unavailable",
+        current_value: null,
+      },
+      blocks: ["LIVE"],
+      operator_required: false,
+      last_evaluated_at: ctx.now,
+      description: "Could not obtain on-chain executor evidence.",
+      required_action:
+        h.status === "not_configured"
+          ? "Set RPC_HTTP_<ARBX_CB_CHAIN_ID> to a reachable HTTP JSON-RPC endpoint."
+          : "Restore RPC reachability; no on-chain claim is made until the probe answers.",
+    };
+  }
+
+  // no_code / invalid_address / wrong_contract — deterministic, fail-closed.
+  const detail =
+    h.status === "no_code"
+      ? "eth_getCode(EXECUTOR_1)=0x — no bytecode at the configured address (EOA or undeployed)"
+      : h.status === "invalid_address"
+        ? "EXECUTOR_1 is not a 0x-prefixed 20-byte hex address"
+        : (h.error ?? "EXECUTOR_1 has code but not the ArbitrageExecutor surface");
   return {
     id: "executor_breaker",
     name: "Executor contract health",
     category: "executor",
-    state: "WARN",
-    severity: "medium",
-    action: "warn",
+    state: "BLOCKED",
+    severity: "critical",
+    action: "none",
     evidence: {
-      source: "env_probe",
-      detail: "EXECUTOR_1 env present (length-only), but on-chain bytecode probe + owner check not yet implemented.",
-      current_value: "env_present",
-      threshold: null,
-      unit: null,
-      ref: "env:EXECUTOR_1",
+      ...baseEvidence,
+      detail,
+      current_value: h.status,
     },
-    blocks: ["LIVE"],
-    operator_required: false,
+    blocks: ["A.4", "A.5", "LIVE"],
+    operator_required: true,
     last_evaluated_at: ctx.now,
-    description: "Executor address present; on-chain health probe pending.",
-    required_action: "Add ethers/alloy probe: getCode(EXECUTOR_1) + owner() + paused() inspection.",
+    description: "Configured executor address fails on-chain validation.",
+    required_action:
+      h.status === "no_code"
+        ? "Deploy ArbitrageExecutor.sol (UUPS proxy) and point EXECUTOR_1 at the proxy."
+        : h.status === "invalid_address"
+          ? "Fix EXECUTOR_1 (0x + 20 bytes)."
+          : "Verify EXECUTOR_1 is the ArbitrageExecutor proxy (Pausable + AccessControl surfaces).",
   };
 }
 
