@@ -344,6 +344,17 @@ impl LazyDb {
     ///
     /// Used by `SimulatorV2` to memoize the resolved "latest" block across
     /// multiple `simulate()` calls (MAJOR #3 + #6 fix).
+    /// Best-effort HEADER of the pinned block. The number-only constructor
+    /// never fetched it, so `SequenceContext::new` (the paper path) built a
+    /// `BlockEnv::default()` — timestamp 0 — over forked state whose contracts
+    /// read `block.timestamp` (Aave updates its reserves from it), which then
+    /// underflowed. Fetched on demand; `None` when the RPC returns none.
+    pub fn pinned_header(
+        &self,
+    ) -> Result<Option<ethers::types::Block<ethers::types::TxHash>>, LazyDbError> {
+        self.rpc("pinned_header", self.client.get_block(self.pinned_block))
+    }
+
     pub fn pinned_block_number(&self) -> u64 {
         self.pinned_block_number
     }
