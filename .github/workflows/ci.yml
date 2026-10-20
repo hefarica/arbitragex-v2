@@ -159,6 +159,13 @@ jobs:
       # key, plus the structural promises (position, comments, mode, inode).
       - name: env upsert contract (idempotent / CRLF / literal values)
         run: bash scripts/arbx-env-deploy/test_upsert.sh
+      # DEPLOY-IDENTITY-RECREATE-01 (2026-10-19, card #4): a recreate that is
+      # not a deploy rebuilt api-server without ARBX_DEPLOY_SHA/_ID/_AT, so
+      # /api/status.deploy.sha fell to `unknown` while the binary was unchanged.
+      # The contract is executable: the reader's precedence and fail-closed
+      # behaviour, and that the stamp runs BEFORE every --force-recreate.
+      - name: deploy identity across recreate (reader + call site)
+        run: bash scripts/arbx-env-deploy/test_deploy_identity.sh
       - name: arbx_remote.sh syntax
         run: bash -n scripts/arbx-env-deploy/arbx_remote.sh
 
