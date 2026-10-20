@@ -119,7 +119,32 @@ else
   fail=$((fail + 1)); printf '  FAIL  %s of %s recreate site(s) lack a preceding stamp call\n' "$missing" "$ups_seen"
 fi
 
-# 7. syntax of both scripts
+# 7. every compose invocation interpolates the .env: without --env-file the
+#    project directory is docker/ and `${DATABASE_URL:?}` aborts the recreate
+#    BEFORE it starts (measured 2026-10-20T15:18Z: "required variable
+#    DATABASE_URL is missing a value"). An identity stamp on a recreate that
+#    never happens is dead code with a green label.
+total=$((total + 1))
+noenv=0
+while IFS= read -r ln; do
+  sed -n "${ln}p" "$REMOTE" | grep -q -- '--env-file' || noenv=$((noenv + 1))
+done < <(grep -n 'docker compose' "$REMOTE" | grep -v ':[[:space:]]*#' | cut -d: -f1)
+if [ "$noenv" = 0 ]; then
+  pass=$((pass + 1)); printf '  ok    every compose call interpolates .env (--env-file)\n'
+else
+  fail=$((fail + 1)); printf '  FAIL  %s compose call(s) without --env-file (recreate would abort on DATABASE_URL)\n' "$noenv"
+fi
+
+# 8. the apply recreate is fail-closed: a failed `up` must roll back and exit,
+#    never continue to the receipt as if it had recreated anything.
+total=$((total + 1))
+if grep -q 'if ! docker compose --env-file "$envp" -f docker/compose.prod.yml up -d --force-recreate' "$REMOTE"; then
+  pass=$((pass + 1)); printf '  ok    apply recreate is fail-closed (rollback + exit 1)\n'
+else
+  fail=$((fail + 1)); printf '  FAIL  apply recreate does not abort on a failed compose up\n'
+fi
+
+# 9. syntax of both scripts
 total=$((total + 1))
 if bash -n "$ID" && bash -n "$REMOTE"; then
   pass=$((pass + 1)); printf '  ok    bash -n deploy_identity.sh + arbx_remote.sh\n'

@@ -48,7 +48,7 @@ stamp_deploy_identity() {
     echo "WARN: $idcli missing — recreate leaves deploy.sha at compose default (unknown)" >&2
     return 0
   fi
-  cid="$( cd "$dir" && docker compose -f docker/compose.prod.yml ps -q api-server 2>/dev/null || true )"
+  cid="$( cd "$dir" && docker compose --env-file "$envp" -f docker/compose.prod.yml ps -q api-server 2>/dev/null || true )"
   cid="$(printf '%s' "$cid" | head -1)"
   if [ -z "$cid" ]; then
     # compose cannot always be asked: `ps` interpolates the same variables the
@@ -106,7 +106,7 @@ case "$mode" in
       chmod 600 "$envp"
       # The rollback recreates the same binary: its identity must survive too.
       stamp_deploy_identity "$(dirname "$envp")"
-      ( cd "$(dirname "$envp")" && docker compose -f docker/compose.prod.yml up -d --force-recreate --no-deps searcher-rs api-server ) >&2 || true
+      ( cd "$(dirname "$envp")" && docker compose --env-file "$envp" -f docker/compose.prod.yml up -d --force-recreate --no-deps searcher-rs api-server ) >&2 || true
     }
 
     bash "$ups" "$envp" "$frag" --backup
@@ -122,11 +122,11 @@ case "$mode" in
     # up -d --force-recreate (NOT restart): `docker compose restart` keeps the container's
     # original create-time environment, so .env changes never reach the process. Recreate
     # reloads env_file/.env into the new container. --no-deps avoids touching dependencies.
-    if ! docker compose -f docker/compose.prod.yml up -d --force-recreate --no-deps searcher-rs api-server; then
+    if ! docker compose --env-file "$envp" -f docker/compose.prod.yml up -d --force-recreate --no-deps searcher-rs api-server; then
       restore; exit 1
     fi
     sleep 15
-    dc="docker compose -f docker/compose.prod.yml"
+    dc="docker compose --env-file "$envp" -f docker/compose.prod.yml"
     # VERIFY: both services must be RUNNING before the apply may claim success.
     running="$($dc ps --services --filter status=running 2>/dev/null | sort | tr '\n' ' ')"
     case "$running" in
