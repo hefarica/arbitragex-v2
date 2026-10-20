@@ -229,6 +229,15 @@ def parse_csv_block(text: str) -> list[dict]:
 # clase, y eso es deriva de etiqueta, no hallazgo (Jeffrey 6993815: 3 de 6 filas).
 SIN_FILAS = {"", "sin_filas", "(sin filas)", "sin filas", "(sin_filas)", "sin-filas"}
 
+# check_id -> columna que discrimina su rama. C10/C12b/C13/C15b son los únicos con más
+# de una rama en el manifiesto; el resto emite una sola.
+RAMA_DISCRIMINATOR = {
+    "C10": "gas_measurement_state",
+    "C12b": "lista",
+    "C13": "estado",
+    "C15b": "procedencia",
+}
+
 
 def canon_rama(value: str) -> str:
     v = (value or "").strip()
@@ -244,14 +253,19 @@ def resolve_rama(check_id: str, row: dict, manifest_rows: list[dict]) -> str:
     explicit = row.get(RAMA_COL, "").strip()
     if explicit:
         return canon_rama(explicit)
-    if check_id == "C10":
-        return canon_rama(row.get("gas_measurement_state", "")) or "(NULL)"
-    if check_id == "C12b":
-        lista = row.get("lista", "").strip() or row.get("familia", "").strip()
-        return "sin_filas" if canon_rama(lista) == "sin_filas" else f"lista={lista}"
-    if check_id == "C13":
-        # v1.6.x publica `estado` (con la fila sintética `(sin filas)`); v1.4.1 no.
-        return canon_rama(row.get("estado", "")) or "sin_filas"
+    # Sólo estos checks tienen más de una rama en el manifiesto, y cada uno tiene UNA
+    # columna discriminadora. Se declara la tabla en vez de adivinar: cuando el
+    # discriminador faltaba (C15b), el fallback unía las ramas del manifiesto en
+    # `veredicto+sin_filas` y el mismo check salía dos veces en `no_comparables`
+    # (Jeffrey 7001460).
+    col = RAMA_DISCRIMINATOR.get(check_id)
+    if col:
+        val = (row.get(col) or row.get("familia") or "").strip()
+        if check_id == "C10":
+            return canon_rama(val) or "(NULL)"
+        if check_id == "C12b":
+            return "sin_filas" if canon_rama(val) == "sin_filas" else f"lista={val}"
+        return canon_rama(val) or "sin_filas"
     ramas = [m["rama"] for m in manifest_rows if m["check_id"] == check_id]
     return ramas[0] if len(ramas) == 1 else ("unica" if not ramas else "+".join(ramas))
 
@@ -440,6 +454,15 @@ def self_test() -> int:
     if diff(a, b)["cambiados"] or diff(a, b)["no_comparables"]:
         failures.append("la rama sin filas genera delta espurio")
 
+    # 10. C15b se atribuye por `procedencia` y una sola fila por check en no_comparables
+    if resolve_rama("C15b", {"procedencia": "(sin filas)"}, []) != "sin_filas":
+        failures.append("C15b no canoniza la rama sin filas por procedencia")
+    a = {"version": "v1.4.1", "checks": {"C15b": [{"rama": "sin_filas", "clase": "NO ROW"}]}}
+    b = {"version": "v1.6.x", "checks": {"C15b": [{"rama": "sin_filas", "clase": "NOT COMPUTED"}]}}
+    d3 = diff(a, b)
+    if len(d3["no_comparables"]) != 1 or d3["no_comparables"][0]["rama"] != "sin_filas":
+        failures.append(f"C15b no colapsa a una fila: {d3['no_comparables']}")
+
     # 9. NOT COMPUTED frente a OK es no comparable, no cambio de clase
     a = {"version": "v1.4.1", "checks": {"C14": [{"rama": "unica", "clase": "OK"}]}}
     b = {"version": "v1.6.x", "checks": {"C14": [{"rama": "unica", "clase": "NOT COMPUTED"}]}}
@@ -454,7 +477,10 @@ def self_test() -> int:
         for f in failures:
             print(" -", f)
         return 1
-    print("SELF-TEST OK — 9 comprobaciones (splitter real, rama, compuerta, delta, csv, NO ROW, sin_filas, no comparable)")
+    print("SELF-TEST OK — 10 comprobaciones (splitter real, rama, compuerta, delta, csv, NO ROW,"
+          " sin_filas, no comparable, C15b)")
+    print("AVISO: esto verifica el RUNNER, no el SQL. Sin una corrida con --database-url este"
+          " instrumento esta NO VERIFICADO.")
     return 0
 
 
