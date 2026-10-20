@@ -93,7 +93,12 @@ describe("PR566 review — unresolved positions are quarantined, never compacted
           const opp = mapped(raw);
           expect(opp.route_metadata?.[field]).toEqual(raw[field]);
           expect(opp.hop_count).toBeNull();
-          expect(opp.semantic_violations).toContain("hop_incoherent");
+          // 2026-10-20 — SAME guarantee (marked, never compacted), truthful
+          // code: a blank position is UNRESOLVED, not a contradiction. The
+          // lengths still agree here, so `hop_incoherent` would be a false
+          // label; `route_topology_unresolved` keeps the row quarantined.
+          expect(opp.semantic_violations).toContain("route_topology_unresolved");
+          expect(opp.semantic_violations).not.toContain("hop_incoherent");
           expect(deriveLegLedger(opp)).toBeNull();
           expect(deriveLegs(opp)[1]?.pool).toBe(raw.pool_addresses[1]);
         });
