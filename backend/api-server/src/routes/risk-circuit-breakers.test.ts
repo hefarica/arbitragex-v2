@@ -49,6 +49,7 @@ const {
   summarize,
   overall,
   loadCbConfig,
+  paperLoopRootNote,
   computeDrawdownStats,
   toGasMeasurementOutcomes,
   driftTrackerMode,
@@ -99,6 +100,7 @@ const baseCtx = {
   envRpc: false,
   envExecutor: false,
   envTradeMode: null,
+  paperLoop: { executorMode: "on", dormant: false },
   scoringPipelineWired: false,
   gasBurn: null as null | { value: number; level: string; samples: number; sufficient: boolean },
   gasBurnReason: "operator risk thresholds not configured (ARBX_RISK_* env)",
@@ -1108,6 +1110,44 @@ describe("makeExecutorBreaker", () => {
     });
     expect(b.state).toBe("UNKNOWN");
     expect(b.evidence.current_value).toBe(null);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PAPER-LOOP-ROOT-01 — empty-ledger ROOT attribution. "0 paper runs" reads as a
+// quiet market; the dormant loop is the actual cause and must be named by the
+// breaker itself, with an exact signal (same env, same process as index.ts).
+// ---------------------------------------------------------------------------
+
+describe("paper-loop root attribution", () => {
+  const dormant = { executorMode: "off", dormant: true };
+
+  it("names the dormant loop as the root", () => {
+    expect(paperLoopRootNote({ executorMode: "off", dormant: true })).toContain("ROOT: paper executor DORMANT");
+    expect(paperLoopRootNote({ executorMode: "on", dormant: false })).toContain("upstream producer");
+  });
+  it("states the mode PRECONDITION: V2 skips the legacy emitter that feeds the loop", () => {
+    expect(paperLoopRootNote({ executorMode: "off", dormant: true })).toContain("ARBX_ORCHESTRATOR_MODE");
+    expect(paperLoopRootNote({ executorMode: "off", dormant: true })).toContain("scanner.rs:2016-2019");
+    expect(paperLoopRootNote({ executorMode: "on", dormant: false })).toContain("scanner.rs:2016-2019");
+  });
+  it("drawdown NOT_AVAILABLE carries the root", () => {
+    const b = makeDrawdownBreaker({ ...ddCtx(marks([100])), paperLoop: dormant });
+    expect(b.state).toBe("NOT_AVAILABLE");
+    expect(String(b.evidence.detail)).toContain("ROOT: paper executor DORMANT");
+  });
+  it("revert-rate NOT_AVAILABLE carries the root", () => {
+    const b = makeRevertRateBreaker({ ...revertCtx({ total: 0, reverted: 0 }, 30), paperLoop: dormant });
+    expect(b.state).toBe("NOT_AVAILABLE");
+    expect(String(b.evidence.detail)).toContain("ROOT: paper executor DORMANT");
+  });
+  it("gas-burn NOT_AVAILABLE carries the root", () => {
+    const b = makeGasBurnBreaker({
+      ...gasCtx({ rowsInWindow: 0, withActualGas: 0, sumUsd: 0 }, 50),
+      paperLoop: dormant,
+    });
+    expect(b.state).toBe("NOT_AVAILABLE");
+    expect(String(b.evidence.detail)).toContain("ROOT: paper executor DORMANT");
   });
 });
 

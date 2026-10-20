@@ -600,6 +600,40 @@ interface LedgerBreakerData {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Paper-execution loop liveness (PAPER-LOOP-ROOT-01)
+//
+// "0 paper runs" is ambiguous: it reads as a quiet market when the real cause
+// is a loop that was never started. `index.ts` starts PaperExecutor iff
+// ARBX_PAPER_EXECUTOR_MODE is exactly "on", so `dormant` is an EXACT signal
+// read from the same env in the same process — not a guess.
+// ---------------------------------------------------------------------------
+
+export interface PaperLoopState {
+  executorMode: string;
+  /** true ⇒ PaperExecutor never started ⇒ paper_trade_runs cannot accumulate. */
+  dormant: boolean;
+}
+
+/**
+ * Suffix every empty-ledger branch appends so the breaker names the ROOT
+ * instead of the symptom.
+ *
+ * The two switches are NOT independent: `ARBX_PAPER_EXECUTOR_MODE` decides
+ * whether the executor may receive a row, but `ARBX_ORCHESTRATOR_MODE` decides
+ * whether anything is written to `arbx:hot:simulated` at all. Under V2 the
+ * orchestrator is the sole emit path and the legacy body that carries the
+ * hot-sim XADD is skipped (`backend/searcher-rs/src/scanner.rs:2016-2019`), so
+ * flipping the executor alone yields a GREEN LOOP CONSUMING NOTHING. Hence the
+ * mode is a PRECONDITION, not a fallback.
+ */
+export function paperLoopRootNote(loop: PaperLoopState): string {
+  return loop.dormant
+    ? " · ROOT: paper executor DORMANT (ARBX_PAPER_EXECUTOR_MODE≠on) — paper_trade_runs cannot accumulate; this is the loop, not an empty market." +
+        " PRECONDITION: read the effective ARBX_ORCHESTRATOR_MODE first — under V2 the legacy emitter that writes arbx:hot:simulated is skipped (scanner.rs:2016-2019), so flipping the executor alone runs green consuming nothing."
+    : " · paper executor active (ARBX_PAPER_EXECUTOR_MODE=on) but no runs in the window — suspect the upstream producer of arbx:hot:simulated; under ARBX_ORCHESTRATOR_MODE=V2 that legacy emitter is skipped (scanner.rs:2016-2019).";
+}
+
 interface EvalCtx {
   now: string;
   chainId: number;
@@ -610,6 +644,8 @@ interface EvalCtx {
   envRpc: boolean;
   envExecutor: boolean;
   envTradeMode: string | null;
+  /** Paper-execution loop liveness — the ROOT the empty-ledger breakers name. */
+  paperLoop: PaperLoopState;
   scoringPipelineWired: boolean;
   // A.5 rolling gas-burn from paper_trade_runs (null = thresholds unset / no pool / query failed).
   gasBurn: BreakerMetric | null;
@@ -679,6 +715,12 @@ async function collectCtx(deps: {
   const envRpc = (process.env["RPC_HTTP_1"]?.length ?? 0) > 0;
   const envExecutor = (process.env["EXECUTOR_1"]?.length ?? 0) > 0;
   const envTradeMode = process.env["ARBX_TRADE_MODE"] ?? null;
+
+  // Paper-execution loop liveness: index.ts starts PaperExecutor iff this env is
+  // exactly "on", so `dormant` is an EXACT signal, not a guess — it is the root
+  // the empty-ledger breakers were hiding behind "0 paper runs".
+  const executorMode = (process.env["ARBX_PAPER_EXECUTOR_MODE"] ?? "off").toLowerCase();
+  const paperLoop: PaperLoopState = { executorMode, dormant: executorMode !== "on" };
 
   // A.8 scoring wire status — derive from the same runtime evidence the
   // /api/v1/scoring/status surface uses (scored_opportunities table presence).
@@ -857,6 +899,7 @@ async function collectCtx(deps: {
     envRpc,
     envExecutor,
     envTradeMode,
+    paperLoop,
     scoringPipelineWired,
     gasBurn,
     gasBurnReason,
@@ -929,7 +972,8 @@ function makeDrawdownBreaker(ctx: EvalCtx): CircuitBreaker {
         source: "paper_ledger",
         detail:
           `Insufficient evidence: ${stats.samples} runs (<${DD_MIN_RUNS}) over ` +
-          `${stats.spanHours.toFixed(1)}h (<${DD_MIN_SPAN_HOURS}h) of paper_trade_runs — a DD% from this would be noise, not signal.`,
+          `${stats.spanHours.toFixed(1)}h (<${DD_MIN_SPAN_HOURS}h) of paper_trade_runs — a DD% from this would be noise, not signal.` +
+          paperLoopRootNote(ctx.paperLoop),
         current_value: null,
         threshold: tierLabel,
         unit: "% peak-to-trough",
@@ -1021,7 +1065,9 @@ function makeRevertRateBreaker(ctx: EvalCtx): CircuitBreaker {
       action: "none",
       evidence: {
         source: "paper_ledger",
-        detail: `0 paper runs in the last ${rr.windowHours}h — revert rate undefined, not 0%.`,
+        detail:
+          `0 paper runs in the last ${rr.windowHours}h — revert rate undefined, not 0%.` +
+          paperLoopRootNote(ctx.paperLoop),
         current_value: null,
         threshold: rr.thresholdPct,
         unit: `% of runs in ${rr.windowHours}h window`,
@@ -1155,7 +1201,7 @@ function makeGasBurnBreaker(ctx: EvalCtx, env: NodeJS.ProcessEnv = process.env):
     } else if (w.rowsInWindow === 0) {
       // R8: an empty window is NO evidence — the sum is undefined, never $0.
       cbState = "NOT_AVAILABLE";
-      cbDetail = `0 paper runs in the last ${cbg.windowHours}h — gas burn undefined, not $0`;
+      cbDetail = `0 paper runs in the last ${cbg.windowHours}h — gas burn undefined, not $0${paperLoopRootNote(ctx.paperLoop)}`;
     } else if (cov.breach) {
       // I3a/I3b: a row carrying a value must be classified `measured`, and
       // `measured` must be a subset of the measurable population. A window
@@ -2006,6 +2052,7 @@ export const __forTesting = {
   summarize,
   overall,
   loadCbConfig,
+  paperLoopRootNote,
   computeDrawdownStats,
   toGasMeasurementOutcomes,
   driftTrackerMode,
