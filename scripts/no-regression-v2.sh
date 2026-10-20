@@ -10,7 +10,7 @@
 #   bash no-regression-v2.sh [VPS_HOST] [VPS_USER] [SSH_KEY] [ADMIN_TOKEN] [GRAFANA_PASS]
 #
 # Parameters:
-#   VPS_HOST      - Target VPS IP/hostname    (default: 195.201.235.70)
+#   VPS_HOST      - Target VPS IP/hostname    (default: ${VPS_IP})
 #   VPS_USER      - SSH username              (default: deploy)
 #   SSH_KEY       - Path to SSH private key   (default: ~/.ssh/id_ed25519)
 #   ADMIN_TOKEN   - Admin API auth token      (default: $ARBX_ADMIN_TOKEN env)
@@ -32,7 +32,7 @@ NC='\033[0m'
 # ---------------------------------------------------------------------------
 # Parameter defaults
 # ---------------------------------------------------------------------------
-VPS_H="${1:-195.201.235.70}"
+VPS_H="${1:-${VPS_IP}}"
 VPS_U="${2:-deploy}"
 SSH_K="${3:-$HOME/.ssh/id_ed25519}"
 ADMIN_T="${4:-${ARBX_ADMIN_TOKEN:-}}"
