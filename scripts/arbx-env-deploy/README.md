@@ -10,6 +10,8 @@ VPS `.env` **idempotently**, without ever breaking the file's structure.
 | `arbx_deploy_gui.ps1` | your Windows box | **Apple-style floating panel** (QuantumX dark). Runs the deploy, auto-closes with a confirmation on success; on error shows the log at the bottom. No PowerShell console. |
 | `arbx_fastdeploy.sh` | your Windows box | **fast transport: ONE ssh connection** (tar piped over ssh) — `tar … \| ssh host 'untar && remote.sh'` |
 | `arbx_remote.sh` | the VPS | remote runner: `dryrun` (diff) / `safediff` (key-name summary) / `apply` (backup + upsert + restart + verify); self-cleans the fragment |
+| `deploy_identity.sh` | the VPS | reads the identity of the binary the live api-server serves (image label, else container env) so a recreate that is **not** a deploy keeps `/api/status.deploy.sha` instead of falling to `unknown` (card #4) |
+| `test_deploy_identity.sh` | anywhere | contract tests for the reader + its call site (fake `docker`, no VPS) |
 | `arbx_env_upsert.sh` | the VPS | idempotent, structure-preserving, CRLF-safe upsert (**17/17**, `test_upsert.sh`) |
 | `arbx_deploy_env.ps1` | your Windows box | CLI fallback (no panel): `-Apply` / dry-run via classic scp+ssh |
 | `arbx_env_fragment.env` | generated | transient `KEY=VALUE` export (secret-bearing; shredded on the VPS after run) |
@@ -38,6 +40,7 @@ python scripts/arbx-env-deploy/gen_rpc_env_from_xlsx.py        # -> rpc_env_gene
 scp -p scripts/arbx-env-deploy/rpc_env_generated.env arbx:/tmp/arbx_env_fragment.env
 scp -p scripts/arbx-env-deploy/arbx_env_upsert.sh     arbx:/tmp/arbx_env_upsert.sh
 scp -p scripts/arbx-env-deploy/arbx_remote.sh         arbx:/tmp/arbx_remote.sh
+scp -p scripts/arbx-env-deploy/deploy_identity.sh    arbx:/tmp/deploy_identity.sh
 ssh -o BatchMode=yes arbx 'bash /tmp/arbx_remote.sh dryrun /opt/arbitragex-v2/.env'   # review the diff
 ssh -o BatchMode=yes arbx 'bash /tmp/arbx_remote.sh apply  /opt/arbitragex-v2/.env'   # backup+upsert+verify+rollback
 ```

@@ -1,6 +1,6 @@
 param([string]$Mode='safediff',[string]$VpsHost='arbx',[string]$EnvPath='/opt/arbitragex-v2/.env')
 # Pure-PowerShell deploy runner using Windows NATIVE OpenSSH (runs headless/hidden;
-# MSYS/Git bash does NOT). ONE ssh connection: the 3 small files are shipped inline
+# MSYS/Git bash does NOT). ONE ssh connection: the 4 small files are shipped inline
 # (base64) and decoded on the VPS, then the remote runner executes. No local bash,
 # no scp round-trips. bash runs only on the Linux side.
 $ErrorActionPreference='Stop'
@@ -8,6 +8,7 @@ $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $frag = Join-Path $here 'arbx_env_fragment.env'
 $ups  = Join-Path $here 'arbx_env_upsert.sh'
 $rem  = Join-Path $here 'arbx_remote.sh'
+$idf  = Join-Path $here 'deploy_identity.sh'
 
 function Find-Bin($n){
   $w = Join-Path $env:WINDIR "System32\OpenSSH\$n"; if(Test-Path $w){ return $w }   # native OpenSSH first
@@ -16,16 +17,17 @@ function Find-Bin($n){
   throw "$n not found (install Windows OpenSSH client)"
 }
 $ssh = Find-Bin 'ssh.exe'
-foreach($f in @($frag,$ups,$rem)){ if(-not (Test-Path $f)){ Write-Output "missing required file: $f"; exit 3 } }
+foreach($f in @($frag,$ups,$rem,$idf)){ if(-not (Test-Path $f)){ Write-Output "missing required file: $f"; exit 3 } }
 
 function B64($p){ [Convert]::ToBase64String([IO.File]::ReadAllBytes($p)) }
-$bf = B64 $frag; $bu = B64 $ups; $br = B64 $rem
+$bf = B64 $frag; $bu = B64 $ups; $br = B64 $rem; $bi = B64 $idf
 
-# Single connection: decode the 3 files to /tmp, then run the remote runner. base64 is
+# Single connection: decode the 4 files to /tmp, then run the remote runner. base64 is
 # pure [A-Za-z0-9+/=] so it is safe inside single quotes; only ';' separators (no &&).
 $remote = "printf %s '$bf' | base64 -d > /tmp/arbx_env_fragment.env; " +
           "printf %s '$bu' | base64 -d > /tmp/arbx_env_upsert.sh; " +
           "printf %s '$br' | base64 -d > /tmp/arbx_remote.sh; " +
+          "printf %s '$bi' | base64 -d > /tmp/deploy_identity.sh; " +
           "bash /tmp/arbx_remote.sh '$Mode' '$EnvPath'"
 
 Write-Output ("ssh (1 connection) mode={0} host={1}" -f $Mode, $VpsHost)

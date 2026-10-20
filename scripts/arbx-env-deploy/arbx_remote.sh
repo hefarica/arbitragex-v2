@@ -2,7 +2,8 @@
 # Remote runner (executes ON the VPS). Keeps all bash control-flow (&&/||/pipes)
 # on the Linux side so the Windows PowerShell orchestrator never has to parse them.
 #   Usage: arbx_remote.sh <dryrun|apply> <env_path>
-# Expects /tmp/arbx_fragment.env and /tmp/arbx_env_upsert.sh already scp'd.
+# Expects /tmp/arbx_fragment.env, /tmp/arbx_env_upsert.sh and /tmp/deploy_identity.sh
+# already shipped (scp or base64); see README.
 # Self-cleans the secret-bearing fragment on exit (trap).
 set -euo pipefail
 # TRANSPORT-HYGIENE-01 (2026-10-19): the fragment carries live secrets and lands
@@ -14,14 +15,64 @@ mode="${1:?mode (dryrun|apply) required}"
 envp="${2:?env path required}"
 frag="/tmp/arbx_env_fragment.env"
 ups="/tmp/arbx_env_upsert.sh"
+# DEPLOY-IDENTITY-RECREATE-01: the reader that resolves the identity of the
+# binary a container serves. Uploaded next to this script (see README); the
+# repo-relative path is used when the script runs from a checkout (CI tests).
+idcli_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo /tmp)"
+idcli="$idcli_dir/deploy_identity.sh"
+[ -f "$idcli" ] || idcli="/tmp/deploy_identity.sh"
 
-cleanup() { shred -u "$frag" 2>/dev/null || rm -f "$frag"; rm -f "$ups" /tmp/arbx_remote.sh; }
+cleanup() { shred -u "$frag" 2>/dev/null || rm -f "$frag"; rm -f "$ups" /tmp/arbx_remote.sh /tmp/deploy_identity.sh; }
 trap cleanup EXIT
 
 [ -f "$envp" ] || { echo "ENV not found: $envp" >&2; exit 3; }
 [ -f "$frag" ] || { echo "fragment not uploaded: $frag" >&2; exit 3; }
 chmod 600 "$frag" 2>/dev/null || true   # tighten before anything reads it
 [ -f "$ups" ]  || { echo "upsert not uploaded: $ups" >&2; exit 3; }
+
+# DEPLOY-IDENTITY-RECREATE-01 (card #4, 2026-10-19): a recreate is not a deploy.
+# `docker compose up --force-recreate` keeps the same binary but rebuilds the
+# container environment from .env + the SHELL env; ARBX_DEPLOY_SHA/_ID/_AT live
+# only in the deploy's shell, so without this the recreate publishes
+# `/api/status.deploy.sha = unknown` while serving an unchanged binary.
+# The identity is READ from what is running (image label, else its env) and
+# exported before the recreate; environment values injected by a workflow win.
+# Nothing is fabricated: no valid source => compose keeps its honest `unknown`.
+stamp_deploy_identity() {
+  local dir="${1:-.}" cid out s i a
+  if [ -n "${ARBX_DEPLOY_SHA:-}" ] && [ "${ARBX_DEPLOY_SHA}" != "unknown" ]; then
+    echo "deploy identity: inherited from environment (sha=$ARBX_DEPLOY_SHA)"
+    return 0
+  fi
+  if [ ! -f "$idcli" ]; then
+    echo "WARN: $idcli missing — recreate leaves deploy.sha at compose default (unknown)" >&2
+    return 0
+  fi
+  cid="$( cd "$dir" && docker compose -f docker/compose.prod.yml ps -q api-server 2>/dev/null || true )"
+  cid="$(printf '%s' "$cid" | head -1)"
+  if [ -z "$cid" ]; then
+    # compose cannot always be asked: `ps` interpolates the same variables the
+    # apply may have just broken (that was the #982 defect). The container
+    # itself is the durable source, so fall back to it by name.
+    cid="$(docker ps -a --filter 'name=api-server' --format '{{.ID}}' 2>/dev/null | head -1 || true)"
+  fi
+  if [ -z "$cid" ]; then
+    echo "deploy identity: no api-server container to read; compose defaults apply" >&2
+    return 0
+  fi
+  out="$(bash "$idcli" "$cid" 2>/dev/null || true)"
+  s="$(printf '%s\n' "$out" | sed -n '1p')"
+  i="$(printf '%s\n' "$out" | sed -n '2p')"
+  a="$(printf '%s\n' "$out" | sed -n '3p')"
+  if [ -n "$s" ]; then
+    export ARBX_DEPLOY_SHA="$s"
+    export ARBX_DEPLOY_ID="${i:-unknown}"
+    export ARBX_DEPLOYED_AT="${a:-unknown}"
+    echo "deploy identity preserved across recreate: sha=$s id=${i:-unknown} at=${a:-unknown}"
+  else
+    echo "WARN: no deploy identity derivable from the running api-server; /status reports unknown" >&2
+  fi
+}
 
 case "$mode" in
   dryrun)
@@ -53,6 +104,8 @@ case "$mode" in
       echo "ROLLBACK: restoring $envp from $bak and recreating" >&2
       cat "$bak" > "$envp"
       chmod 600 "$envp"
+      # The rollback recreates the same binary: its identity must survive too.
+      stamp_deploy_identity "$(dirname "$envp")"
       ( cd "$(dirname "$envp")" && docker compose -f docker/compose.prod.yml up -d --force-recreate --no-deps searcher-rs api-server ) >&2 || true
     }
 
@@ -64,6 +117,8 @@ case "$mode" in
     # which lacks it -> a harmless 'not set' warning on stderr. Export it (from the real .env if
     # present, else blank) so compose finds it and stays silent. Runtime identical (was blank anyway).
     export GITHUB_TOKEN="$(grep -m1 '^GITHUB_TOKEN=' "$envp" 2>/dev/null | cut -d= -f2- || true)"
+    # Identity BEFORE the recreate: read from the live container, not invented.
+    stamp_deploy_identity "$(dirname "$envp")"
     # up -d --force-recreate (NOT restart): `docker compose restart` keeps the container's
     # original create-time environment, so .env changes never reach the process. Recreate
     # reloads env_file/.env into the new container. --no-deps avoids touching dependencies.
