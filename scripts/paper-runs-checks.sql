@@ -2,6 +2,10 @@
 -- v1.6: +C16b (D-10a, valor almacenado; el payload se mide en scripts/check-live-contract.py C16a).
 -- v1.4.1: poblacion cero => NOT COMPUTED en C01-C06/C09 (contrato 9.4); C06 cortado por dia (day, no created_at).
 -- v1.4: C15/C15b (gas modelado vs medido) y C06 distingue n NULL de n = 0.
+-- v1.6.6 (2026-10-20 15:2xZ): C15b no publicaba fila con la tabla vacia (GROUP BY sobre
+--   cero filas = cero grupos = silencio), contra la regla de la casa: NOT COMPUTED,
+--   nunca silencio. Se anade la rama sintetica `(sin filas)` con UNION ALL ... WHERE
+--   NOT EXISTS, igual que C10/C12b/C13. Hallazgo de Rachel Donovan (7001265).
 -- v1.6.5 (2026-10-20 13:4xZ): C12b no proyectaba `sim_fail_family` en la CTE `cls` y la
 --   rama `structural_known` lo referenciaba => ERROR 42703 al EJECUTAR (la validacion con
 --   pglast no lo detecta: alcance de columna, no sintaxis). Corregido en el mismo commit que
@@ -564,7 +568,14 @@ SELECT 'C15b' AS check_id, 'A' AS sev,
             ELSE 'ROJO: deriva_no_cuadra > 0' END AS verdict
 FROM paper_trade_runs
 WHERE created_at >= :'cutoff'
-GROUP BY 2, 4 ORDER BY 5 DESC;
+GROUP BY 2, 4
+UNION ALL
+-- v1.6.6: con la tabla vacia, `GROUP BY procedencia` devuelve cero grupos y el check
+-- desaparecia del listado (silencio, no NOT COMPUTED). Una rama sintetica lo publica.
+SELECT 'C15b', 'A', 0, '(sin filas)', 0, 0, 0, 0, 0,
+       'NOT COMPUTED: sin filas en ventana (C15b no emite grupo: procedencia vacia)'
+WHERE NOT EXISTS (SELECT 1 FROM paper_trade_runs WHERE created_at >= :'cutoff')
+ORDER BY 5 DESC;
 
 -- C16b · D-10a · el valor ALMACENADO, no el payload. Una fila rechazada no puede llevar
 --         roi_pct/risk_score con valor: en scanner.rs:2687-2688 / 2733-2734 / 2784-2785

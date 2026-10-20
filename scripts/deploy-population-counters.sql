@@ -24,6 +24,12 @@
 --   poblacion > 0, presentes = 0 => FAIL
 --   presentes > 0                => PASS sólo si nulos = 0; si no, FAIL parcial
 --
+--
+-- OJO CON EL NOMBRE DEL CORTE: `paper-runs-checks.sql` usa `-v cutoff` como **INICIO**
+-- de ventana (filas con `created_at >= cutoff`, abierto hacia delante). Aquí el corte
+-- es el **FIN**: ventana = (corte - ventana, corte]. Pasar el mismo valor a los dos
+-- instrumentos da ventanas disjuntas y un censo vacío con forma de cero. No se
+-- renombra a `cutoff` a propósito: nombres distintos para semánticas distintas.
 -- Sólo lee: transacción READ ONLY con ROLLBACK. Un contador no escribe en producción.
 
 \set ON_ERROR_STOP on
