@@ -8,7 +8,15 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # CI-CANCEL-01 (2026-10-20): on `main` the previous code cancelled the CI of
+  # the SHA being deployed as soon as the next merge landed. The deploy gate is
+  # fail-closed and treats `cancelled` as fatal, so that SHA could NEVER deploy:
+  # measured on c84e812 — Auto-Deploy 39435111115 died with
+  # "RuntimeError: Failed gates: ci.yml: cancelled (run 39435111103)", Deploy to
+  # VPS skipped, served sha stayed 30 commits behind main.
+  # PR runs still cancel their predecessors (iterating is the point); pushes to
+  # main never cancel, because a merged SHA must be able to finish its gates.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   lint-and-test-node:
