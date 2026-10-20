@@ -195,9 +195,6 @@ def run_sql(database_url: str, path: str, cutoff: str, timeout: int = 300) -> tu
             continue
         if cur is not None:
             buf.append(line)
-    for b in blocks.values():
-        if b.stderr == "" and b.error == "no publicó fila":
-            pass
     # El error de una sentencia no se puede leer del stdout (psql va a stderr y no dice
     # la línea en formato estable): se atribuye al bloque vacío más su stderr completo.
     if proc.returncode != 0 and proc.stderr.strip():
@@ -226,23 +223,35 @@ def parse_csv_block(text: str) -> list[dict]:
 
 # ── atribución y compuertas ────────────────────────────────────────────────────
 
-def resolve_rama(check_id: str, row: dict, manifest_rows: list[dict]) -> str:
-    """La rama es del DATO, no del número de línea del fichero.
+# Una rama `sin filas` se llama igual en las dos versiones: v1.4.1 no imprime nada y
+# v1.6.x imprime una fila sintética con `(sin filas)` en el discriminador. Si se deja
+# el literal, el diff publica «sin_filas → (sin filas)» como si fuera un cambio de
+# clase, y eso es deriva de etiqueta, no hallazgo (Jeffrey 6993815: 3 de 6 filas).
+SIN_FILAS = {"", "sin_filas", "(sin filas)", "sin filas", "(sin_filas)", "sin-filas"}
 
-    C10/C12b/C13 emiten varias filas por sentencia; el manifiesto enumera las ramas
-    pero la fila sólo se identifica por su discriminador. Se usa el discriminador y,
-    si no hay, la rama del manifiesto cuando es única.
+
+def canon_rama(value: str) -> str:
+    v = (value or "").strip()
+    return "sin_filas" if v.lower() in SIN_FILAS else v
+
+
+def resolve_rama(check_id: str, row: dict, manifest_rows: list[dict]) -> str:
+    """La rama es del DATO, no del número de línea del fichero ni del manifiesto.
+
+    El manifiesto describe v1.6.x; aplicado al fixture v1.4.1 atribuye mal, así que se
+    usa sólo como último recurso. El discriminador manda, y `sin filas` se canoniza.
     """
     explicit = row.get(RAMA_COL, "").strip()
     if explicit:
-        return explicit
+        return canon_rama(explicit)
     if check_id == "C10":
-        return row.get("gas_measurement_state", "").strip() or "(NULL)"
+        return canon_rama(row.get("gas_measurement_state", "")) or "(NULL)"
     if check_id == "C12b":
         lista = row.get("lista", "").strip() or row.get("familia", "").strip()
-        return f"lista={lista}" if lista else "sin_filas"
+        return "sin_filas" if canon_rama(lista) == "sin_filas" else f"lista={lista}"
     if check_id == "C13":
-        return "veredicto" if row.get("verdict", "").strip() else "sin_filas"
+        # v1.6.x publica `estado` (con la fila sintética `(sin filas)`); v1.4.1 no.
+        return canon_rama(row.get("estado", "")) or "sin_filas"
     ramas = [m["rama"] for m in manifest_rows if m["check_id"] == check_id]
     return ramas[0] if len(ramas) == 1 else ("unica" if not ramas else "+".join(ramas))
 
@@ -280,10 +289,14 @@ def summarize(blocks: list[Block], manifest_rows: list[dict], label: str) -> dic
         cid = b.stmt.check_id
         rows = b.rows or []
         if not rows:
-            per_check.setdefault(cid or f"L{b.stmt.line}", []).append(
-                {"rama": "sin_filas", "verdict": "NO ROW", "gate": False,
-                 "error": b.error or "sin filas", "cols": {}}
-            )
+            per_check.setdefault(cid or f"L{b.stmt.line}", []).append({
+                "rama": "sin_filas",
+                "verdict": "NO ROW",
+                "clase": verdict_class("NO ROW"),
+                "gate": False,
+                "error": b.error or "sin filas",
+                "cols": {},
+            })
             continue
         for row in rows:
             cid_row = row.get(CHECK_COL) or cid or f"L{b.stmt.line}"
@@ -303,19 +316,23 @@ def diff(old: dict, new: dict) -> dict:
     old_ids, new_ids = set(old["checks"]), set(new["checks"])
     lost = sorted(old_ids - new_ids)
     added = sorted(new_ids - old_ids)
-    changed = []
+    changed, no_comparable = [], []
     for cid in sorted(old_ids & new_ids):
         o = {r["rama"]: r["clase"] for r in old["checks"][cid]}
         n = {r["rama"]: r["clase"] for r in new["checks"][cid]}
-        if o != n:
-            changed.append({
-                "check_id": cid,
-                "delta": [
-                    {"rama": r, "v141": o.get(r, "AUSENTE"), "v16x": n.get(r, "AUSENTE")}
-                    for r in sorted(set(o) | set(n)) if o.get(r) != n.get(r)
-                ],
-            })
-    return {"perdidos": lost, "nuevos": added, "cambiados": changed}
+        for rama in sorted(set(o) | set(n)):
+            a, b = o.get(rama, "AUSENTE"), n.get(rama, "AUSENTE")
+            if a == b:
+                continue
+            fila = {"check_id": cid, "rama": rama, "v141": a, "v16x": b}
+            # Un lado sin fila o sin población no es un cambio de clase: es que ese lado
+            # no midió. Va aparte y NO dispara exit 1 (regla publicada en 6993650).
+            if {"NO ROW", "NOT COMPUTED", "AUSENTE"} & {a, b}:
+                no_comparable.append(fila)
+            else:
+                changed.append(fila)
+    return {"perdidos": lost, "nuevos": added, "cambiados": changed,
+            "no_comparables": no_comparable}
 
 
 def render_md(report: dict) -> str:
@@ -336,12 +353,17 @@ def render_md(report: dict) -> str:
     lines.append(f"**Nuevos en v1.6.x:** {', '.join(d['nuevos']) or 'ninguno'}")
     lines.append("")
     if d["cambiados"]:
-        lines += ["| check_id | rama | v1.4.1 | v1.6.x |", "|---|---|---|---|"]
-        for c in d["cambiados"]:
-            for row in c["delta"]:
-                lines.append(f"| {c['check_id']} | {row['rama']} | {row['v141']} | {row['v16x']} |")
+        lines += ["", "**Cambios de clase (delta):**", "",
+                  "| check_id | rama | v1.4.1 | v1.6.x |", "|---|---|---|---|"]
+        for row in d["cambiados"]:
+            lines.append(f"| {row['check_id']} | {row['rama']} | {row['v141']} | {row['v16x']} |")
     else:
         lines.append("Sin cambios de clase de veredicto por `check_id`.")
+    if d.get("no_comparables"):
+        lines += ["", "**No comparable (un lado no midió; no cuenta como cambio):**", "",
+                  "| check_id | rama | v1.4.1 | v1.6.x |", "|---|---|---|---|"]
+        for row in d["no_comparables"]:
+            lines.append(f"| {row['check_id']} | {row['rama']} | {row['v141']} | {row['v16x']} |")
     return "\n".join(lines)
 
 
@@ -399,12 +421,40 @@ def self_test() -> int:
     if len(rows) != 1 or rows[0]["verdict"] != "WARN: a, b":
         failures.append("el parser CSV rompe con comas entrecomilladas")
 
+    # 7. un bloque sin filas no revienta el diff (KeyError 'clase', Jeffrey 6993815)
+    empty = summarize([Block(Statement(0, 41, "C09", "SELECT 1;"))], [], "v")
+    try:
+        diff(empty, {"version": "n", "checks": {"C09": [{"rama": "sin_filas", "clase": "NO ROW"}]}})
+    except KeyError as exc:
+        failures.append(f"fila NO ROW sin 'clase': KeyError {exc}")
+
+    # 8. `sin filas` canónico: el literal de cada versión no es un cambio de clase
+    if canon_rama("(sin filas)") != "sin_filas" or canon_rama("") != "sin_filas":
+        failures.append("canon_rama no unifica (sin filas)/vacío")
+    if resolve_rama("C13", {"estado": "(sin filas)"}, []) != "sin_filas":
+        failures.append("C13 no canoniza la rama sin filas")
+    if resolve_rama("C12b", {"lista": "(sin filas)"}, []) != "sin_filas":
+        failures.append("C12b no canoniza la rama sin filas")
+    a = {"version": "v1.4.1", "checks": {"C10": [{"rama": "sin_filas", "clase": "NO ROW"}]}}
+    b = {"version": "v1.6.x", "checks": {"C10": [{"rama": "sin_filas", "clase": "NO ROW"}]}}
+    if diff(a, b)["cambiados"] or diff(a, b)["no_comparables"]:
+        failures.append("la rama sin filas genera delta espurio")
+
+    # 9. NOT COMPUTED frente a OK es no comparable, no cambio de clase
+    a = {"version": "v1.4.1", "checks": {"C14": [{"rama": "unica", "clase": "OK"}]}}
+    b = {"version": "v1.6.x", "checks": {"C14": [{"rama": "unica", "clase": "NOT COMPUTED"}]}}
+    d2 = diff(a, b)
+    if d2["cambiados"]:
+        failures.append("NOT COMPUTED contado como cambio de clase")
+    if len(d2["no_comparables"]) != 1:
+        failures.append("NOT COMPUTED no aparece en no_comparables")
+
     if failures:
         print("SELF-TEST FALLA")
         for f in failures:
             print(" -", f)
         return 1
-    print("SELF-TEST OK — 6 comprobaciones (splitter real, rama, compuerta, delta, csv)")
+    print("SELF-TEST OK — 9 comprobaciones (splitter real, rama, compuerta, delta, csv, NO ROW, sin_filas, no comparable)")
     return 0
 
 
