@@ -1,0 +1,155 @@
+# ops(b2c) — activate the REAL multi-step REVM simulation path on the VPS.
+#
+# G-SIM-1 B2c (#271) wires `execute_multistep_revm` in sim-ctl. This workflow
+# arms it by upserting the 3 env vars sim-ctl's handler requires:
+#   - SIM_BACKEND=revm           (selects the REVM backend, not anvil)
+#   - REVM_RPC_URL=<fork-rpc>    (the Ethereum RPC the simulator reads state from)
+#   - ARBITRAGE_EXECUTOR=<proxy> (deployed ArbitrageExecutor proxy address)
+#
+# PAPER-SAFE: this only enables the simulation path; it does NOT flip
+# paper_mode (stays true), does NOT enable live broadcast, does NOT set
+# ARBX_SIMULATOR_V2_READY (operator-only, separate gate after E2E validation).
+#
+# Same safety shape as ops-paper-mode.yml:
+#   - protected `paper-ops` environment (required reviewer = operator)
+#   - dry_run=true by default (validates without mutating)
+#   - secrets referenced BY NAME only; no values in this file; nothing
+#     secret printed (only presence + length); no shell tracing.
+#   - backup .env before mutation; recreate only sim-ctl (no-deps); fail-closed.
+
+name: "ops(b2c): activate REAL multi-step REVM simulation path"
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run only; set false to mutate VPS config"
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ops-b2c-activate
+  cancel-in-progress: false
+
+jobs:
+  b2c-activate:
+    runs-on: ubuntu-latest
+    environment: paper-ops
+    env:
+      VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
+      VPS_KEY: ${{ secrets.VPS_SSH_KEY }}
+      REVM_RPC: ${{ secrets.REVM_RPC_URL }}
+      ARB_EXEC: ${{ secrets.ARBITRAGE_EXECUTOR }}
+      DRY_RUN: ${{ github.event.inputs.dry_run }}
+    steps:
+      - name: Validate inputs + required secrets present (values never printed)
+        run: |
+          set -euo pipefail
+          case "$DRY_RUN" in true|false) : ;; *) echo "::error::dry_run must be true|false"; exit 1;; esac
+          missing=0
+          for n in VPS_HOST VPS_KEY REVM_RPC ARB_EXEC; do
+            v="${!n:-}"
+            if [ -z "$v" ]; then echo "::error::required secret for $n is MISSING"; missing=1; else echo "$n: present (len=${#v})"; fi
+          done
+          [ "$missing" -eq 0 ] || { echo "::error::add the missing environment secrets to paper-ops before running"; exit 1; }
+          # ARBITRAGE_EXECUTOR must look like an EVM address (0x + 40 hex).
+          case "$ARB_EXEC" in
+            0x[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]*)
+              echo "ARB_EXEC format: address (length ${#ARB_EXEC})" ;;
+            *) echo "::error::ARB_EXEC is not a valid 0x-prefixed EVM address"; exit 1 ;;
+          esac
+          echo "dry_run=$DRY_RUN (paper-safe; activates sim path, never live)"
+
+      - name: SSH connectivity check (no mutation)
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$VPS_KEY" > ~/.ssh/arbx_key
+          chmod 600 ~/.ssh/arbx_key
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+          ssh -i ~/.ssh/arbx_key -o StrictHostKeyChecking=no root@"$VPS_HOST" 'echo VPS_SSH_OK'
+
+      - name: DRY RUN — validate only, no mutation
+        if: ${{ github.event.inputs.dry_run == 'true' }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/arbx_key -o StrictHostKeyChecking=no root@"$VPS_HOST" 'bash -s' << 'REMOTE'
+          set -euo pipefail
+          echo "=== DRY RUN — no .env write, no restart ==="
+          ENVFILE=""
+          for f in /opt/arbitragex-v2/.env "$HOME/arbitragex-v2/.env" /root/arbitragex-v2/.env; do [ -f "$f" ] && ENVFILE="$f" && break; done
+          echo "env file: ${ENVFILE:-<not found>}"
+          echo "keys WOULD upsert (names only): SIM_BACKEND REVM_RPC_URL ARBITRAGE_EXECUTOR"
+          if [ -n "$ENVFILE" ]; then
+            for k in SIM_BACKEND REVM_RPC_URL ARBITRAGE_EXECUTOR; do
+              if grep -q "^${k}=" "$ENVFILE" 2>/dev/null; then
+                val="$(grep "^${k}=" "$ENVFILE" | head -1 | cut -d= -f2-)"
+                if [ -n "$val" ]; then echo "  $k: present (populated)"; else echo "  $k: present (EMPTY)"; fi
+              else echo "  $k: absent"; fi
+            done
+          fi
+          echo "WOULD recreate: sim-ctl (only)"
+          echo "WOULD NOT touch: api-server, searcher-rs, postgres, redis"
+          REMOTE
+
+      - name: APPLY — backup + upsert env + recreate sim-ctl
+        if: ${{ github.event.inputs.dry_run == 'false' }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/arbx_key -o StrictHostKeyChecking=no root@"$VPS_HOST" \
+            REVM_RPC_URL="$REVM_RPC" ARBITRAGE_EXECUTOR="$ARB_EXEC" 'bash -s' << 'REMOTE'
+          set -euo pipefail
+          ENVFILE=""
+          for f in /opt/arbitragex-v2/.env "$HOME/arbitragex-v2/.env" /root/arbitragex-v2/.env; do [ -f "$f" ] && ENVFILE="$f" && break; done
+          [ -n "$ENVFILE" ] || { echo "::error::.env not found on VPS"; exit 1; }
+          cp "$ENVFILE" "${ENVFILE}.bak.$(date -u +%Y%m%dT%H%M%SZ)"
+          echo "backup written for env file (path not printed)."
+          upsert() { k="$1"; v="$2"; if grep -q "^${k}=" "$ENVFILE"; then sed -i "s|^${k}=.*|${k}=${v}|" "$ENVFILE"; else printf '%s=%s\n' "$k" "$v" >> "$ENVFILE"; fi; echo "upserted ${k} (value not printed)"; }
+          # SIM_BACKEND is a literal (not secret).
+          upsert SIM_BACKEND revm
+          upsert REVM_RPC_URL "$REVM_RPC_URL"
+          upsert ARBITRAGE_EXECUTOR "$ARBITRAGE_EXECUTOR"
+          cd "$(dirname "$ENVFILE")"
+          COMPOSE="docker/compose.prod.yml"
+          [ -f "$COMPOSE" ] || { echo "::error::compose file $COMPOSE not found under $(pwd)"; exit 1; }
+          # --force-recreate reloads env (restart does NOT). --no-deps leaves
+          # api-server/searcher-rs/postgres/redis untouched. sim-ctl is the only
+          # service that reads SIM_BACKEND/REVM_RPC_URL/ARBITRAGE_EXECUTOR.
+          docker compose --env-file .env -f "$COMPOSE" up -d --force-recreate --no-deps sim-ctl
+          echo "sim-ctl force-recreated to reload .env"
+          echo "waiting for sim-ctl to accept connections..."
+          ready=0
+          for _ in $(seq 1 20); do
+            if curl -fsS -o /dev/null "http://localhost:3003/health" 2>/dev/null; then ready=1; break; fi
+            sleep 3
+          done
+          [ "$ready" -eq 1 ] || { echo "::error::sim-ctl did not become healthy after restart"; exit 1; }
+          echo "sim-ctl healthy — B2c path armed"
+          echo "=== posture check (paper-mode must stay true, live stays NO-GO) ==="
+          curl -fsS "http://localhost:8080/api/v1/readiness/decision" | python3 -c "
+          import json, sys
+          d = json.load(sys.stdin)
+          print('readiness:', {k: d.get(k) for k in ['go_live','paper_mode','capital_exposure_usd','live_trading','submit_enabled']})
+          if d.get('paper_mode') is not True:
+              print('::error::paper_mode flipped — ABORT (this workflow must not disable paper-mode)')
+              sys.exit(1)
+          print('safe posture: paper-mode still armed, B2c sim path activated')
+          "
+          REMOTE
+
+      - name: Reminder
+        if: always()
+        run: |
+          echo "B2c sim path activation complete (if dry_run=false)."
+          echo "This workflow does NOT:"
+          echo "  - flip paper_mode (stays true)"
+          echo "  - set ARBX_SIMULATOR_V2_READY (operator-only, after E2E validation per docs/gsim1-simulator-v2-ready-flip-checklist.md)"
+          echo "  - enable live broadcast (relays-client live_exec_policy still default-deny)"
+          echo "Next operator step: run the 4-step E2E validation, then flip ARBX_SIMULATOR_V2_READY=true manually."
