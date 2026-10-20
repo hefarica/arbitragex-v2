@@ -36,6 +36,7 @@ import {
   type OutcomeReasonRow,
 } from "@/lib/hooks/useRouteDiscoveryOutcomes";
 import { StatusPill, MetricCard, Freshness, ReadOnlyBadge } from "./premium-ui";
+import { OUTCOMES_POLL_SECONDS, outcomesUnavailableCopy } from "./unavailable-copy";
 
 const WINDOWS: Array<{ label: string; hours: number }> = [
   { label: "24h", hours: 24 },
@@ -102,7 +103,7 @@ function ReasonRow({ row, total }: { row: OutcomeReasonRow; total: number | null
 
 export function RouteDiscoveryOutcomesPanel() {
   const [hours, setHours] = React.useState(24);
-  const { totals, byReason, byChain, windowHours, status, updatedAt, unavailableReason } =
+  const { totals, byReason, byChain, windowHours, status, updatedAt, unavailableReason, unavailableDetail } =
     useRouteDiscoveryOutcomes(hours);
 
   const connecting = status === "CONNECTING";
@@ -158,17 +159,13 @@ export function RouteDiscoveryOutcomesPanel() {
             <AlertCircleIcon className="h-4 w-4" />
             <AlertTitle>Outcomes series unavailable</AlertTitle>
             <AlertDescription className="text-sm">
-              The route-discovery outcomes summary could not be read
-              {unavailableReason ? (
-                <>
-                  {" "}
-                  (<span className="font-mono">{unavailableReason}</span>)
-                </>
-              ) : null}
-              . api-server returns 503 when Postgres is unreachable; the panel never
-              fabricates a zero. Polling /api/route-discovery-outcomes/summary every
-              60s.{/* // RDO-503-REASON-UI (2026-09-17, fixer gang ronda 1): was "every
-              8s" — stale text; the hook polls at POLL_MS=60000 since RDO-SUMMARY-HANG. */}
+              {/* RDO-503-REASON-UI: name the reason the route actually emitted.
+                  The old copy asserted "Postgres is unreachable" for every 503
+                  — false for rollup_backfilling (self-healing) and query_failed
+                  (a statement blew its 15s budget). */}
+              {outcomesUnavailableCopy(unavailableReason, unavailableDetail)} Polling
+              /api/route-discovery-outcomes/summary every {OUTCOMES_POLL_SECONDS}s — the panel
+              never fabricates a zero.
             </AlertDescription>
           </Alert>
         ) : (

@@ -6,7 +6,7 @@ import { PaperExecutor } from "./paper/executor.js";
 import { ScoredOpportunitiesArchiver } from "./routes/scored-opportunities-archiver.js";
 import { RouteDiscoveryOutcomeSink, outcomeSinkEnabled } from "./routes/route-discovery-outcome-sink.js";
 import { OpportunitiesBridgeArchiver, opportunitiesBridgeEnabled } from "./routes/opportunities-bridge-archiver.js";
-import { buildRouteDiscoveryOutcomesRouter } from "./routes/route-discovery-outcomes-api.js";
+import { buildRouteDiscoveryOutcomes } from "./routes/route-discovery-outcomes-api.js";
 import { buildViableKpisRouter } from "./routes/viable-kpis.js";
 import { buildPaperHistoryRouter } from "./routes/paper-history-api.js";
 import { buildOperatorRouter } from "./routes/operator.js";
@@ -750,7 +750,11 @@ app.use(
 // FASE B Gate-C — read-only analytics over the durable route_discovery_outcomes
 // table (the shadow outcomes the sink persists, incl. the Paso 9 `reason`). This is
 // the missing READ side for that passive sink. NO-ACTIVE: pure SELECT, never writes.
-app.use(buildRouteDiscoveryOutcomesRouter(pool));
+// RDO-503-CONVERGE: also starts the 5-min rollup maintainer (interval-only,
+// unref'd) so the read path never has a backlog to clear when nobody has the
+// panel open — the measured "series unavailable" on a healthy backend.
+const routeDiscoveryOutcomes = buildRouteDiscoveryOutcomes(pool, { maintain: true });
+app.use(routeDiscoveryOutcomes.router);
 // XLS-DASH-01 — workbook 29_SUPER_DASHBOARD KPI set (viable by_hops / by_kind +
 // viability %) over REAL opportunities rows. Read-only SELECT, observe-only.
 app.use(buildViableKpisRouter(pool));
@@ -2062,6 +2066,8 @@ const shutdown = async (sig: string) => {
   shutdownStarted = true;
   logger.info({ event: "service.shutdown", signal: sig }, "shutting down");
   await killSwitch.close().catch(() => {});
+  // RDO-503-CONVERGE: stop the rollup maintainer before the pool goes away.
+  routeDiscoveryOutcomes.maintainer.stop();
   // Stop the passive paper-trade archiver (closes its dedicated Redis conn).
   await paperArchiver?.stop().catch(() => {});
   // Stop the paper executor (closes its dedicated Redis conn).
