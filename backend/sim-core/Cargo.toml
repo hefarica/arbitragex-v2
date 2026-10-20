@@ -33,3 +33,6 @@ tokio         = { workspace = true }
 [features]
 default = ["v2-simulator"]
 v2-simulator = ["dep:simulator-v2"]
+# SIM-REVERT-TRACE-01: attach the test-only REVM revert tracer to the SAME
+# production multistep path (no fork of the context). OFF by default.
+revert-trace = ["v2-simulator", "simulator-v2/revert-trace"]

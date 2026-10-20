@@ -107,6 +107,47 @@ struct Histogram {
     /// evidence row could only report `pred_failed=N` — a number nobody can act
     /// on. This map is the per-cause breakdown of that N.
     pred_reasons: std::collections::BTreeMap<String, usize>,
+    /// G-SIM1-SAMPLE-IDENTITY-01: the IDENTITY of every exported row that did
+    /// NOT produce a labeled pair. The histogram above aggregates by tag and
+    /// discards the route, so "which opportunity failed, with which
+    /// `token_in`/`amount_in`" was unanswerable from the evidence alone: the
+    /// production DB (`opportunities`, `simulations`) could not be joined to the
+    /// harness by id, and the export-population check had to be redone by hand.
+    /// One fate per non-labeled row — verbatim fields, never resolved here.
+    fates: Vec<SampleFate>,
+}
+
+/// Identity + terminal stage of one exported row that did NOT get labeled.
+/// `stage` names the harness branch (a skip bucket, or `pred`/`obs` failure),
+/// `reason` carries the measured tag, and the token/amount fields are the row's
+/// own JSONL values (R8: nothing imputed, nothing resolved).
+#[derive(Debug, Clone)]
+struct SampleFate {
+    stage: &'static str,
+    reason: String,
+    opportunity_id: String,
+    token_in: String,
+    token_out: String,
+    amount_in_wei: String,
+}
+
+/// Record one non-labeled row's identity beside the aggregate counter, so the
+/// evidence carries BOTH the population count AND the per-sample id (join key
+/// against the production DB).
+fn record_sample_fate(
+    hist: &mut Histogram,
+    stage: &'static str,
+    row: &ExportRow,
+    reason: impl Into<String>,
+) {
+    hist.fates.push(SampleFate {
+        stage,
+        reason: reason.into(),
+        opportunity_id: row.opportunity_id.clone(),
+        token_in: row.token_in.clone(),
+        token_out: row.token_out.clone(),
+        amount_in_wei: row.amount_in_wei.clone(),
+    });
 }
 
 /// Count one failed prediction under its MEASURED cause. A missing reason is
@@ -378,16 +419,19 @@ async fn variance_benchmark_predicted_vs_settled_block() {
         }
         if row.chain_id != 1 {
             hist.unsupported_adapter += 1; // non-mainnet export rows: out of scope
+            record_sample_fate(&mut hist, "shape", row, "skip:non_mainnet");
             continue;
         }
         if row.dex_adapters.len() != 2 || row.token_addresses.len() != 3 {
             hist.bad_shape += 1;
+            record_sample_fate(&mut hist, "shape", row, "skip:bad_shape");
             continue;
         }
         let forward = match adapter_to_semantic(&row.dex_adapters[0]) {
             Some(s) => s,
             None => {
                 hist.unsupported_adapter += 1;
+                record_sample_fate(&mut hist, "shape", row, "skip:unsupported_adapter_forward");
                 continue;
             }
         };
@@ -395,6 +439,7 @@ async fn variance_benchmark_predicted_vs_settled_block() {
             Some(s) => s,
             None => {
                 hist.unsupported_adapter += 1;
+                record_sample_fate(&mut hist, "shape", row, "skip:unsupported_adapter_backward");
                 continue;
             }
         };
@@ -413,12 +458,14 @@ async fn variance_benchmark_predicted_vs_settled_block() {
             Err(e) => {
                 eprintln!("skip {} block-resolve: {e}", row.opportunity_id);
                 hist.stale_timestamp += 1;
+                record_sample_fate(&mut hist, "skip", row, format!("skip:block_resolve:{e}"));
                 continue;
             }
         };
         if block_b <= window_lo || block_b + 1 > tip {
             // Detection older than the window (or settled block not yet mined).
             hist.stale_timestamp += 1;
+            record_sample_fate(&mut hist, "skip", row, "skip:stale_timestamp");
             continue;
         }
 
@@ -440,6 +487,7 @@ async fn variance_benchmark_predicted_vs_settled_block() {
                 Err(e) => {
                     eprintln!("skip {} decimals({addr}): {e}", row.opportunity_id);
                     hist.decimals_failed += 1;
+                    record_sample_fate(&mut hist, "skip", row, format!("skip:decimals:{e}"));
                     continue 'rows;
                 }
             }
@@ -453,6 +501,7 @@ async fn variance_benchmark_predicted_vs_settled_block() {
             Some(a) if a.is_finite() && a > 0.0 => a,
             _ => {
                 hist.bad_shape += 1;
+                record_sample_fate(&mut hist, "skip", row, "skip:bad_amount_in");
                 continue;
             }
         };
@@ -487,6 +536,7 @@ async fn variance_benchmark_predicted_vs_settled_block() {
             Err(e) => {
                 eprintln!("skip {} encode: {e}", row.opportunity_id);
                 hist.encode_failed += 1;
+                record_sample_fate(&mut hist, "skip", row, format!("skip:encode:{e}"));
                 continue;
             }
         };
@@ -539,11 +589,33 @@ async fn variance_benchmark_predicted_vs_settled_block() {
             // G-SIM1-CAUSE-01: attribute the failure BEFORE skipping, so the
             // row names the cause instead of only counting it.
             record_pred_failure(&mut hist, pred.fail_reason.as_deref());
+            // G-SIM1-SAMPLE-IDENTITY-01: and keep the ROW's identity beside the
+            // tag, so the failure is joinable to the production DB by id.
+            record_sample_fate(
+                &mut hist,
+                "pred",
+                row,
+                pred.fail_reason
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|t| !t.is_empty())
+                    .unwrap_or("unlabeled_pred"),
+            );
             continue;
         }
         let obs = sim_at_block(&rpc, block_b + 1, &ctx, &exec_cfg);
         if !obs.passed {
             hist.obs_failed += 1;
+            record_sample_fate(
+                &mut hist,
+                "obs",
+                row,
+                obs.fail_reason
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|t| !t.is_empty())
+                    .unwrap_or("unlabeled_obs"),
+            );
             continue;
         }
 
@@ -552,6 +624,7 @@ async fn variance_benchmark_predicted_vs_settled_block() {
         if pred_f <= 0.0 {
             // Zero predicted profit → ratio undefined → unlabeled (honest).
             hist.zero_predicted += 1;
+            record_sample_fate(&mut hist, "zero_predicted", row, "zero_predicted");
             continue;
         }
         if first_pred_block.is_none() {
@@ -620,6 +693,18 @@ async fn variance_benchmark_predicted_vs_settled_block() {
         // row's blocker text; the full per-route breakdown travels beside it.
         "fail_reason": dominant_failure_reason(&hist.pred_reasons, hist.pred_failed),
         "fail_reasons": &hist.pred_reasons,
+        // G-SIM1-SAMPLE-IDENTITY-01: the per-sample ledger behind the aggregate.
+        // Each entry is joinable by `opportunity_id` against the production DB
+        // (`opportunities`, `simulations`) and against the export population, so
+        // the harness and the scanner stop telling two stories about the same id.
+        "unlabeled_samples": hist.fates.iter().map(|f| serde_json::json!({
+            "stage": f.stage,
+            "reason": f.reason,
+            "opportunity_id": f.opportunity_id,
+            "token_in": f.token_in,
+            "token_out": f.token_out,
+            "amount_in_wei": f.amount_in_wei,
+        })).collect::<Vec<_>>(),
         "skips": {
             "attempted": hist.attempted,
             "dedup": hist.dedup,
@@ -651,6 +736,22 @@ async fn variance_benchmark_predicted_vs_settled_block() {
         fmt(max),
         hist.attempted - hist.dedup
     );
+    // G-SIM1-SAMPLE-IDENTITY-01: one greppable line per non-labeled row, so the
+    // harness log ALONE (no DB, no registry) answers "which route failed, with
+    // which token_in/token_out/amount". Machine-parseable, stable prefix.
+    for f in &hist.fates {
+        println!(
+            "VARIANCE_BENCH_UNLABELED_SAMPLE={}",
+            serde_json::json!({
+                "stage": f.stage,
+                "reason": f.reason,
+                "opportunity_id": f.opportunity_id,
+                "token_in": f.token_in,
+                "token_out": f.token_out,
+                "amount_in_wei": f.amount_in_wei,
+            })
+        );
+    }
     println!("VARIANCE_BENCH_JSON={stats}");
 }
 
@@ -752,4 +853,37 @@ fn dominant_reason_is_none_when_nothing_failed() {
         dominant_failure_reason(&hist.pred_reasons, hist.pred_failed),
         None
     );
+}
+
+/// G-SIM1-SAMPLE-IDENTITY-01: a non-labeled row keeps its identity beside the
+/// aggregate count, so the failure is joinable to the production DB by id — the
+/// exact join that was impossible while the histogram discarded the route.
+#[test]
+fn sample_fates_keep_identity_beside_the_aggregate_count() {
+    let row = ExportRow {
+        opportunity_id: "7c4f9345-005a-45d9-9cae-d494c9a3f4cd".into(),
+        chain_id: 1,
+        detected_at_unix: 1_700_000_000,
+        token_in: "0x5832fbf930dacbdd9a1697dca7b3c518277ff0b0".into(),
+        token_out: "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2".into(),
+        dex_a: "UniswapV2".into(),
+        pool_addresses: vec!["0xp".into()],
+        token_addresses: vec!["0xa".into(), "0xb".into(), "0xc".into()],
+        dex_adapters: vec!["UniswapV2".into(), "SushiSwap".into()],
+        amount_in_wei: "1000000000000000000".into(),
+    };
+    let mut hist = Histogram::default();
+    record_pred_failure(&mut hist, Some("multistep_call_revert:0x90cd6f24"));
+    record_sample_fate(&mut hist, "pred", &row, "multistep_call_revert:0x90cd6f24");
+
+    assert_eq!(hist.fates.len(), 1, "one fate per non-labeled row");
+    let f = &hist.fates[0];
+    assert_eq!(f.stage, "pred");
+    assert_eq!(f.reason, "multistep_call_revert:0x90cd6f24");
+    assert_eq!(f.opportunity_id, row.opportunity_id);
+    assert_eq!(f.token_in, row.token_in);
+    assert_eq!(f.token_out, row.token_out);
+    assert_eq!(f.amount_in_wei, row.amount_in_wei);
+    // The aggregate count is untouched by the identity ledger.
+    assert_eq!(hist.pred_failed, 1);
 }

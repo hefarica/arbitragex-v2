@@ -29,3 +29,9 @@ sha2     = "0.10"
 # needed to build Http::new_with_client with a timeout-configured client.
 reqwest  = { version = "0.11", default-features = false, features = ["json", "rustls-tls"] }
 url      = "2"
+
+[features]
+# SIM-REVERT-TRACE-01: compile the test-only `RevertTracer` that names the
+# innermost reverting frame. OFF in production; the default `SequenceContext`
+# uses the zero-size `NoopInspector`, so nothing here costs runtime when off.
+revert-trace = []
