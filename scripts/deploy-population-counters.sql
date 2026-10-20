@@ -1,4 +1,4 @@
--- deploy-population-counters.sql — v1.1 (2026-10-20)
+-- deploy-population-counters.sql — v1.2 (2026-10-20)
 -- Contadores de población que sustituyen a `paper_trade_runs` como criterio de
 -- muerte de un merge (LEVI 6991955 → corrección aceptada 6992259).
 --
@@ -103,12 +103,32 @@ k3b AS (
          (SELECT n_tup_upd FROM pg_stat_user_tables WHERE relname = 'opportunities') AS presentes,
          (SELECT n_tup_del FROM pg_stat_user_tables WHERE relname = 'opportunities') AS nulos,
          NULL::bigint AS silencio_s
+),
+-- K4 = primaria del pre-registro ratificado por MANTIS (6992516): filas
+-- almacenadas con `dex_b` no nulo Y `dex_adapters` no vacío. `dex_adapters` no
+-- es columna: vive en route_metadata->'dex_adapters' (099:17).
+k4 AS (
+  SELECT 'K4' AS contador,
+         'dex_b no nulo Y route_metadata.dex_adapters no vacío (primaria)' AS que_mide,
+         count(*) AS poblacion,
+         count(*) FILTER (
+           WHERE dex_b IS NOT NULL AND btrim(dex_b) <> ''
+             AND jsonb_typeof(route_metadata->'dex_adapters') = 'array'
+             AND jsonb_array_length(route_metadata->'dex_adapters') > 0
+         ) AS presentes,
+         count(*) FILTER (
+           WHERE dex_b IS NULL OR btrim(dex_b) = ''
+              OR jsonb_typeof(route_metadata->'dex_adapters') IS DISTINCT FROM 'array'
+              OR jsonb_array_length(COALESCE(route_metadata->'dex_adapters', '[]'::jsonb)) = 0
+         ) AS nulos,
+         NULL::bigint AS silencio_s
+  FROM pob
 )
 SELECT contador, que_mide, poblacion, presentes, nulos,
        -- Tercer estado explícito: hay filas ni presentes ni nulas (metadatos
        -- parciales, p.ej. pool_addresses sí y decimals no). Sin esta columna
        -- los números «no cuadran» y alguien los leería como error de conteo.
-       CASE WHEN contador IN ('K1','K2') THEN poblacion - presentes - nulos END AS parciales,
+       CASE WHEN contador IN ('K1','K2','K4') THEN poblacion - presentes - nulos END AS parciales,
        CASE
          WHEN contador = 'K3b' THEN
            'INSTRUMENTO ACUMULADO: no da veredicto en una lectura; comparar dos'
@@ -123,7 +143,8 @@ SELECT contador, que_mide, poblacion, presentes, nulos,
          ELSE format('FAIL parcial: %s/%s presentes, %s nulos', presentes, poblacion, nulos)
        END AS veredicto
 FROM (SELECT * FROM k1 UNION ALL SELECT * FROM k2 UNION ALL
-      SELECT * FROM k3a UNION ALL SELECT * FROM k3b) t;
+      SELECT * FROM k3a UNION ALL SELECT * FROM k3b UNION ALL
+      SELECT * FROM k4) t;
 
 -- Aceptación post-hot-sim en una fila: ¿hay ALGUNA oportunidad admitible?
 WITH v AS (
@@ -138,5 +159,50 @@ SELECT 'ACEPTACION' AS contador,
 FROM opportunities o, v
 WHERE o.detected_at >  v.corte - v.ventana
   AND o.detected_at <= v.corte;
+
+-- EXITO del pre-registro: ≥1 `executed` con `actual_profit_usd > 0` Y
+-- reconciliación > 0. Dos columnas del pre-registro NO existen con ese nombre y
+-- se traducen aquí, declarado:
+--   * `paper_trade_runs` no tiene columna `status` (verificado en 051/091/100/111/126)
+--     => el `executed` se lee en opportunities.status (assumption de MANTIS 6992516).
+--   * `recon.total` no existe: profit_reconciliation (024) tiene
+--     `realized_profit_usd`. Se publican count(*) y sum(realized_profit_usd).
+-- Potencia: < 3 candidatas 2-leg => INCONCLUSO, nunca FAIL.
+WITH v AS (
+  SELECT :'corte'::timestamptz AS corte, :'ventana'::interval AS ventana
+),
+cand AS (
+  SELECT count(*) AS n
+  FROM opportunities o, v
+  WHERE o.detected_at >  v.corte - v.ventana
+    AND o.detected_at <= v.corte
+    AND o.dex_b IS NOT NULL AND btrim(o.dex_b) <> ''
+    AND jsonb_typeof(o.route_metadata->'dex_adapters') = 'array'
+    AND jsonb_array_length(o.route_metadata->'dex_adapters') > 0
+),
+ejec AS (
+  SELECT count(DISTINCT p.opportunity_id) AS con_profit
+  FROM paper_trade_runs p
+  JOIN opportunities o ON o.id = p.opportunity_id
+  CROSS JOIN v
+  WHERE p.created_at > v.corte - v.ventana AND p.created_at <= v.corte
+    AND o.status = 'executed'
+    AND p.actual_profit_usd IS NOT NULL AND p.actual_profit_usd > 0
+),
+rec AS (
+  SELECT count(DISTINCT r.opportunity_id) AS oportunidades,
+         COALESCE(sum(r.realized_profit_usd), 0) AS realizado
+  FROM profit_reconciliation r CROSS JOIN v
+  WHERE r.created_at > v.corte - v.ventana AND r.created_at <= v.corte
+)
+SELECT 'EXITO' AS contador,
+       (SELECT n FROM cand) AS candidatas_2leg,
+       (SELECT con_profit FROM ejec) AS ejecutadas_con_profit,
+       (SELECT oportunidades FROM rec) AS recon_oportunidades,
+       (SELECT realizado FROM rec) AS recon_realizado,
+       CASE WHEN (SELECT n FROM cand) < 3 THEN 'INCONCLUSO: <3 candidatas 2-leg (potencia)'
+            WHEN (SELECT con_profit FROM ejec) = 0 THEN 'FAIL: ninguna executed con actual_profit_usd > 0'
+            WHEN (SELECT oportunidades FROM rec) = 0 THEN 'FAIL: ejecutada sin reconciliación'
+            ELSE 'PASS' END AS veredicto;
 
 ROLLBACK;

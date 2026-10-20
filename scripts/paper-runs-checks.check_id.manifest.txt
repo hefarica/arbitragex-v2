@@ -1,28 +1,29 @@
-check_id	linea
-C01	41
-C02	53
-C03	65
-C04	76
-C05a	87
-C05b	98
-C05c	111
-C06	123
-C07	153
-C07b	162
-C08	179
-C09	189
-C10	199
-C10	210
-C11	256
-C12	302
-C12b	351
-C12b	355
-C12b	360
-C13	367
-C13	386
-C13b	397
-C13c	411
-C14	423
-C15	504
-C15b	536
-C16b	574
+# filas=27 ids=23 · una fila por RAMA de ejecución, no por chequeo (C10=2, C12b=3, C13=2). ids distintos: 23. No leer 27 como número de checks.
+check_id	rama	linea
+C01	unica	41
+C02	unica	53
+C03	unica	65
+C04	unica	76
+C05a	unica	87
+C05b	unica	98
+C05c	unica	111
+C06	unica	123
+C07	unica	153
+C07b	unica	162
+C08	unica	179
+C09	unica	189
+C10	por_gas_measurement_state	199
+C10	sin_filas	210
+C11	unica	256
+C12	unica	302
+C12b	lista=unrecognized	351
+C12b	lista=structural_known	355
+C12b	sin_filas	360
+C13	veredicto	367
+C13	sin_filas	386
+C13b	unica	397
+C13c	unica	411
+C14	unica	423
+C15	unica	504
+C15b	unica	536
+C16b	unica	574
