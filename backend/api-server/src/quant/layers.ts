@@ -129,7 +129,8 @@ export interface RouteView {
   routeKey: string;
   hops: number;
   legs: LegView[];
-  sumW: number;
+  /** C-16: null cuando la continuidad de valor está rota (Σw no se publica). */
+  sumW: number | null;
   /**
    * Rentabilidad TEÓRICA del descubrimiento: e^(−Σw) − 1 (en %). Es la anomalía
    * matemática, NO la ganancia: el tamaño, el fee ya pagado, el gas y la
@@ -137,6 +138,10 @@ export interface RouteView {
    */
   discoveryReturnPct: number | null;
   signal: boolean;
+  /** C-16: aristas de continuidad comprobadas (pares consecutivos con cifras). */
+  legsChecked: number;
+  /** C-16: max |value_out(i) − value_in(i+1)| / value_in(i+1). null si no se pudo medir. */
+  maxValueJumpRatio: number | null;
   bindingBoundUsd: number | null;
   /**
    * QUANT-SIZING-NULL-01: tamaño que el modelo autorizaría. **null = no
@@ -165,34 +170,70 @@ export type QuantStatus =
   | "INSUFFICIENT_DEPTH"
   | "SLIPPAGE_OR_SIZE"
   | "NET_BELOW_TARGET"
+  | "LEG_VALUE_JUMP"
+  | "OUT_OF_BAND"
   | "QUOTE_INCOMPLETE";
+
+/**
+ * C-16 — de dónde salen los costes de la capa.
+ *
+ *   · `measured`            — los cuatro componentes de `o.economics` (gas,
+ *                             flash_fee, bribe, other_costs). Es la ÚNICA
+ *                             contabilidad: la fila manda.
+ *   · `measured_incomplete` — la fila trae economics pero le falta algún
+ *                             componente ⇒ no se publica net (fail-closed).
+ *   · `config_ladder`       — llamada legacy sin economics (tests); usa
+ *                             DEFAULT_QUANT_CONFIG y lo declara.
+ */
+export type CostBasis = "measured" | "measured_incomplete" | "config_ladder";
+
+/** Componentes del ledger de coste tal como los publica el productor (estimados, no recibos). */
+export interface LedgerCosts {
+  gasUsd: number | null;
+  flashUsd: number | null;
+  tipUsd: number | null;
+  otherCostsUsd: number | null;
+}
 
 export interface PnlView {
   routeKey: string;
   hops: number;
   /** Escalera de estados hasta READY_TO_SIMULATE (nunca EXECUTE). */
   status: QuantStatus;
-  sizingUsd: number;
-  finalUsd: number;
-  grossUsd: number;
-  grossBps: number;
-  gasUsd: number;
-  flashUsd: number;
-  tipUsd: number;
-  haircutUsd: number;
+  sizingUsd: number | null;
+  /** `measured` = amount_in_usd de la fila; `model` = route.sizingUsd (sin medición). */
+  principalSource: "measured" | "model" | null;
+  finalUsd: number | null;
+  grossUsd: number | null;
+  /** null cuando el principal está fuera de banda: un bps sobre 0.01 USD no mide nada. */
+  grossBps: number | null;
+  gasUsd: number | null;
+  flashUsd: number | null;
+  tipUsd: number | null;
+  /** `other_costs_usd` del ledger; null si la llamada usa la escalera legacy. */
+  otherCostsUsd: number | null;
+  /** Haircut de riesgo: SÓLO existe en la escalera legacy. La fila medida no lo tiene. */
+  haircutUsd: number | null;
+  costBasis: CostBasis;
   /**
    * QUANT-PNL-01 — desviación de la cadena MEDIDA contra la cadena `fair` (≥ 0).
    * Es DIAGNÓSTICO, no un coste: `grossUsd` sale de la medición (post-fee y
    * post-impacto), así que esta desviación ya está dentro de él. Sumarla a la
    * escalera restaría la misma pérdida dos veces.
    */
-  deviationVsFairUsd: number;
+  deviationVsFairUsd: number | null;
   /** Valor de la cartera si la cadena se hubiera ejecutado a las tasas `fair`. */
-  fairChainUsd: number;
-  totalCostUsd: number;
-  netUsd: number;
-  netBps: number;
-  verdict: "EJECUTAR" | "MARGINAL" | "RECHAZAR" | "NO VIABLE";
+  fairChainUsd: number | null;
+  totalCostUsd: number | null;
+  netUsd: number | null;
+  /** null si el principal medido cae fuera de la banda declarada. */
+  netBps: number | null;
+  /** Banda declarada [minBoundUsd, capitalUsd × utilizationCap], aplicada al principal. */
+  bandUsd: { minUsd: number; maxUsd: number };
+  inBand: boolean | null;
+  /** |net calculado − economics.net_profit_usd|; null si el wire no lo trae. */
+  netDeltaUsd: number | null;
+  verdict: "EJECUTAR" | "MARGINAL" | "RECHAZAR" | "NO VIABLE" | "OUT_OF_BAND";
   whyNot: string | null;
 }
 
@@ -207,7 +248,7 @@ export interface DashboardView {
   bestNetBps: number | null;
   bestRouteKey: string | null;
   byHops: Array<{ hops: number; routes: number; signal: number; viable: number; executable: number }>;
-  top: Array<{ routeKey: string; netBps: number; netUsd: number; hops: number; verdict: string }>;
+  top: Array<{ routeKey: string; netBps: number; netUsd: number | null; hops: number; verdict: string }>;
 }
 
 const isNum = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
@@ -286,6 +327,43 @@ export function buildLegs(
   });
 }
 
+/**
+ * C-16 — continuidad de valor por pata. La cadena es válida sólo si el valor
+ * que sale de una pata es el que entra en la siguiente dentro de 1 bp:
+ *
+ *     |value_out(i) − value_in(i+1)| / value_in(i+1) ≤ 0.0001
+ *
+ * Un salto mayor no es una oportunidad: es un cambio de unidades del
+ * plan/encoder (el 985× de la fila 51813500). Mientras no se arregle aguas
+ * arriba, Σw y sizing NO se publican para esa ruta.
+ */
+export const LEG_CONTINUITY_TOLERANCE = 0.0001;
+
+export function legContinuity(legs: LegView[]): {
+  checked: number;
+  maxRatio: number | null;
+  brokenAt: number | null;
+  brokenRatio: number | null;
+} {
+  let checked = 0;
+  let maxRatio: number | null = null;
+  let brokenAt: number | null = null;
+  let brokenRatio: number | null = null;
+  for (let i = 0; i + 1 < legs.length; i++) {
+    const out = legs[i]?.amountOut;
+    const nextIn = legs[i + 1]?.amountIn;
+    if (!isNum(out) || !isNum(nextIn) || nextIn <= 0) continue;
+    checked += 1;
+    const ratio = Math.abs(out - nextIn) / nextIn;
+    if (maxRatio == null || ratio > maxRatio) maxRatio = ratio;
+    if (ratio > LEG_CONTINUITY_TOLERANCE && brokenAt == null) {
+      brokenAt = i + 1;
+      brokenRatio = ratio;
+    }
+  }
+  return { checked, maxRatio, brokenAt, brokenRatio };
+}
+
 /** 06_ROUTES · Σw, bound vinculante, sizing y filtros de viabilidad. */
 export function buildRoutes(
   routeKey: string,
@@ -295,13 +373,17 @@ export function buildRoutes(
 ): RouteView {
   const weights = legs.map((l) => l.weight).filter(isNum);
   const complete = legs.length > 0 && weights.length === legs.length;
-  const sumW = weights.reduce((a, b) => a + b, 0);
-  const signal = complete && sumW < 0;
+  const continuity = legContinuity(legs);
+  const continuous = continuity.brokenAt == null;
+  const sumW = complete && continuous ? weights.reduce((a, b) => a + b, 0) : null;
+  const signal = sumW != null && sumW < 0;
   const bounds = legs.map((l) => l.boundUsd).filter(isNum);
   const bindingBoundUsd = bounds.length === legs.length && bounds.length > 0 ? Math.min(...bounds) : null;
   const sizingUsd =
-    bindingBoundUsd == null ? null : Math.max(cfg.dustUsd, Math.min(cfg.capitalUsd, bindingBoundUsd * cfg.utilizationCap));
-  const discoveryReturnPct = complete ? (Math.exp(-sumW) - 1) * 100 : null;
+    !continuous || bindingBoundUsd == null
+      ? null
+      : Math.max(cfg.dustUsd, Math.min(cfg.capitalUsd, bindingBoundUsd * cfg.utilizationCap));
+  const discoveryReturnPct = sumW != null ? (Math.exp(-sumW) - 1) * 100 : null;
 
   let whyNot: string | null = null;
   let status: QuantStatus;
@@ -311,6 +393,11 @@ export function buildRoutes(
   } else if (!complete) {
     whyNot = "cadena medida incompleta";
     status = "QUOTE_INCOMPLETE";
+  } else if (!continuous) {
+    whyNot =
+      `salto de valor entre patas: ${(continuity.brokenRatio as number).toFixed(6)}× ` +
+      `en la pata ${continuity.brokenAt} (> ${LEG_CONTINUITY_TOLERANCE})`;
+    status = "LEG_VALUE_JUMP";
   } else if (!signal) {
     whyNot = "sin señal (Σw ≥ 0)";
     status = "NO_NEGATIVE_CYCLE";
@@ -334,6 +421,8 @@ export function buildRoutes(
     sumW,
     discoveryReturnPct,
     signal,
+    legsChecked: continuity.checked,
+    maxValueJumpRatio: continuity.maxRatio,
     bindingBoundUsd,
     sizingUsd,
     maxBlockAgeBlocks: opts.maxBlockAgeBlocks ?? null,
@@ -347,23 +436,80 @@ export function buildRoutes(
 /** 08_ROUTE_PNL · escalera de costes + gate de rentabilidad. */
 export function buildPnl(
   route: RouteView,
-  measured: { finalUsd: number | null; principalUsd: number | null },
+  measured: {
+    finalUsd: number | null;
+    principalUsd: number | null;
+    /** C-16: ledger de costes de `o.economics`. Sin él la capa NO es la única verdad. */
+    costs?: LedgerCosts | null;
+    /** `economics.net_profit_usd`, sólo para reconciliar — nunca para calcular. */
+    measuredNetUsd?: number | null;
+  },
   cfg: QuantConfig,
 ): PnlView {
   // El tamaño REALMENTE medido manda; si no hay medición se usa el del modelo
-  // (null = no computado ⇒ NaN ⇒ null en el wire, jamás un 0 falso).
+  // (null = no computado ⇒ null en el wire, jamás un 0 falso).
+  const principalMeasured =
+    isNum(measured.principalUsd) && measured.principalUsd > 0 ? measured.principalUsd : null;
   const sizingUsd =
-    isNum(measured.principalUsd) && measured.principalUsd > 0
-      ? measured.principalUsd
-      : isNum(route.sizingUsd)
-        ? (route.sizingUsd as number)
-        : NaN;
-  const finalUsd = isNum(measured.finalUsd) ? (measured.finalUsd as number) : NaN;
-  const grossUsd = finalUsd - sizingUsd;
-  const gasUsd = cfg.gasBaseUsd + route.hops * cfg.gasPerHopUsd;
-  const flashUsd = (sizingUsd * cfg.flashBps) / 10_000;
-  const tipUsd = (sizingUsd * cfg.tipBps) / 10_000;
-  const haircutUsd = (sizingUsd * cfg.riskHaircutBps) / 10_000;
+    principalMeasured ?? (isNum(route.sizingUsd) ? route.sizingUsd : null);
+  const principalSource = principalMeasured != null ? ("measured" as const) : sizingUsd != null ? ("model" as const) : null;
+  const finalUsd = isNum(measured.finalUsd) ? measured.finalUsd : null;
+  const grossUsd = isNum(finalUsd) && isNum(sizingUsd) ? finalUsd - sizingUsd : null;
+
+  // C-16 — la banda es POLÍTICA DECLARADA, no una identidad derivada: son dos
+  // perillas del operador (minBoundUsd y capitalUsd×utilizationCap). Se aplica
+  // al principal MEDIDO y se publica como bandera; no es un umbral de coste.
+  const bandUsd = { minUsd: cfg.minBoundUsd, maxUsd: cfg.capitalUsd * cfg.utilizationCap };
+  const inBand = isNum(sizingUsd) ? sizingUsd >= bandUsd.minUsd && sizingUsd <= bandUsd.maxUsd : null;
+
+  // ── Costes: el ledger de la fila, no una constante de esta capa ────────────
+  const c = measured.costs ?? null;
+  const measuredComplete =
+    c != null && isNum(c.gasUsd) && isNum(c.flashUsd) && isNum(c.tipUsd) && isNum(c.otherCostsUsd);
+  let costBasis: CostBasis;
+  let gasUsd: number | null = null;
+  let flashUsd: number | null = null;
+  let tipUsd: number | null = null;
+  let otherCostsUsd: number | null = null;
+  let haircutUsd: number | null = null;
+
+  if (measuredComplete && c != null) {
+    costBasis = "measured";
+    gasUsd = c.gasUsd;
+    flashUsd = c.flashUsd;
+    tipUsd = c.tipUsd;
+    otherCostsUsd = c.otherCostsUsd;
+  } else if (c != null) {
+    // La fila trae economics pero le falta un componente: fail-closed, no se
+    // rellena con la escalera (eso sería una segunda contabilidad).
+    costBasis = "measured_incomplete";
+  } else {
+    // Llamada legacy (tests / consumidores sin economics): escalera declarada.
+    costBasis = "config_ladder";
+    if (isNum(sizingUsd)) {
+      gasUsd = cfg.gasBaseUsd + route.hops * cfg.gasPerHopUsd;
+      flashUsd = (sizingUsd * cfg.flashBps) / 10_000;
+      tipUsd = (sizingUsd * cfg.tipBps) / 10_000;
+      haircutUsd = (sizingUsd * cfg.riskHaircutBps) / 10_000;
+    }
+  }
+
+  const totalCostUsd =
+    costBasis === "measured"
+      ? (gasUsd as number) + (flashUsd as number) + (tipUsd as number) + (otherCostsUsd as number)
+      : costBasis === "config_ladder" && isNum(gasUsd) && isNum(flashUsd) && isNum(tipUsd) && isNum(haircutUsd)
+        ? gasUsd + flashUsd + tipUsd + haircutUsd
+        : null;
+  const netUsd = isNum(grossUsd) && isNum(totalCostUsd) ? grossUsd - totalCostUsd : null;
+  const netBpsRaw = isNum(netUsd) && isNum(sizingUsd) && sizingUsd > 0 ? (netUsd / sizingUsd) * 10_000 : null;
+  const grossBpsRaw = isNum(grossUsd) && isNum(sizingUsd) && sizingUsd > 0 ? (grossUsd / sizingUsd) * 10_000 : null;
+
+  // C-16 — un bps sobre un principal fuera de banda no mide nada: se publica el
+  // principal y el gross en USD, pero NO se publica ningún bps.
+  const publishBps = !(principalSource === "measured" && inBand === false);
+  const netBps = publishBps ? netBpsRaw : null;
+  const grossBps = publishBps ? grossBpsRaw : null;
+
   // QUANT-PNL-01 (2026-09-29) — la desviación contra `fair` es DIAGNÓSTICO, no
   // coste. El `gross` de esta capa sale de la cadena MEDIDA (post-fee y
   // post-impacto): la ineficiencia frente a `fair` ya está dentro del gross.
@@ -376,33 +522,41 @@ export function buildPnl(
   //   con el doble conteo (fair ≈ 1: el ciclo cierra en ≈ principal, así que
   //   desviación ≈ la pérdida misma ≈ $7.9391):
   //   net erróneo    = −7.9391 − 16.0115 − 7.9391   = −$31.8897
-  // Ese −$31.89 no reconcilia con nada del sistema (el net medido del wire era
-  // −$8.62, que ya lleva el gas del searcher). De ahí que la desviación se
-  // publique como diagnóstico y no se sume.
-  //
-  // Se conserva el valor de la cadena `fair` para poder auditar de dónde sale la
-  // desviación: fairChain − final = lo que la ruta dejó sobre la mesa frente a
-  // la mediana del par. Es información, no una línea de coste.
-  const fairChainUsd = route.legs.reduce((acc, l, i) => {
-    const prev = i === 0 ? sizingUsd : acc;
-    return isNum(l.fair) ? prev * l.fair : NaN;
-  }, sizingUsd);
+  const fairChainUsd = isNum(sizingUsd)
+    ? route.legs.reduce<number | null>((acc, l, i) => {
+        if (!isNum(acc)) return null;
+        const prev = i === 0 ? sizingUsd : acc;
+        return isNum(l.fair) ? prev * l.fair : null;
+      }, sizingUsd)
+    : null;
   const deviationVsFairUsd =
-    isNum(fairChainUsd) && isNum(finalUsd) ? Math.max(0, fairChainUsd - finalUsd) : NaN;
-  const variableCosts = flashUsd + tipUsd + haircutUsd;
-  const totalCostUsd = gasUsd + variableCosts;
-  const netUsd = isNum(totalCostUsd) ? grossUsd - totalCostUsd : NaN;
-  const netBps = isNum(netUsd) && sizingUsd > 0 ? (netUsd / sizingUsd) * 10_000 : NaN;
+    isNum(fairChainUsd) && isNum(finalUsd) ? Math.max(0, fairChainUsd - finalUsd) : null;
+
+  // Reconciliación explícita contra el net de la fila (Δ publicada, no escondida).
+  const netDeltaUsd =
+    isNum(measured.measuredNetUsd) && isNum(netUsd) ? Math.abs(netUsd - measured.measuredNetUsd) : null;
 
   let verdict: PnlView["verdict"];
   let whyNot: string | null = null;
   let status: QuantStatus;
-  if (!route.usable) {
-    // El embudo manda: una ruta sin señal / sin profundidad / sin tamaño se
-    // declara NO VIABLE con SU razón, antes de mirar la medición.
+  if (principalSource === "measured" && inBand === false) {
+    // Bandera declarada: el principal medido está fuera de [min, capital×cap].
+    // No es «no viable»: es «fuera de la banda con la que esta capa mide».
+    verdict = "OUT_OF_BAND";
+    whyNot =
+      `principal medido ${(sizingUsd as number).toFixed(4)} USD fuera de la banda declarada ` +
+      `[${bandUsd.minUsd}, ${bandUsd.maxUsd}] (política, no coste)`;
+    status = "OUT_OF_BAND";
+  } else if (!route.usable) {
+    // El embudo manda: una ruta sin señal / sin continuidad / sin profundidad /
+    // sin tamaño se declara NO VIABLE con SU razón, antes de mirar la medición.
     verdict = "NO VIABLE";
     whyNot = route.whyNot;
     status = route.status;
+  } else if (costBasis === "measured_incomplete") {
+    verdict = "RECHAZAR";
+    whyNot = "costes medidos incompletos — no se publica net";
+    status = "QUOTE_INCOMPLETE";
   } else if (!isNum(finalUsd) || !isNum(netBps)) {
     verdict = "RECHAZAR";
     whyNot = "cadena medida incompleta — no se publica veredicto";
@@ -426,18 +580,24 @@ export function buildPnl(
     hops: route.hops,
     status,
     sizingUsd,
+    principalSource,
     finalUsd,
     grossUsd,
-    grossBps: sizingUsd > 0 ? (grossUsd / sizingUsd) * 10_000 : NaN,
+    grossBps,
     gasUsd,
     flashUsd,
     tipUsd,
+    otherCostsUsd,
     haircutUsd,
+    costBasis,
     deviationVsFairUsd,
     fairChainUsd,
     totalCostUsd,
     netUsd,
     netBps,
+    bandUsd,
+    inBand,
+    netDeltaUsd,
     verdict,
     whyNot,
   };
@@ -456,7 +616,7 @@ export function buildDashboard(routes: RouteView[], pnls: PnlView[], topN = 10):
     byHopsMap.set(r.hops, e);
   }
   const ranked = pnls
-    .filter((p) => isNum(p.netBps))
+    .filter((p): p is PnlView & { netBps: number } => isNum(p.netBps))
     .slice()
     .sort((a, b) => b.netBps - a.netBps);
   const best = ranked[0] ?? null;
