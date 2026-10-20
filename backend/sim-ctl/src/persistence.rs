@@ -3,6 +3,7 @@
 
 use anyhow::{Context, Result};
 use shared_rs::contracts::{SimulationResult, SimulatorKind};
+use shared_rs::sim_taxonomy::with_layer_prefix;
 use sqlx::postgres::PgPool;
 use sqlx::types::BigDecimal;
 use std::str::FromStr;
@@ -22,6 +23,14 @@ pub async fn insert_simulation(pool: &PgPool, r: &SimulationResult) -> Result<bo
         .gas_price_wei
         .as_deref()
         .and_then(|s| BigDecimal::from_str(s).ok());
+
+    // SIM-ORACLE-01 — el `fail_reason` PERSISTIDO lleva su capa
+    // (`fixture_`/`sim_`/`market_`, derivada de la clasificación S4-02), para
+    // que el tally de G2 pueda separar "el harness no dejó medir" de "el
+    // mercado dijo que no". La fila de `opportunities.rejection_reason` se
+    // deja SIN prefijar a propósito: es otra superficie, con sus propios
+    // lectores (`/api/rejections/breakdown`), y este cambio no la toca.
+    let sim_fail_reason: Option<String> = r.fail_reason.as_deref().map(with_layer_prefix);
 
     let mut tx = pool.begin().await.context("begin tx")?;
 
@@ -43,7 +52,7 @@ pub async fn insert_simulation(pool: &PgPool, r: &SimulationResult) -> Result<bo
     .bind(r.revert_risk_pct)
     .bind(r.simulated_profit_usd)
     .bind(r.passed)
-    .bind(r.fail_reason.as_deref())
+    .bind(sim_fail_reason.as_deref())
     .bind(r.trace_id)
     .bind(r.simulated_at)
     .execute(&mut *tx)

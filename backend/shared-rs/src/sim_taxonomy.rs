@@ -131,6 +131,67 @@ pub fn classify_fail_reason(reason: &str) -> FailFamily {
     FailFamily::Structural
 }
 
+// ── G2 layer taxonomy (SIM-ORACLE-01, 2026-10-18) ───────────────────────────
+//
+// `simulations WHERE passed = 0` es ininterpretable por sí solo: un fixture
+// roto (la sim NO llegó a medir nada) y un mercado sin edge se ven idénticos
+// desde el tally. La capa se prefija en el `fail_reason` PERSISTIDO para que
+// `COUNT(*) ... WHERE fail_reason LIKE 'fixture\_%'` separe las dos cosas SIN
+// inferencia.
+//
+// La capa sale de la MISMA clasificación S4-02 que ya alimenta la calibración
+// (`classify_fail_reason`): una sola fuente de verdad, no dos que puedan
+// divergir.
+//
+// OJO — COLISIÓN DECLARADA: hay razones crudas que YA empiezan por `sim_`
+// (p. ej. `sim_signer_funding_slot_unresolved`, que es de capa **fixture**).
+// Por eso la lectura de la capa se hace contando el PREFIJO EXACTO escrito
+// por `with_layer_prefix`, y las filas escritas ANTES de este cambio NO
+// llevan capa: cualquier agregación por capa es válida sólo para filas
+// posteriores al cambio (el régimen se declara, no se asume).
+
+/// Capa «el harness o el entorno no dejó medir» (STRUCTURAL en S4-02).
+pub const LAYER_FIXTURE: &str = "fixture";
+/// Capa «la ejecución del sim rechazó» (MARKET/EVM en S4-02).
+pub const LAYER_SIM: &str = "sim";
+/// Capa «la economía dijo que no hay edge» (ECONOMIC en S4-02).
+pub const LAYER_MARKET: &str = "market";
+
+/// Capa de un `fail_reason`, derivada de la clasificación S4-02.
+pub fn layer_of(reason: &str) -> &'static str {
+    match classify_fail_reason(reason) {
+        FailFamily::Structural => LAYER_FIXTURE,
+        FailFamily::Market => LAYER_SIM,
+        FailFamily::Economic => LAYER_MARKET,
+    }
+}
+
+/// Prefija el `fail_reason` con su capa. Se aplica UNA vez, en el punto de
+/// persistencia (`sim-ctl`), no en cada lector.
+pub fn with_layer_prefix(reason: &str) -> String {
+    format!("{}_{}", layer_of(reason), reason)
+}
+
+/// Lee la capa de un `fail_reason` que YA pasó por `with_layer_prefix`.
+///
+/// **Contrato de uso:** sólo sobre valores escritos DESPUÉS del cambio. Un
+/// `fail_reason` crudo que empieza por `sim_` (`sim_signer_funding_slot_unresolved`)
+/// es indistinguible de un valor prefijado con la capa `sim` por puro prefijo
+/// — por eso la capa de una fila cruda se obtiene con `layer_of`, y cualquier
+/// agregación por capa debe declarar que sólo cubre filas posteriores al
+/// cambio (misma clase de error que mezclar regímenes en un conteo de 24 h,
+/// R84 de `REGLAS-OPERATIVAS.md`).
+pub fn layer_of_prefixed(reason: &str) -> Option<&'static str> {
+    for layer in [LAYER_FIXTURE, LAYER_SIM, LAYER_MARKET] {
+        if let Some(rest) = reason.strip_prefix(layer).and_then(|r| r.strip_prefix('_')) {
+            if !rest.is_empty() {
+                return Some(layer);
+            }
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -224,5 +285,78 @@ mod tests {
             let json = serde_json::to_string(&f).unwrap();
             assert_eq!(json, format!("\"{}\"", f.as_str()));
         }
+    }
+}
+
+#[cfg(test)]
+mod layer_tests {
+    use super::*;
+
+    #[test]
+    fn layer_comes_from_the_same_s4_classification() {
+        // ECONOMIC → market (razones que el SIM emite)
+        assert_eq!(layer_of("non_positive_profit"), LAYER_MARKET);
+        assert_eq!(layer_of("negative_net_profit"), LAYER_MARKET);
+        assert_eq!(layer_of("slippage_too_high: 3.2%"), LAYER_MARKET);
+        // MARKET/EVM → sim
+        assert_eq!(layer_of("route_revert: panic"), LAYER_SIM);
+        assert_eq!(layer_of("deadline expired"), LAYER_SIM);
+        // STRUCTURAL → fixture
+        assert_eq!(layer_of("signer_balance_missing"), LAYER_FIXTURE);
+        assert_eq!(layer_of("reverted: TransferHelper: TRANSFER_FROM_FAILED"), LAYER_FIXTURE);
+        // Fail-closed default is STRUCTURAL ⇒ fixture, nunca una etiqueta de mercado.
+        assert_eq!(layer_of("algo_nunca_visto"), LAYER_FIXTURE);
+    }
+
+    /// Hueco DECLARADO (no arreglado aquí): las razones de rechazo del
+    /// DETECTOR (`spread_negative_round_trip`, `single_pool_no_spread`, …) NO
+    /// están en `ECONOMIC_MARKERS`, así que fail-closed las manda a
+    /// STRUCTURAL ⇒ capa `fixture`. Es correcto mientras esas etiquetas no
+    /// crucen el `sim_taxonomy` (hoy viven en `opportunities.rejection_reason`),
+    /// pero si alguna vez se promueven a `fail_reason` de sim, el tally las
+    /// contaría como fixture y hay que añadirlas a ECONOMIC.
+    #[test]
+    fn detector_rejection_reasons_would_fail_closed_to_fixture() {
+        assert_eq!(layer_of("spread_negative_round_trip"), LAYER_FIXTURE);
+        assert_eq!(layer_of("single_pool_no_spread"), LAYER_FIXTURE);
+    }
+
+    #[test]
+    fn the_funding_family_is_fixture_not_sim_despite_its_sim_prefix() {
+        // El caso que motiva la taxonomía: `sim_signer_funding_slot_unresolved`
+        // NO es una razón de mercado — el harness no pudo fondear al signer.
+        let prefixed = with_layer_prefix("sim_signer_funding_slot_unresolved");
+        assert_eq!(prefixed, "fixture_sim_signer_funding_slot_unresolved");
+        assert_eq!(
+            layer_of_prefixed(&prefixed),
+            Some(LAYER_FIXTURE),
+            "una fila prefijada debe leerse como fixture, no como sim"
+        );
+    }
+
+    #[test]
+    fn prefixed_reason_still_classifies_the_same_family() {
+        // Los lectores que matchean por substring siguen viendo el marcador.
+        for r in [
+            "non_positive_profit",
+            "route_revert",
+            "signer_balance_missing",
+            "sim_signer_funding_slot_unresolved",
+        ] {
+            assert_eq!(
+                classify_fail_reason(&with_layer_prefix(r)),
+                classify_fail_reason(r),
+                "{r} cambió de familia al prefijarse"
+            );
+        }
+    }
+
+    #[test]
+    fn layer_of_prefixed_only_reads_our_own_prefixes() {
+        assert_eq!(layer_of_prefixed("fixture_x"), Some(LAYER_FIXTURE));
+        assert_eq!(layer_of_prefixed("sim_x"), Some(LAYER_SIM));
+        assert_eq!(layer_of_prefixed("market_x"), Some(LAYER_MARKET));
+        assert_eq!(layer_of_prefixed("fixture_"), None);
+        assert_eq!(layer_of_prefixed("non_positive_profit"), None);
     }
 }
