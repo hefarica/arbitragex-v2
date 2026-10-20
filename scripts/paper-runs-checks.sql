@@ -2,6 +2,10 @@
 -- v1.6: +C16b (D-10a, valor almacenado; el payload se mide en scripts/check-live-contract.py C16a).
 -- v1.4.1: poblacion cero => NOT COMPUTED en C01-C06/C09 (contrato 9.4); C06 cortado por dia (day, no created_at).
 -- v1.4: C15/C15b (gas modelado vs medido) y C06 distingue n NULL de n = 0.
+-- v1.6.5 (2026-10-20 13:4xZ): C12b no proyectaba `sim_fail_family` en la CTE `cls` y la
+--   rama `structural_known` lo referenciaba => ERROR 42703 al EJECUTAR (la validacion con
+--   pglast no lo detecta: alcance de columna, no sintaxis). Corregido en el mismo commit que
+--   la primera corrida real contra PG local (DDL de 4873c53).
 -- v1.6.4 (2026-10-20 13:5xZ, ronda de A1): tres reglas de la revisión, ninguna de criterio.
 --   (1) C15 publica el INVARIANTE `pares_en_p95 + pares_con_medido_cero = pares` y la
 --       cláusula de exclusión sólo se imprime cuando el contador es > 0 (Rachel 6989686).
@@ -331,7 +335,11 @@ WITH marcadores(familia, patron, ord) AS (
     ('structural','%missing route%',37)
 ),
 cls AS (
-  SELECT p.reason, (m.familia IS NULL) AS es_default
+  -- v1.6.5 (2026-10-20, primera EJECUCION real del fichero): `sim_fail_family` se usa en la
+  -- rama `structural_known` de abajo, pero no estaba proyectada aqui => ERROR 42703
+  -- ("column sim_fail_family does not exist"). La validacion con pglast no lo ve: es alcance
+  -- de columna a traves de la CTE, no sintaxis.
+  SELECT p.reason, p.sim_fail_family, (m.familia IS NULL) AS es_default
   FROM paper_trade_runs p
   LEFT JOIN LATERAL (
     SELECT mm.familia FROM marcadores mm
