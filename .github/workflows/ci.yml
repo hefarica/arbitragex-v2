@@ -177,6 +177,38 @@ jobs:
       - name: arbx_remote.sh syntax
         run: bash -n scripts/arbx-env-deploy/arbx_remote.sh
 
+  gsim1-export-filters:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+      # ADAPTER-CASE-01 (2026-10-20): the export filtered adapter names with a
+      # case-SENSITIVE `<@` against CamelCase while the scanner persists kebab,
+      # so a real 2-leg UniswapV2 route was invisible. This runs the REAL export
+      # SQL on a throwaway PostgreSQL and asserts the legacy predicate misses the
+      # kebab row while the shipped one exports it — red-before and green-after
+      # in the same artifact.
+      - name: ADAPTER-CASE-01 (export filter contract, disposable PostgreSQL 15)
+        env:
+          PG_DSN: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+        run: python3 scripts/ci/test_gsim1_export_filters.py
+
   retention-vacuum-regression:
     runs-on: ubuntu-latest
     timeout-minutes: 10

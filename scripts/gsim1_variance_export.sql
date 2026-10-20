@@ -61,7 +61,20 @@ WHERE o.chain_id = 1
   AND o.route_metadata ? 'dex_adapters'
   AND jsonb_array_length(o.route_metadata->'dex_adapters') = 2
   -- A.3.a encoder-supported legs only (mirror of adapter_to_semantic()).
-  AND (o.route_metadata->'dex_adapters') <@ '["UniswapV2","SushiSwap"]'::jsonb
+  -- ADAPTER-CASE-01 (2026-10-20): the previous filter was
+  --   (route_metadata->'dex_adapters') <@ '["UniswapV2","SushiSwap"]'::jsonb
+  -- i.e. a case-sensitive EXACT match against CamelCase, while the scanner
+  -- persists kebab-case ('uniswap-v2', 'uniswap-v3', 'universal-router'). A REAL
+  -- 2-leg UniswapV2 route was therefore dropped here and the evidence row kept
+  -- saying "0 distinct topologies" — an instrument lying, not an empty market.
+  -- adapter_to_semantic() accepts UniswapV2 | uniswap-v2 | uniswapv2 and
+  -- SushiSwap | sushi | sushiswap; those spellings all lowercase to exactly the
+  -- four tokens compared below, so this is the same SET, compared without
+  -- depending on casing.
+  AND (
+    SELECT bool_and(lower(leg) IN ('uniswapv2', 'uniswap-v2', 'sushi', 'sushiswap'))
+    FROM jsonb_array_elements_text(o.route_metadata->'dex_adapters') AS legs(leg)
+  )
   AND o.amount_in_wei IS NOT NULL
   AND o.amount_in_wei <> '0'
   AND o.detected_at > now() - interval '2 hours'
