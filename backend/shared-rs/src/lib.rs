@@ -28,6 +28,7 @@ pub mod price_bus;
 pub mod price_oracle;
 pub mod rate_budget;
 pub mod risk_ledger;
+pub mod rpc_bridge;
 pub mod rpc_failover;
 pub mod settlement_risk;
 pub mod sim_taxonomy;
