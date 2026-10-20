@@ -1,0 +1,104 @@
+name: ARBI chain selector (hourly)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ARBI-CHAIN-SELECTOR-01 (2026-10-19, MANTIS) — ranking dinámico de cadenas.
+#
+# QUÉ PIDIÓ EL DUEÑO: elegir dinámicamente las mejores cadenas para arbitraje por
+# análisis, y actualizarlo cada hora con un algoritmo adaptativo que MIDA.
+#
+# QUÉ HACE: cada hora corre `scripts/arbi/chain_selector.py` (solo lectura, HTTPS
+# público: DefiLlama para volumen DEX + RPC público para gas) y publica el ranking
+# de las 10 mejores en el summary del run y en UN issue fijado.
+#
+# FASES DECLARADAS, sin fingir madurez (RULE 00 / R8):
+#   * `phase=prior-only`  → no hay recompensas realizadas (hoy `recon total=0`).
+#     El ranking es un PRIOR MEDIDO (volumen × coste de gas − competencia declarada),
+#     NO rendimiento. Ninguna fila se presenta como ganancia.
+#   * `phase=adaptive`    → con operaciones realizadas, el posterior de cada cadena
+#     se actualiza y la selección pasa a Thompson sampling.
+#   * Cadena sin dato → se EXCLUYE con causa nombrada; nunca se inventa un cero.
+#
+# LÍMITE: GitHub `schedule` es best-effort (puede retrasarse; GitHub desactiva los
+# cron de repos sin actividad ~60 días). No es un reloj duro.
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: arbi-chain-selector
+  cancel-in-progress: true
+
+jobs:
+  select:
+    name: rank chains by measured inefficiency
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      ISSUE_TITLE: "[ARBI] ranking de cadenas (horario, auto)"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - name: Unit controls (offline)
+        run: python3 scripts/arbi/test_chain_selector.py
+
+      - name: Rank chains (live, read-only)
+        run: python3 scripts/arbi/chain_selector.py --out chain-ranking.json | tee ranking.txt
+
+      - name: Publish the ranking as the job summary
+        if: always()
+        run: |
+          {
+            echo "### ARBI chain selector"
+            echo ""
+            echo '```'
+            cat ranking.txt 2>/dev/null || echo "sin salida"
+            echo '```'
+            echo ""
+            echo "UTC: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Refresh the pinned ranking issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          BODY="$(mktemp)"
+          {
+            echo "Ranking horario del selector de cadenas. Se refresca cada hora."
+            echo ""
+            echo '```'
+            cat ranking.txt
+            echo '```'
+            echo ""
+            echo "- Algoritmo: prior medido (volumen DEX × coste de gas − competencia) y, con recompensas, Thompson sampling."
+            echo "- Fuentes: DefiLlama (volumen DEX 24 h) + RPC público (`eth_gasPrice`) + DefiLlama coins (precio nativo)."
+            echo "- Refrescado: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } > "$BODY"
+          NUM=$(gh issue list --state open --limit 100 --json number,title \
+                  --jq ".[] | select(.title == \"$ISSUE_TITLE\") | .number" | head -n 1)
+          if [ -n "$NUM" ]; then
+            gh issue edit "$NUM" --body-file "$BODY"
+            echo "refreshed issue #$NUM"
+          else
+            gh issue create --title "$ISSUE_TITLE" --body-file "$BODY"
+          fi
+
+      - name: Upload the ranking artifact
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: chain-ranking
+          path: |
+            chain-ranking.json
+            ranking.txt
+          if-no-files-found: warn

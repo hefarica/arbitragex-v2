@@ -1,0 +1,7 @@
+{
+  "_comment": "Recompensas REALIZADAS por cadena (neto USD por operación). Lo escribe el camino de ejecución cuando exista (C-11). Sin este fichero, o con la lista vacía, el selector corre en phase=prior-only y su ranking es un prior medido, NO rendimiento. Copiar a rewards.json para activar la fase adaptativa (Thompson sampling).",
+  "rewards": {
+    "Base": [0.42, 0.37, 0.51],
+    "Arbitrum": [-0.08, 0.11]
+  }
+}
