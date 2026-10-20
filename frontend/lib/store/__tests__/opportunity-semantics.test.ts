@@ -78,6 +78,23 @@ describe("validateOpportunitySemantics (§30)", () => {
     ).toContain("hop_incoherent");
   });
 
+  it("the live 1-hop shape is UNRESOLVED, not incoherent (measured 2026-10-20)", () => {
+    // /api/opportunities/live ships 1 hop with `pool_addresses:[""]`; the row
+    // used to carry `hop_incoherent · legs_incoherent` for it.
+    const v = mk({
+      route_metadata: {
+        token_addresses: [
+          "0xff20817765cb7f73d4bde2e66e067e58d11095c2",
+          "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+        ],
+        dex_adapters: ["uniswap-v2"],
+        pool_addresses: [""],
+      },
+      rejection_reason: "TokenNotAllowed:0xff20817765cb7f73d4bde2e66e067e58d11095c2",
+    }).semantic_violations;
+    expect(v).toEqual(["route_topology_unresolved"]);
+  });
+
   it("legs_incoherent fires on a single-chain route that does not close", () => {
     expect(
       mk({

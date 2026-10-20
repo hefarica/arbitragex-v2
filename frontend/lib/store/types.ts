@@ -1071,8 +1071,11 @@ export type SemanticViolation =
   | "missing_strategy_id"
   /** Degenerate pair: token_in === token_out (the AGLD⇄AGLD case). */
   | "degenerate_pair"
-  /** Topology hop arithmetic broken: tokens ≠ hops + 1. */
+  /** Topology hop arithmetic broken: tokens ≠ hops + 1 (a CONTRADICTION). */
   | "hop_incoherent"
+  /** Topology length is consistent but a position is blank: UNRESOLVED, not
+   *  contradictory. Marked so it is never compacted into a usable route. */
+  | "route_topology_unresolved"
   /** Malformed raw topology was refused instead of silently repaired. */
   | "route_metadata_invalid"
   /** Present per-leg amounts/directions are incomplete or not exact uint256. */
@@ -1125,15 +1128,34 @@ export function validateOpportunitySemantics(opp: OmniOpportunity): SemanticViol
   // synthetic §29 legs are display shape, not an operational route to audit).
   const rm = opp.route_metadata;
   if (rm != null) {
-    if (deriveHopCount(rm) === null || rm.token_addresses.some((t) => t.trim() === "")) v.push("hop_incoherent");
+    // A blank slot is ABSENCE (the producer's contract: a hint-less leg may
+    // carry no pool — `persistence.rs` asserts it), never a contradiction.
+    // It still quarantines — an unresolved position must not pass as a usable
+    // route (#566) — but under its own code, so the audit trail stops calling
+    // a resolved-length topology "incoherent". Measured 2026-10-20: every
+    // 1-hop mempool detection carried `pool_addresses:[""]`.
+    const hops = rm.dex_adapters.length;
+    const lengthsAgree =
+      hops > 0 && rm.token_addresses.length === hops + 1 && rm.pool_addresses.length === hops;
+    const unresolved =
+      lengthsAgree &&
+      [...rm.token_addresses, ...rm.pool_addresses, ...rm.dex_adapters].some((t) => t.trim() === "");
+    if (lengthsAgree && unresolved) v.push("route_topology_unresolved");
+    else if (deriveHopCount(rm) === null && hops > 0) v.push("hop_incoherent");
     // Chain must link: token_addresses[i+1] is leg i's out — trivially true by
     // construction, so the REAL linkage check is the cycle close on
-    // single-chain rows: last address === first address.
+    // single-chain rows: last address === first address. Closure is only
+    // DEFINED for a cycle: one swap (A→B) is a detection, not an unclosed
+    // cycle, and marking it `legs_incoherent` quarantines every 1-hop row for
+    // failing a check that cannot apply to it (measured 2026-10-20: the whole
+    // mempool roster is 1-hop).
     const singleChain = opp.chain_id_out == null;
     if (
       singleChain &&
-      rm.token_addresses.length >= 2 &&
-      rm.token_addresses[rm.token_addresses.length - 1]?.toLowerCase() !== rm.token_addresses[0]?.toLowerCase()
+      hops >= 2 &&
+      lengthsAgree &&
+      !unresolved &&
+      rm.token_addresses[hops]?.toLowerCase() !== rm.token_addresses[0]?.toLowerCase()
     ) {
       v.push("legs_incoherent");
     }
