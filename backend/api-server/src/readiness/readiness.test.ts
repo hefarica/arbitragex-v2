@@ -375,14 +375,18 @@ describe("verifyGSIM1()", () => {
 
   // (b) checklist complete but flag still false: red, and the pending list is
   // EMPTY — no "pendiente" wording, checklist-resolved language instead.
-  it("(b) flag=false + 7/7 fresh evidence → red with EMPTY pending list (checklist resolved, flag is the only step left)", async () => {
+  // The remaining step must point FORWARD (set the flag to `true`): the branch
+  // is only reachable with the flag already `false`, so a trailing `=false`
+  // told the operator to repeat the state they were already in.
+  it("(b) flag=false + 7/7 fresh evidence → red with EMPTY pending list, and the remaining step is to set the flag TO TRUE", async () => {
     process.env["ARBX_SIMULATOR_V2_READY"] = "false";
     stubFetch({ healthOk: true, caps: CAPS, promThrows: true });
     const item = await verifyGSIM1({ simCtlUrl: SIM, promUrl: PROM, pool: mockPool(freshRows()), now: NOW });
     expect(item.status).toBe("red");
     expect(item.reason).toMatch(/7\/7/);
     expect(item.reason).toMatch(/hard blocker de checklist resuelto/);
-    expect(item.reason).toMatch(/ARBX_SIMULATOR_V2_READY=false/);
+    expect(item.reason).toMatch(/único paso restante: ARBX_SIMULATOR_V2_READY=true/);
+    expect(item.reason).not.toMatch(/único paso restante: ARBX_SIMULATOR_V2_READY=false/);
     expect(item.reason).not.toMatch(/pendiente/);
     expect(item.reason).not.toMatch(/hasta completar/);
   });
