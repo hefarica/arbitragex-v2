@@ -78,6 +78,32 @@ const STATUS_VARIANT: Record<TokenResolvePreviewRow["resolution_status"], "secon
   UNSUPPORTED: "outline",
 };
 
+
+/**
+ * Write lock (contract decision 3, ratified 2026-10-21): saving an allowlist is
+ * a WRITE; it is refused when the selection is not computed or when no rule has
+ * a verifiable population. The banner names WHICH condition — a disabled button
+ * with no reason sends the operator looking for a bypass.
+ */
+export function writeLockReason(
+  gate: { allowed: boolean; reasons: string[] } | null,
+): string | null {
+  if (gate === null || gate.allowed) return null;
+  const parts: string[] = [];
+  if (gate.reasons.includes("selection_not_computed")) {
+    parts.push("la selección no es computable (sin frescura de volumen)");
+  }
+  if (gate.reasons.includes("no_rules_applied")) {
+    parts.push("no hay reglas anti-rug aplicadas");
+  }
+  if (gate.reasons.includes("no_verified_rule_population")) {
+    parts.push("ninguna regla anti-rug tiene población verificable");
+  }
+  return parts.length > 0
+    ? `Guardado bloqueado: ${parts.join(" · ")}.`
+    : "Guardado bloqueado.";
+}
+
 interface Props {
   config: TradingConfigConfigured;
   onSaved: (next: TradingConfigConfigured) => void;
@@ -191,6 +217,8 @@ export function TokenAllowlistTab({ config, onSaved, adminToken, actor }: Props)
     (preview ?? []).map((r) => [r.input_symbol.toUpperCase(), r.resolution_status]),
   );
   const blocked = unresolvedSymbols(symbols, preview);
+  // Cerrojo de escritura: la selección servida manda sobre el guardado.
+  const writeLock = writeLockReason(topResult?.save_gate ?? null);
 
   const onSave = async () => {
     if (!hasAdminSession()) {
@@ -278,10 +306,22 @@ export function TokenAllowlistTab({ config, onSaved, adminToken, actor }: Props)
             >
               {resolving ? "Resolving…" : "Resolve"}
             </Button>
-            <Button onClick={onSave} disabled={saving || !hasSession} className="ml-auto" title={!hasSession ? "Admin session required — open /killswitch first" : undefined}>
+            <Button
+              onClick={onSave}
+              disabled={saving || !hasSession || writeLock !== null}
+              className="ml-auto"
+              title={
+                !hasSession
+                  ? "Admin session required — open /killswitch first"
+                  : writeLock ?? undefined
+              }
+            >
               {saving ? "Saving…" : "Save changes"}
             </Button>
           </div>
+          {writeLock !== null && (
+            <p className="text-xs text-warning font-mono" role="status">{writeLock}</p>
+          )}
           {msg && <p className="text-xs text-muted-foreground font-mono">{msg}</p>}
           {saveAck.version !== null && (
             <UniverseSaveCoherency

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  evaluateRugRules, evaluateVolumeGate, RUG_RULES, rankNote, rankValueOf,
-  screenAndRank, selectionNote, IMPLAUSIBLE_TVL_USD,
+  computeSaveGate, evaluateRugRules, evaluateVolumeGate, RUG_RULES, rankNote,
+  rankValueOf, screenAndRank, selectionNote, IMPLAUSIBLE_TVL_USD,
   type RankBy, type RugRuleId, type TopTokenRow,
 } from "./token-top.js";
 
@@ -206,5 +206,54 @@ describe("evaluateVolumeGate — §2(i)(ii) volume freshness (2026-10-21)", () =
   it("a fresh population makes the volume basis MEASURED and reports its size", () => {
     const g = evaluateVolumeGate({ rankBy: "volume_24h", columnPresent: true, probeFailed: false, orderable: 42 });
     expect(g).toEqual({ selection_state: "MEASURED", selection_reason: null, volume_orderable: 42 });
+  });
+});
+
+describe("computeSaveGate — write lock (decision 3, 2026-10-21)", () => {
+  const pop = (evaluated: number, unverified = 0, diagnostic = false) => ({ evaluated, unverified, diagnostic });
+
+  it("allows the write only with a computed selection and a verified rule", () => {
+    expect(
+      computeSaveGate({
+        selectionState: "MEASURED",
+        rulePopulation: { min_liquidity_usd: pop(10) },
+        rulesApplied: ["min_liquidity_usd"],
+      }),
+    ).toEqual({ allowed: true, reasons: [] });
+  });
+
+  it("blocks the write when the selection is not computed", () => {
+    const g = computeSaveGate({
+      selectionState: "NOT COMPUTED",
+      rulePopulation: { min_liquidity_usd: pop(10) },
+      rulesApplied: ["min_liquidity_usd"],
+    });
+    expect(g.allowed).toBe(false);
+    expect(g.reasons).toContain("selection_not_computed");
+  });
+
+  it("blocks when every applied rule is unverified — 0 population is not a pass", () => {
+    const g = computeSaveGate({
+      selectionState: "MEASURED",
+      rulePopulation: { min_liquidity_usd: pop(0, 12) },
+      rulesApplied: ["min_liquidity_usd"],
+    });
+    expect(g.allowed).toBe(false);
+    expect(g.reasons).toEqual(["no_verified_rule_population"]);
+  });
+
+  it("blocks when no rule is applied at all", () => {
+    const g = computeSaveGate({ selectionState: "MEASURED", rulePopulation: {}, rulesApplied: [] });
+    expect(g.reasons).toEqual(["no_rules_applied"]);
+  });
+
+  it("a diagnostic rule never counts as the verified population", () => {
+    const g = computeSaveGate({
+      selectionState: "MEASURED",
+      rulePopulation: { pool_age_24h: pop(10, 0, true) },
+      rulesApplied: ["pool_age_24h"],
+    });
+    expect(g.allowed).toBe(false);
+    expect(g.reasons).toEqual(["no_rules_applied"]);
   });
 });

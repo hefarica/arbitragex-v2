@@ -259,6 +259,47 @@ export function evaluateVolumeGate(i: VolumeGateInput): VolumeGate {
 }
 
 /**
+ * Rules that measure something other than what they claim are diagnostics: they
+ * never reject and never count as a verified rule (ratified §5, 2026-10-21).
+ */
+export const DIAGNOSTIC_RULES: ReadonlySet<RugRuleId> = new Set<RugRuleId>(["pool_age_24h"]);
+
+export interface RulePopulation {
+  evaluated: number;
+  unverified: number;
+  diagnostic: boolean;
+}
+
+export interface SaveGate {
+  allowed: boolean;
+  reasons: string[];
+}
+
+/**
+ * Write lock (ratified decision 3, 2026-10-21). The ranking may still be served
+ * with NOT COMPUTED rows, but the allowlist is a WRITE: it cannot be saved when
+ * (a) no rule has a verifiable population, or (b) the selection is not computed.
+ * The reason travels to the operator — a disabled button without a reason sends
+ * them looking for a bypass.
+ */
+export function computeSaveGate(input: {
+  selectionState: SelectionState;
+  rulePopulation: Record<string, RulePopulation>;
+  rulesApplied?: readonly RugRuleId[];
+}): SaveGate {
+  const reasons: string[] = [];
+  if (input.selectionState !== "MEASURED") reasons.push("selection_not_computed");
+  const counted = Object.entries(input.rulePopulation).filter(([, p]) => !p.diagnostic);
+  const applied = (input.rulesApplied ?? []).filter((r) => !DIAGNOSTIC_RULES.has(r));
+  if (applied.length === 0) {
+    reasons.push("no_rules_applied");
+  } else if (counted.every(([, p]) => p.evaluated === 0)) {
+    reasons.push("no_verified_rule_population");
+  }
+  return { allowed: reasons.length === 0, reasons };
+}
+
+/**
  * Pure evaluator — exported for direct testing. A rule with a NULL metric is
  * `unverified`, never a pass/fail fabrication (R8).
  */
@@ -406,6 +447,8 @@ export function buildTokenTopRouter(deps: Deps): Router {
           selection_state: gate.selection_state,
           selection_reason: gate.selection_reason,
           volume_orderable: gate.volume_orderable,
+          save_gate: { allowed: false, reasons: ["selection_not_computed"] },
+          rule_population: {},
           window_note: selectionNote(rankBy, gate),
           rules_applied: [...rules],
           rule_catalog: RUG_RULES,
@@ -433,6 +476,8 @@ export function buildTokenTopRouter(deps: Deps): Router {
           selection_state: "NOT COMPUTED",
           selection_reason: "no_active_pools",
           volume_orderable: gate.volume_orderable,
+          save_gate: { allowed: false, reasons: ["selection_not_computed"] },
+          rule_population: {},
           window_note: `sin pools activos para chain ${chainId}: no hay universo que ordenar (${rankNote(rankBy)})`,
           rules_applied: [...rules],
         });
@@ -572,8 +617,17 @@ export function buildTokenTopRouter(deps: Deps): Router {
       const distinctPriced = candidates.length;
 
       const rankedAll: TopTokenRow[] = [];
+      const rulePopulation: Record<string, RulePopulation> = {};
+      for (const rule of rules) {
+        rulePopulation[rule] = { evaluated: 0, unverified: 0, diagnostic: DIAGNOSTIC_RULES.has(rule) };
+      }
       for (const a of candidates) {
         const { failed, unverified } = evaluateRugRules(a, rules);
+        for (const rule of rules) {
+          const rec = rulePopulation[rule]!;
+          if (unverified.includes(rule)) rec.unverified += 1;
+          else rec.evaluated += 1;
+        }
         if (failed.length > 0) {
           for (const f of failed) excluded[`rug:${f}`] = (excluded[`rug:${f}`] ?? 0) + 1;
           continue;
@@ -633,6 +687,8 @@ export function buildTokenTopRouter(deps: Deps): Router {
         selection_state: gate.selection_state,
         selection_reason: gate.selection_reason,
         volume_orderable: gate.volume_orderable,
+        save_gate: computeSaveGate({ selectionState: gate.selection_state, rulePopulation, rulesApplied: [...rules] }),
+        rule_population: rulePopulation,
         // R8 honesty: the served ordering must name its own basis. `window=24h`
         // values OLD reserves at CURRENT prices (capital flow, not historical
         // market cap); `rank_by=volume_24h` orders by measured traded volume.

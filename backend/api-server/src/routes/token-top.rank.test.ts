@@ -151,6 +151,16 @@ describe("GET /api/tokens/top — rank_by (D5)", () => {
     expect(res.body.ranked.length).toBeGreaterThan(0);
   });
 
+  it("decision 3: the write lock blocks the save whenever the selection is NOT COMPUTED", async () => {
+    const blocked = await get("chain_id=1&limit=100&rank_by=volume_24h", { volumeAsOf: "absent" });
+    expect(blocked.body.save_gate.allowed).toBe(false);
+    expect(blocked.body.save_gate.reasons).toEqual(["selection_not_computed"]);
+
+    const open = await get("chain_id=1&limit=100&rules=min_liquidity_usd,validated_status");
+    expect(open.body.save_gate.allowed).toBe(true);
+    expect(open.body.rule_population["min_liquidity_usd"].evaluated).toBeGreaterThan(0);
+  });
+
   it("rejects a bogus rank_by instead of silently falling back", async () => {
     const res = await get("chain_id=1&limit=20&rank_by=marketcap");
     expect(res.status).toBe(400);

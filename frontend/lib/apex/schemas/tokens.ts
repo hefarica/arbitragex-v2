@@ -175,6 +175,17 @@ export const TokenTopResponseSchema = z.object({
   selection_state: z.enum(["MEASURED", "NOT COMPUTED"]),
   selection_reason: z.string().nullable(),
   volume_orderable: z.number().int().min(0),
+  // Write lock (contract decision 3): the ranking may serve NOT COMPUTED rows,
+  // the allowlist save cannot be enabled without a verifiable rule population.
+  save_gate: z.object({
+    allowed: z.boolean(),
+    reasons: z.array(z.string()),
+  }).strict(),
+  rule_population: z.record(z.string(), z.object({
+    evaluated: z.number().int().min(0),
+    unverified: z.number().int().min(0),
+    diagnostic: z.boolean(),
+  }).strict()),
   rules_applied: z.array(RugRuleIdSchema),
   rule_catalog: z.array(z.object({ id: RugRuleIdSchema, label: z.string() }).strict()),
 }).strict();
