@@ -545,7 +545,8 @@ contract ExecutorInvariantTest is Test {
         bytes[] memory payloads = new bytes[](1);
         payloads[0] = hex"00000000"; // 4 bytes validos para selector fallback
 
-        vm.expectRevert(InsufficientBalance.selector);
+        // ATOMIC-CAUSE-01: observed balance vs. required amountIn.
+        vm.expectRevert(abi.encodeWithSelector(InsufficientBalance.selector, balance, amountIn));
         vm.prank(execRole);
         executor.executeArbitrage(bytes32(0), tokenAAddr, tokenAAddr, amountIn, 0, routers, payloads);
     }
@@ -571,7 +572,8 @@ contract ExecutorInvariantTest is Test {
         bytes[] memory payloads = new bytes[](1);
         payloads[0] = abi.encodeWithSelector(sel, amountIn, 0, new address[](0), address(executor), block.timestamp);
 
-        vm.expectRevert(InsufficientProfit.selector);
+        // ATOMIC-CAUSE-01: realised profit (grossProfit) vs. operator floor (minProfit).
+        vm.expectRevert(abi.encodeWithSelector(InsufficientProfit.selector, grossProfit, minProfit));
         vm.prank(execRole);
         executor.executeArbitrage(bytes32(0), tokenAAddr, tokenAAddr, amountIn, minProfit, routers, payloads);
     }
@@ -609,7 +611,8 @@ contract ExecutorInvariantTest is Test {
         bytes[] memory payloads = new bytes[](1);
         payloads[0] = hex"00000000";
 
-        vm.expectRevert(ZeroGrossProfit.selector);
+        // ATOMIC-CAUSE-01: noop route leaves balanceAfter == balanceBefore == amountIn.
+        vm.expectRevert(abi.encodeWithSelector(ZeroGrossProfit.selector, amountIn, amountIn));
         vm.prank(execRole);
         executor.executeArbitrage(bytes32(0), tokenAAddr, tokenAAddr, amountIn, 0, routers, payloads);
     }

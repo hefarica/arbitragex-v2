@@ -45,16 +45,33 @@ error TokenNotApproved(address token);
 /// @dev Thrown when a router in the route is not in the approved router set.
 error RouterNotApproved(address router);
 /// @dev Thrown when the contract holds less than amountIn before execution.
-error InsufficientBalance();
+///      ATOMIC-CAUSE-01 (2026-10-23): now carries the observed vs. required
+///      balance so the revert names its cause.
+///      REA: flashbots/simple-blind-arbitrage sha 73c6c270b27059e6dc0469a6c08e0f7739e5d531
+///      src/BlindBackrunLogic.sol:99-100 (upstream names its balance gate with a
+///      string; here the cause is structured and decodable).
+error InsufficientBalance(uint256 available, uint256 required);
 /// @dev Thrown when a low-level router call returns success=false.
-error SwapFailed();
+///      ATOMIC-CAUSE-01 (2026-10-23): the callee's returndata was previously
+///      DISCARDED (the anonymous `(bool success,) = router.call(...)` pattern) —
+///      the root-cause revert died inside this wrapper. The error now carries the
+///      leg index, the router and the raw revert data so the sim/bindings can
+///      decode the ORIGINAL cause (custom error, Error(string) or Panic).
+///      REA: flashbots/simple-blind-arbitrage sha 73c6c270b27059e6dc0469a6c08e0f7739e5d531
+///      src/BlindBackrunLogic.sol:266-268 (the identical anonymous pattern exists
+///      upstream: `(bool success, ) = _to.call(...)` discarding returndata).
+error SwapFailed(uint256 legIndex, address router, bytes revertData);
 /// @dev Thrown when the route produces no gross profit (balanceAfter <= balanceBefore).
-error ZeroGrossProfit();
+///      ATOMIC-CAUSE-01: now carries both balances so the shortfall is measurable
+///      from the revert alone.
+error ZeroGrossProfit(uint256 balanceAfter, uint256 balanceBefore);
 /// @dev SC-13: thrown when the flash-funded pull does not credit EXACTLY amountIn
 ///      (e.g. a fee-on-transfer / rebasing tokenIn). The caller-funded round trip's
 ///      capital-retention guarantee assumes a faithful 1:1 pull, so such tokens are
 ///      rejected fail-closed instead of silently leaking the executor's own balance.
-error FlashFundedPullMismatch();
+///      ATOMIC-CAUSE-01 (2026-10-23): now carries the observed balance vs. the
+///      expected (pre-pull + amountIn) so the skimming magnitude is visible on-chain.
+error FlashFundedPullMismatch(uint256 balanceAfter, uint256 expected);
 /// @dev SC-13 (independent adversarial review): thrown when the flash-funded round trip
 ///      would NOT leave this contract holding exactly its pre-call working capital B -
 ///      i.e. the OUTBOUND return of (principal + profit) shorted the executor (e.g. an
@@ -62,9 +79,17 @@ error FlashFundedPullMismatch();
 ///      FlashFundedPullMismatch on the pull leg: makes the capital-retention identity
 ///      fail-closed on the RETURN leg too, so a compromised EXECUTOR_ROLE key can never
 ///      leak B even through an exotic (and explicitly unsupported) token.
-error FlashFundedCapitalRetentionViolation();
+///      ATOMIC-CAUSE-01: now carries the observed balance vs. the expected (B).
+error FlashFundedCapitalRetentionViolation(uint256 balanceAfter, uint256 expected);
 /// @dev Thrown when profit < minProfit (slippage guard).
-error InsufficientProfit();
+///      ATOMIC-CAUSE-01 (2026-10-23): now carries the realised profit vs. the
+///      required minimum. The floor still comes from the CALLER (operator config),
+///      never a literal.
+///      REA: flashbots/simple-blind-arbitrage sha 73c6c270b27059e6dc0469a6c08e0f7739e5d531
+///      src/BlindBackrunLogic.sol:99-100 + aave/aave-v3-core sha 782f51917056a53a2c228701058a6c3fb233684a
+///      contracts/flashloan/base/FlashLoanSimpleReceiverBase.sol (profit floor checked
+///      against REAL balances before repayment; here the shortfall is named).
+error InsufficientProfit(uint256 actual, uint256 required);
 /// @dev Thrown when the ETH balance is zero on withdrawETH.
 error ZeroBalance();
 /// @dev DEPRECATED (SC-12, 2026-06-28): no longer raised. The AllowanceManager
@@ -98,7 +123,9 @@ error UnsupportedRouteLength(uint256 length);
 ///      tokenOut from skimming the executor on its outbound transferFrom. This symmetric guard
 ///      mirrors FlashFundedCapitalRetentionViolation (tokenIn) for tokenOut: fail-closed so a
 ///      compromised EXECUTOR_ROLE key cannot leak B_out through an exotic tokenOut.
-error TokenOutRetentionViolation();
+///      ATOMIC-CAUSE-01 (2026-10-23): now carries the observed tokenOut balance vs.
+///      the pre-route snapshot.
+error TokenOutRetentionViolation(uint256 balanceAfter, uint256 snapshotBefore);
 /// @dev (LOW, execution-core audit 2026-06-29) Thrown when a 2-leg (cross-DEX) route is
 ///      submitted with tokenIn == tokenOut. The off-chain never emits this shape: cross-DEX
 ///      routes have two DISTINCT tokens, and circular routes are a single leg. The 2-leg
@@ -106,6 +133,21 @@ error TokenOutRetentionViolation();
 ///      is undefined when tokenOut aliases tokenIn, so the shape is rejected fail-closed,
 ///      keeping the route-shape gate provably exhaustive.
 error AliasedTwoLegRoute();
+/// @dev ATOMIC-CAUSE-01 (2026-10-23): thrown when a post-leg balance delta would go
+///      NEGATIVE (balance < pre-route snapshot) — i.e. the raw accounting subtraction
+///      `balance - snapshot` would underflow. Before this error the subtraction was
+///      bare Solidity 0.8 checked arithmetic and produced an ANONYMOUS Panic(0x11)
+///      (selector 0x4e487b71) with no cause. Named fail-closed instead.
+///      REA: flashbots/simple-blind-arbitrage sha 73c6c270b27059e6dc0469a6c08e0f7739e5d531
+///      src/BlindBackrunLogic.sol:148/166 (upstream leaves the equivalent
+///      `isqrt(presqrt) - 1000` underflow as an anonymous Panic(0x11); the destination
+///      names the cause BEFORE the subtraction, per FICHA_REA4_ATOMIC.md §6).
+error AccountingDeltaUnderflow(uint256 available, uint256 snapshotBefore);
+/// @dev ATOMIC-CAUSE-01 (2026-10-23): thrown when the ETH rescue transfer fails.
+///      Replaces the string `require(ok, "ETH transfer failed")`, which also
+///      DISCARDED the callee's returndata; the error now carries the recipient
+///      and the raw revert data of the failed ETH transfer.
+error ETHRescueFailed(address to, bytes revertData);
 
 /// @title ArbitrageExecutor - UUPS-upgradeable on-chain arbitrage executor
 /// @notice Executes atomic multi-hop circular arbitrage routes.
@@ -318,8 +360,12 @@ contract ArbitrageExecutor is
         // rather than leak this contract's own balance to transfer fees or overstate profit.
         uint256 balBeforePull = IERC20(tokenIn).balanceOf(address(this));
         IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
-        if (IERC20(tokenIn).balanceOf(address(this)) != balBeforePull + amountIn) {
-            revert FlashFundedPullMismatch();
+        uint256 balAfterPull = IERC20(tokenIn).balanceOf(address(this));
+        // ATOMIC-CAUSE-01: name the cause (observed vs. expected credit) instead of
+        // a bare revert. No subtraction on the args path — balAfterPull may be below
+        // balBeforePull for a balance-burning token, so the raw delta would underflow.
+        if (balAfterPull != balBeforePull + amountIn) {
+            revert FlashFundedPullMismatch(balAfterPull, balBeforePull + amountIn);
         }
 
         uint256 profit = _runRoute(routeHash, tokenIn, tokenOut, amountIn, minProfit, routers, payload);
@@ -336,8 +382,10 @@ contract ArbitrageExecutor is
         // supported faithful 1:1 token this is a no-op (balance == balBeforePull by
         // construction). It only reverts the unsupported outbound-lossy / rebasing case -
         // where the return transfer shorted the executor - rather than silently leaking B.
-        if (IERC20(tokenIn).balanceOf(address(this)) != balBeforePull) {
-            revert FlashFundedCapitalRetentionViolation();
+        // ATOMIC-CAUSE-01: name the cause (observed balance vs. retained capital B).
+        uint256 balAfterReturn = IERC20(tokenIn).balanceOf(address(this));
+        if (balAfterReturn != balBeforePull) {
+            revert FlashFundedCapitalRetentionViolation(balAfterReturn, balBeforePull);
         }
     }
 
@@ -384,7 +432,7 @@ contract ArbitrageExecutor is
         if (routers.length == 2 && tokenOut == tokenIn) revert AliasedTwoLegRoute();
 
         uint256 balanceBefore = IERC20(tokenIn).balanceOf(address(this));
-        if (balanceBefore < amountIn) revert InsufficientBalance();
+        if (balanceBefore < amountIn) revert InsufficientBalance(balanceBefore, amountIn);
 
         // SC-12 (executor self-cap) + (1a) approve-per-hop. On-chain spend control is
         // enforced by an exact, ephemeral per-router allowance (forceApprove exactAmount
@@ -408,18 +456,31 @@ contract ArbitrageExecutor is
             // approve leg 1 EXACTLY the intermediate this route created.
             uint256 tokenOutBefore = routers.length == 2 ? IERC20(tokenOut).balanceOf(address(this)) : 0;
 
-            _validateAndCall(tokenIn, routers[0], amountIn, payload[0]);
+            _validateAndCall(tokenIn, routers[0], amountIn, payload[0], 0);
 
             if (routers.length == 2) {
                 // Intermediate produced by leg 0 (tokenOut delta). Approving exactly this
                 // delta lets the backward leg pull the tokenOut it needs while preserving
                 // any pre-existing tokenOut working capital. Fail-closed if leg 0 produced
                 // no intermediate.
-                uint256 intermediate = IERC20(tokenOut).balanceOf(address(this)) - tokenOutBefore;
+                //
+                // ATOMIC-CAUSE-01 (2026-10-23): this was a BARE subtraction
+                // (`balanceOf(tokenOut) - tokenOutBefore`) that would underflow with an
+                // ANONYMOUS Panic(0x11) if leg 0 drained pre-existing tokenOut (e.g. a
+                // stale allowance the router still holds). Named fail-closed instead:
+                // check the delta sign BEFORE subtracting.
+                // REA: flashbots/simple-blind-arbitrage sha 73c6c270b27059e6dc0469a6c08e0f7739e5d531
+                // src/BlindBackrunLogic.sol:148/166 leaves its equivalent underflow
+                // anonymous; FICHA_REA4_ATOMIC.md §6 mandates the named check here.
+                uint256 tokenOutAfterLeg0 = IERC20(tokenOut).balanceOf(address(this));
+                if (tokenOutAfterLeg0 < tokenOutBefore) {
+                    revert AccountingDeltaUnderflow(tokenOutAfterLeg0, tokenOutBefore);
+                }
+                uint256 intermediate = tokenOutAfterLeg0 - tokenOutBefore;
                 if (intermediate == 0) revert ZeroIntermediate();
 
                 // Leg 1: input token is tokenOut, exact amount = the intermediate delta.
-                _validateAndCall(tokenOut, routers[1], intermediate, payload[1]);
+                _validateAndCall(tokenOut, routers[1], intermediate, payload[1], 1);
 
                 // (HIGH, execution-core audit 2026-06-29) Symmetric tokenOut capital-retention
                 // guard. The profit/retention gate below is tokenIn-scoped and never sees a
@@ -433,16 +494,24 @@ contract ArbitrageExecutor is
                 // >= tokenOutBefore (equality when fully consumed) - the guard fires ONLY on a
                 // real tokenOut shortfall, never on a supported route.
                 if (IERC20(tokenOut).balanceOf(address(this)) < tokenOutBefore) {
-                    revert TokenOutRetentionViolation();
+                    // ATOMIC-CAUSE-01: name the drained amount (observed vs. snapshot).
+                    revert TokenOutRetentionViolation(
+                        IERC20(tokenOut).balanceOf(address(this)),
+                        tokenOutBefore
+                    );
                 }
             }
         }
 
         uint256 balanceAfter = IERC20(tokenIn).balanceOf(address(this));
-        if (balanceAfter <= balanceBefore) revert ZeroGrossProfit();
+        // ATOMIC-CAUSE-01: name both balances so the zero/loss is measurable from the
+        // revert alone (upstream blind-arb L99-100 gates on the same REAL balances but
+        // reverts with an opaque string).
+        if (balanceAfter <= balanceBefore) revert ZeroGrossProfit(balanceAfter, balanceBefore);
 
         profit = balanceAfter - balanceBefore;
-        if (profit < minProfit) revert InsufficientProfit();
+        // ATOMIC-CAUSE-01: name the shortfall (realised profit vs. operator floor).
+        if (profit < minProfit) revert InsufficientProfit(profit, minProfit);
 
         // SC-05 fix: emit tokenOut (intermediate token) so indexers can identify the route.
         emit ArbitrageExecuted(routeHash, tokenIn, tokenOut, profit);
@@ -461,7 +530,16 @@ contract ArbitrageExecutor is
     /// @param exactAmount Exact, ephemeral allowance to grant for this leg (amountIn for
     ///                    leg 0, the intermediate delta for leg 1) - never unbounded.
     /// @param pld         Calldata for the swap (must carry a whitelisted 4-byte selector).
-    function _validateAndCall(address inputToken, address router, uint256 exactAmount, bytes calldata pld) internal {
+    /// @param legIndex    0 for the forward leg, 1 for the backward leg. ATOMIC-CAUSE-01:
+    ///                    propagated into SwapFailed so the failing leg is named in the
+    ///                    revert instead of guessing it from off-chain route context.
+    function _validateAndCall(
+        address inputToken,
+        address router,
+        uint256 exactAmount,
+        bytes calldata pld,
+        uint256 legIndex
+    ) internal {
         if (!approvedRouters[router]) revert RouterNotApproved(router);
 
         // A5: selector whitelist gate.
@@ -480,7 +558,7 @@ contract ArbitrageExecutor is
             revert AE_RouterSelectorNotApproved(router, selector);
         }
 
-        _boundedRouterCall(inputToken, router, exactAmount, pld);
+        _boundedRouterCall(inputToken, router, exactAmount, pld, legIndex);
     }
 
     /// @dev SC-12 spend control. Grant `router` an EXACT, ephemeral `inputToken` allowance
@@ -505,10 +583,29 @@ contract ArbitrageExecutor is
     ///      executeArbitrage under the EVM stack limit; it performs no validation of its
     ///      own - callers (via _validateAndCall) must have already enforced
     ///      router/selector allowlisting.
-    function _boundedRouterCall(address inputToken, address router, uint256 exactAmount, bytes calldata pld) internal {
+    ///      ATOMIC-CAUSE-01 (2026-10-23): the low-level call previously DISCARDED the
+    ///      callee's returndata (`(bool success,) = router.call(pld)`) — a router that
+    ///      reverted with a named cause surfaced here as a bare, anonymous SwapFailed.
+    ///      The returndata is now captured and re-thrown INSIDE SwapFailed, so the
+    ///      original cause (custom error / Error(string) / Panic) survives the wrapper
+    ///      and the sim/bindings can decode it.
+    ///      REA: flashbots/simple-blind-arbitrage sha 73c6c270b27059e6dc0469a6c08e0f7739e5d531
+    ///      src/BlindBackrunLogic.sol:266-268 — the upstream carries the exact same
+    ///      anonymous `(bool success, ) = _to.call(...)` pattern; this port eliminates
+    ///      it (FICHA_REA4_ATOMIC.md §4/§6).
+    ///      Gas note: capturing `bytes memory returndata` costs one returndatacopy of
+    ///      the callee's output on the happy path (~64B for a typical swap → a few dozen
+    ///      gas); the revert path pays the extra calldata only when it actually reverts.
+    function _boundedRouterCall(
+        address inputToken,
+        address router,
+        uint256 exactAmount,
+        bytes calldata pld,
+        uint256 legIndex
+    ) internal {
         IERC20(inputToken).forceApprove(router, exactAmount);
-        (bool success,) = router.call(pld);
-        if (!success) revert SwapFailed();
+        (bool success, bytes memory revertData) = router.call(pld);
+        if (!success) revert SwapFailed(legIndex, router, revertData);
         IERC20(inputToken).forceApprove(router, 0);
     }
 
@@ -623,8 +720,11 @@ contract ArbitrageExecutor is
         if (to == address(0)) revert ZeroAddress();
         uint256 bal = address(this).balance;
         if (bal == 0) revert ZeroBalance();
-        (bool ok,) = to.call{value: bal}("");
-        require(ok, "ETH transfer failed");
+        // ATOMIC-CAUSE-01 (2026-10-23): capture the failed transfer's returndata
+        // instead of discarding it behind a string require. Mirrors the upstream
+        // lesson (BlindBackrunLogic.sol:266-268 discards it as "External call failed").
+        (bool ok, bytes memory revertData) = to.call{value: bal}("");
+        if (!ok) revert ETHRescueFailed(to, revertData);
         emit ETHWithdrawn(to, bal);
     }
 
