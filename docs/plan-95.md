@@ -188,3 +188,17 @@ PEDIDO: …
 ---
 
 **Nota final, para que no se pierda de vista:** el % de cumplimiento es un instrumento. El dinero es `recon > 0`. Un 95 % verde con `recon = 0` es un sistema perfectamente medido y perfectamente improductivo — y este plan, tal como está escrito, puede entregarte exactamente eso si la Fase C se pospone.
+
+---
+
+## Anexo D — estado verificado al 2026-10-21 (MANTIS)
+
+Añadido por MANTIS. No modifica el cuerpo del plan: lo data. Formato §0.2.
+
+| id | familia | dueño | artefacto esperado | criterio de aceptación | estado | evidencia |
+|---|---|---|---|---|---|---|
+| D-01 (§C4) | Código | HYDRA | Inspector de traza + payload completo del `Panic(0x11)` + `timestamp` 0 corregido | Los tres merges son ancestros de la base del PR; la rama sobrante no existe en origin | **HECHO** | #978 `462de71`, #992 `4873c53`, #991 `d3bdd5a` — `merge-base --is-ancestor` YES ×3 sobre `54b11804`; #991 mergeado `2026-10-20T13:58:16Z` |
+| D-02 (§C2) | Código | LEVI (C-17) / ejecuta HYDRA | Fallback `sizingUsd=null → minBoundUsd`, con gas < 0,5 % del nocional | Fila con nocional calculado y no nulo, o rechazo explícito `below_min_bound`; control negativo con `dustUsd=0,01` | **ABIERTO (parcial)** — `sizingUsd=null` desplegado por C-16; falta el fallback | Recibo de `/api/trading-config?chain_id=1` + id de la tarjeta C-17 (pendiente de pegar por HYDRA) |
+| D-03 (§C1, #13) | Código | LEVI (cableado) / ejecuta HYDRA | Un emisor que entregue intents de **2 patas** al pipeline V2 | `count(*) FILTER (WHERE dex_b IS NOT NULL) > 0` en `opportunities` con `economics` presentes, misma ventana; hoy **0/200** | **ABIERTO — es cablear, no construir** | Productor de 2 patas existe y es el único que fija `dex_b`: `engines/dex_engine.rs:1307`. Bajo V2 el camino legacy retorna antes: `scanner.rs:2016-2019`. El scanner de bloques emite intents de una pata: `cartridge_boot.rs:953-955`. Los cartuchos **sí** aceptan multi-pata (`cartridge_boot.rs:3821`, `:3907`) |
+
+**Consecuencia sobre la Fase C:** C1 baja de «construir la segunda pata» a «cablear el emisor bajo V2»; C2 sigue entero; C4 sale del cómputo como HECHO con artefacto. Los tres movimientos son gratis en el numerador (§0.3: duplicado/ancestro y hecho con artefacto) — pero **solo cuentan si el Anexo D está en el fichero**, no en el hilo. Por eso va dentro: un documento que declara pendiente lo ya fusionado es un documento que miente en disco, y el 95 % se mide contra el disco.
