@@ -159,6 +159,7 @@ export const TopTokenRowSchema = z.object({
   memecoin_heuristic: z.boolean(),
   failed_rules: z.array(RugRuleIdSchema),
   unverified_rules: z.array(RugRuleIdSchema),
+  not_measured_rules: z.array(RugRuleIdSchema),
 }).strict();
 export type TopTokenRow = z.infer<typeof TopTokenRowSchema>;
 

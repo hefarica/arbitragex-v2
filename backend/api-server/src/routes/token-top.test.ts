@@ -68,11 +68,19 @@ describe("evaluateRugRules (PC-07)", () => {
     expect(failed).toContain("pump_5m_spike");
   });
 
-  it("flags high risk level, single pool, fresh pool, and memecoin symbol", () => {
+  it("flags high risk level, single pool and memecoin symbol", () => {
     const oneHourAgo = new Date(Date.now() - 1 * 3_600_000);
     const a = agg({ symbol: "BABYDOGE", risk_level: "HIGH", pool_count: 1, oldest_pool_at: oneHourAgo });
     const { failed } = evaluateRugRules(a, ALL);
-    expect(failed).toEqual(expect.arrayContaining(["risk_level_ok", "multi_pool", "pool_age_24h", "exclude_memecoins"]));
+    expect(failed).toEqual(expect.arrayContaining(["risk_level_ok", "multi_pool", "exclude_memecoins"]));
+  });
+
+  it("decision 6: pool_age_24h is NOT MEASURED and never rejects (it reads insertion time)", () => {
+    const oneHourAgo = new Date(Date.now() - 1 * 3_600_000);
+    const a = agg({ pool_count: 3, oldest_pool_at: oneHourAgo });
+    const { failed, notMeasured } = evaluateRugRules(a, ALL);
+    expect(failed).not.toContain("pool_age_24h");
+    expect(notMeasured).toEqual(["pool_age_24h"]);
   });
 
   it("R8: NULL metrics are unverified, never a fabricated pass or fail", () => {
@@ -266,6 +274,6 @@ describe("computeSaveGate — write lock (decision 3, 2026-10-21)", () => {
       rulesApplied: ["pool_age_24h"],
     });
     expect(g.allowed).toBe(false);
-    expect(g.reasons).toEqual(["no_rules_applied"]);
+    expect(g.reasons).toEqual(["no_verified_rule_population"]);
   });
 });

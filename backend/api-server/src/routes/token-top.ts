@@ -137,6 +137,7 @@ export interface TopTokenRow {
   memecoin_heuristic: boolean;
   failed_rules: RugRuleId[];
   unverified_rules: RugRuleId[];
+  not_measured_rules: RugRuleId[];
 }
 
 /** Sort value for a row under the chosen basis; negative = cannot rank. */
@@ -292,7 +293,11 @@ export function computeSaveGate(input: {
   const counted = Object.entries(input.rulePopulation).filter(([, p]) => !p.diagnostic);
   const applied = (input.rulesApplied ?? []).filter((r) => !DIAGNOSTIC_RULES.has(r));
   if (applied.length === 0) {
-    reasons.push("no_rules_applied");
+    // No rule requested at all, or only rules that cannot be measured: the
+    // second case is a population problem, not an empty selection.
+    reasons.push(
+      Object.keys(input.rulePopulation).length === 0 ? "no_rules_applied" : "no_verified_rule_population",
+    );
   } else if (counted.every(([, p]) => p.evaluated === 0)) {
     reasons.push("no_verified_rule_population");
   }
@@ -306,9 +311,10 @@ export function computeSaveGate(input: {
 export function evaluateRugRules(
   agg: TokenAgg,
   rules: ReadonlySet<RugRuleId>,
-): { failed: RugRuleId[]; unverified: RugRuleId[] } {
+): { failed: RugRuleId[]; unverified: RugRuleId[]; notMeasured: RugRuleId[] } {
   const failed: RugRuleId[] = [];
   const unverified: RugRuleId[] = [];
+  const notMeasured: RugRuleId[] = [];
   const v = agg.val;
 
   // D-SEL-6 (decision 7, 2026-10-21): two instruments, two fields. The
@@ -353,14 +359,15 @@ export function evaluateRugRules(
   if (rules.has("multi_pool")) {
     if (agg.pool_count < 2) failed.push("multi_pool");
   }
-  if (rules.has("pool_age_24h")) {
-    const ageH = (Date.now() - agg.oldest_pool_at.getTime()) / 3_600_000;
-    if (ageH < 24) failed.push("pool_age_24h");
-  }
+  // D-SEL-5 (decision 6, 2026-10-21): `pools.created_at` is the INSERTION
+  // time, not the on-chain pool creation. A re-ingest resets it and would
+  // evict old pools; a rule that measures something else must not reject
+  // anyone. It is reported as NOT MEASURED and never counts as verified.
+  if (rules.has("pool_age_24h")) notMeasured.push("pool_age_24h");
   if (rules.has("exclude_memecoins")) {
     if (isMemecoin(agg.symbol, null)) failed.push("exclude_memecoins");
   }
-  return { failed, unverified };
+  return { failed, unverified, notMeasured };
 }
 
 /**
@@ -626,10 +633,10 @@ export function buildTokenTopRouter(deps: Deps): Router {
         rulePopulation[rule] = { evaluated: 0, unverified: 0, diagnostic: DIAGNOSTIC_RULES.has(rule) };
       }
       for (const a of candidates) {
-        const { failed, unverified } = evaluateRugRules(a, rules);
+        const { failed, unverified, notMeasured } = evaluateRugRules(a, rules);
         for (const rule of rules) {
           const rec = rulePopulation[rule]!;
-          if (unverified.includes(rule)) rec.unverified += 1;
+          if (unverified.includes(rule) || notMeasured.includes(rule)) rec.unverified += 1;
           else rec.evaluated += 1;
         }
         if (failed.length > 0) {
@@ -657,6 +664,7 @@ export function buildTokenTopRouter(deps: Deps): Router {
           memecoin_heuristic: isMemecoin(a.symbol, null),
           failed_rules: failed,
           unverified_rules: unverified,
+          not_measured_rules: notMeasured,
         });
       }
 

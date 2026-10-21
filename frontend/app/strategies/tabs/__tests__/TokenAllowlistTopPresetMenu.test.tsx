@@ -43,7 +43,7 @@ const RESULT: TokenTopResponse = {
       liquidity_usd: "500000.00", volume_24h_usd: "100000.00", vol_liq_ratio: 0.2,
       registry_verified: true, oldest_pool_age_hours: 5000, risk_level: "LOW",
       is_stablecoin: false, memecoin_heuristic: false,
-      failed_rules: [], unverified_rules: [],
+      failed_rules: [], unverified_rules: [], not_measured_rules: [],
     },
     {
       symbol: null, address: "0xdead",
@@ -52,7 +52,7 @@ const RESULT: TokenTopResponse = {
       liquidity_usd: null, volume_24h_usd: null, vol_liq_ratio: null,
       registry_verified: null, oldest_pool_age_hours: 1, risk_level: null,
       is_stablecoin: false, memecoin_heuristic: true,
-      failed_rules: [], unverified_rules: ["min_safety_score"],
+      failed_rules: [], unverified_rules: ["min_safety_score"], not_measured_rules: [],
     },
   ],
   excluded: { no_price: 3, "rug:multi_pool": 2 },

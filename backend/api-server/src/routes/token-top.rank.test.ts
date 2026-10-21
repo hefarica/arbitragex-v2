@@ -161,6 +161,19 @@ describe("GET /api/tokens/top — rank_by (D5)", () => {
     expect(open.body.rule_population["min_liquidity_usd"].evaluated).toBeGreaterThan(0);
   });
 
+  it("decision 6: pool_age_24h rides as NOT MEASURED and never drops a row", async () => {
+    const res = await get("chain_id=1&limit=100&rules=pool_age_24h");
+    expect(res.status).toBe(200);
+    expect(res.body.ranked.length).toBeGreaterThan(0);
+    for (const r of res.body.ranked) {
+      expect(r.failed_rules).not.toContain("pool_age_24h");
+      expect(r.not_measured_rules).toContain("pool_age_24h");
+    }
+    expect(res.body.rule_population["pool_age_24h"].diagnostic).toBe(true);
+    // A diagnostic-only rule set cannot unlock the write.
+    expect(res.body.save_gate.reasons).toEqual(["no_verified_rule_population"]);
+  });
+
   it("rejects a bogus rank_by instead of silently falling back", async () => {
     const res = await get("chain_id=1&limit=20&rank_by=marketcap");
     expect(res.status).toBe(400);
