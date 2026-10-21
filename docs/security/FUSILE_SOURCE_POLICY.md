@@ -38,6 +38,17 @@ was ported and from where.
 | `paradigmxyz/artemis` | `backend/searcher-rs` (patterns only) | `CONFIRMED: artemis patterns` |
 | `paradigmxyz/mev-share-rs` | `backend/relays-client/relay_catalog.rs` | `CONFIRMED: relay fusile` |
 | `refcell/subway-rs` | `backend/relays-client/bundle_builder.rs` (sim reference) | `CONFIRMED: relay fusile` |
+| `flashbots/simple-arbitrage` | `backend/searcher-rs` (rating/crossed-market patterns) | `CONFIRMED: allowlist amendment flashbots/simple-arbitrage` |
+| `jacksonConrad/better-simple-arbitrage` | `backend/searcher-rs` (closed-form optimal sizing: semantics + numeric vectors ONLY) | `CONFIRMED: allowlist amendment jacksonConrad/better-simple-arbitrage` |
+
+> **Amendment log — 2026-10-21.** Both marks above were emitted verbatim by the
+> operator in the arbx-rea-fase1 session. License state at the cited SHAs:
+> `flashbots/simple-arbitrage@03cf1058` declares ISC in `package.json:5` but
+> ships no `LICENSE` file — binding rule 3 still requires license resolution
+> before any verbatim lands. `jacksonConrad/better-simple-arbitrage@f8b96f3`
+> has **no license**: this allowlist entry covers numeric facts and semantics
+> only; **verbatim code from this source stays prohibited** until a license
+> appears upstream. REA vectors live in `docs/rea/` (fichas 1/2).
 
 ### Tier 3 — read-only reference (no porting)
 `SorellaLabs/brontes`, `mouseless0x/rusty-sando` (archived).
