@@ -24,11 +24,35 @@ cd "$ROOT"
 
 VIOLATIONS=0
 
+# ─── fail-closed baseline ────────────────────────────────────────────
+# Exit code 1 (a failure) if ANY finding's normalized key is not in the
+# baseline. Exit code 0 only when every finding is recorded debt.
+# The baseline is NEVER rewritten implicitly: regeneration requires an
+# explicitly declared window (LINT_BASELINE_REGEN=1 + LINT_BASELINE_WINDOW=…).
+# Prior behaviour was `exit 0` on the violation branch — a gate that could
+# not fail (352 findings on 54b11804, green CI). See docs/ALTA_TOPOLOGIA_…
+BASELINE_FILE="${LINT_BASELINE_FILE:-$ROOT/automation/tools/lint-no-hardcode.baseline}"
+BASELINE_REGEN="${LINT_BASELINE_REGEN:-}"
+BASELINE_WINDOW="${LINT_BASELINE_WINDOW:-}"
+FINDINGS_FILE="$(mktemp)"
+trap 'rm -f "$FINDINGS_FILE"' EXIT
+
+# Normalized finding key: <category>|<path>|<sha256(32) of the match, squashed>.
+# Line numbers and run-to-run whitespace drift are excluded on purpose, so the
+# baseline survives unrelated edits and still catches a NEW literal.
+norm_key() {
+  local cat="$1" file="$2" content="$3" squash hash
+  squash="$(printf '%s' "$content" | tr -s '[:space:]' ' ' | sed -E 's/^ //; s/ $//')"
+  hash="$(printf '%s' "$squash" | sha256sum | cut -c1-32)"
+  printf '%s|%s|%s\n' "$cat" "$file" "$hash"
+}
+
 # ─── helper ──────────────────────────────────────────────────────────
 report() {
   local cat="$1" file="$2" line="$3" content="$4"
   printf 'VIOLATION[%s] %s:%s  %s\n' "$cat" "$file" "$line" "$content" >&2
   VIOLATIONS=$((VIOLATIONS+1))
+  norm_key "$cat" "$file" "$content" >> "$FINDINGS_FILE"
 }
 
 run_grep() {
@@ -165,11 +189,63 @@ done < <(run_grep "$SYMBOL_KEY_RE" \
             "*.rs *.ts *.tsx" \
             "$SYMBOL_KEY_ALLOW")
 
-# ─── summary ─────────────────────────────────────────────────────────
-if [ "$VIOLATIONS" -gt 0 ]; then
-  printf '\n%s\n' "lint-no-hardcode: $VIOLATIONS violation(s). See docs/governance/NO-HARDCODE-DOCTRINE.md." >&2
+# ─── summary + baseline comparison (fail-closed) ─────────────────────
+sort -u -o "$FINDINGS_FILE" "$FINDINGS_FILE"
+UNIQUE_FINDINGS="$(wc -l < "$FINDINGS_FILE" | tr -d ' ')"
+
+# Declared window: rewrite the baseline. Without the window env, never.
+if [ -n "$BASELINE_REGEN" ]; then
+  if [ -z "$BASELINE_WINDOW" ]; then
+    printf '%s\n' "lint-no-hardcode: LINT_BASELINE_REGEN=1 requires LINT_BASELINE_WINDOW=<declared window>." >&2
+    exit 2
+  fi
+  body_sha="$(sha256sum "$FINDINGS_FILE" | cut -d' ' -f1)"
+  {
+    printf '%s\n' "# lint-no-hardcode baseline — normalized finding keys (recorded debt)"
+    printf '%s\n' "# key format: <category>|<path>|<sha256(32) of whitespace-squashed match>"
+    printf '# regenerated: %s  window: %s  unique-keys: %s  raw-findings: %s\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BASELINE_WINDOW" "$UNIQUE_FINDINGS" "$VIOLATIONS"
+    printf '# body-sha256: %s\n' "$body_sha"
+    cat "$FINDINGS_FILE"
+  } > "$BASELINE_FILE"
+  printf 'lint-no-hardcode: baseline REGENERATED in declared window (%s): %s unique keys, body-sha256 %s\n' \
+    "$BASELINE_WINDOW" "$UNIQUE_FINDINGS" "$body_sha"
   exit 0
 fi
-printf 'lint-no-hardcode: clean\n'
-exit 0
+
+if [ ! -f "$BASELINE_FILE" ]; then
+  printf '%s\n' "lint-no-hardcode: FAIL-CLOSED — baseline not found: $BASELINE_FILE" >&2
+  printf '%s\n' "  Regenerate only in a declared window: LINT_BASELINE_REGEN=1 LINT_BASELINE_WINDOW='<window>' bash $0" >&2
+  exit 1
+fi
+
+# Integrity: the recorded body-sha256 must match the keys actually listed.
+declared_sha="$(awk '/^# body-sha256: /{print $3}' "$BASELINE_FILE" | head -1)"
+actual_sha="$(grep -v '^#' "$BASELINE_FILE" | sha256sum | cut -d' ' -f1)"
+if [ -z "$declared_sha" ] || [ "$declared_sha" != "$actual_sha" ]; then
+  printf 'lint-no-hardcode: FAIL-CLOSED — baseline integrity (declared=%s actual=%s).\n' \
+    "${declared_sha:-none}" "$actual_sha" >&2
+  exit 1
+fi
+
+baseline_keys="$(mktemp)"
+grep -v '^#' "$BASELINE_FILE" | sort -u > "$baseline_keys"
+BASELINE_UNIQUE="$(grep -c . "$baseline_keys" || true)"
+new_keys="$(comm -23 "$FINDINGS_FILE" "$baseline_keys")"
+rm -f "$baseline_keys"
+
+if [ -n "$new_keys" ]; then
+  printf '\n%s\n' "lint-no-hardcode: $VIOLATIONS violation(s), $UNIQUE_FINDINGS unique keys." >&2
+  printf '%s\n' "NEW findings not in $BASELINE_FILE (see docs/governance/NO-HARDCODE-DOCTRINE.md):" >&2
+  printf '%s\n' "$new_keys" >&2
+  printf '%s\n' "If this debt is accepted, regenerate the baseline in a declared window — never edit it by hand." >&2
+  exit 1
+fi
+
+if [ "$VIOLATIONS" -gt 0 ]; then
+  printf 'lint-no-hardcode: %s violation(s) — all %s unique key(s) baselined (recorded debt). See docs/governance/NO-HARDCODE-DOCTRINE.md.\n' \
+    "$VIOLATIONS" "$BASELINE_UNIQUE"
+  exit 0
+fi
+printf 'lint-no-hardcode: clean — 0 violations.\n'
 exit 0
