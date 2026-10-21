@@ -418,6 +418,7 @@ export async function readTokenValidation(
     volume_24h_usd: null,
     volume_1h_usd: null,
     volume_5m_usd: null,
+    volume_as_of: null,
     price_usd: null,
     primary_dex: null,
     primary_pair_address: null,
