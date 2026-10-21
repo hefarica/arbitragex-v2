@@ -2666,8 +2666,16 @@ async fn decode_and_score_tx<'a>(
     // Doctrine: silent early-returns on TokenNotAllowed / StrategyDisabled hide
     // detector activity from the operator (the dashboard then looks idle even
     // when 100s of pending txs/sec are filtered out). We persist these rows too
-    // with risk_score=0 + roi_pct=0 so the operator sees rejection volume +
-    // can iterate the allowlist with real evidence (RULE 00 transparency).
+    // so the operator sees rejection volume and can iterate the allowlist with
+    // real evidence (RULE 00 transparency).
+    //
+    // D-8 (2026-10-21; MEASURED 200/200 live rows in a 24 h window): this block
+    // wrote `roi_pct = Some(0.0)` + `risk_score = Some(0.0)` on rejection. An
+    // uncomputed zero is indistinguishable from a measured zero — the wire, the
+    // ordering and the operator's filters all read "ROI 0 %" as a figure. It is
+    // now the mirror of ECON-ON-REJECT-PATHS-01 (`gate_no_config` below): every
+    // figure stays NULL and the absence is DECLARED via `economics_error(<gate>)`
+    // (R8 intact — unknown is never rendered as a number).
     let (mut final_evidence, math_outcome, config_rejection) = match gate_outcome {
         ConfigGateOutcome::TokenNotAllowed {
             token_symbol_or_addr,
@@ -2684,8 +2692,9 @@ async fn decode_and_score_tx<'a>(
             // gross profit that was computed before the allowlist check ran.
             // net_expected_profit_usd stays None for rejected rows — Net Profit
             // Gate requires gross first; spine does not re-score rejected tokens.
-            opportunity.roi_pct = Some(0.0);
-            opportunity.risk_score = Some(0.0);
+            opportunity.economics = Some(crate::economics::economics_error("token_not_allowed"));
+            opportunity.roi_pct = None;
+            opportunity.risk_score = None;
             // GAP-2 fix: persist diagnostic reason — operator filters by
             // `rejection_reason` in the dashboard to count and audit allowlist gaps.
             opportunity.rejection_reason = Some(format!("TokenNotAllowed:{token_symbol_or_addr}"));
@@ -2731,8 +2740,9 @@ async fn decode_and_score_tx<'a>(
             );
             // CODE-2 fix: same rationale as TokenNotAllowed arm above — preserve
             // the gross_profit_f64 already assigned to opportunity.expected_profit_usd.
-            opportunity.roi_pct = Some(0.0);
-            opportunity.risk_score = Some(0.0);
+            opportunity.economics = Some(crate::economics::economics_error("strategy_disabled"));
+            opportunity.roi_pct = None;
+            opportunity.risk_score = None;
             opportunity.rejection_reason = Some(format!("StrategyDisabled:{strategy_kind}"));
             chain_counters(client.chain_id)
                 .gate_strategy_disabled
@@ -2781,8 +2791,11 @@ async fn decode_and_score_tx<'a>(
                 reject_tag = tag,
                 reason = ?reason,
             );
-            opportunity.roi_pct = Some(0.0);
-            opportunity.risk_score = Some(0.0);
+            opportunity.economics = Some(crate::economics::economics_error(
+                "strategy_config_gate_blocked",
+            ));
+            opportunity.roi_pct = None;
+            opportunity.risk_score = None;
             opportunity.rejection_reason = Some(format!("{tag}:{reason:?}"));
             chain_counters(client.chain_id)
                 .gate_strategy_disabled
