@@ -143,7 +143,7 @@ export type RugRuleId = z.infer<typeof RugRuleIdSchema>;
 export const TopTokenRowSchema = z.object({
   symbol: z.string().nullable(),
   address: z.string(),
-  tvl_usd: z.string(),
+  tvl_usd: z.string().nullable(),
   tvl_24h_ago_usd: z.string().nullable(),
   pool_count: z.number().int().min(0),
   cache_score: z.number().nullable(),

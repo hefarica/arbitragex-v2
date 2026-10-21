@@ -112,7 +112,7 @@ interface TokenAgg {
   is_stablecoin: boolean;
   pool_count: number;
   oldest_pool_at: Date;
-  tvl_current: number;
+  tvl_current: number | null;
   tvl_24h: number | null;
   val: ValidationRow | null;
   safety: number | null;
@@ -121,7 +121,7 @@ interface TokenAgg {
 export interface TopTokenRow {
   symbol: string | null;
   address: string;
-  tvl_usd: string;
+  tvl_usd: string | null;
   tvl_24h_ago_usd: string | null;
   pool_count: number;
   cache_score: number | null;
@@ -153,6 +153,7 @@ export function rankValueOf(
   if (window === "24h") {
     return row.tvl_24h_ago_usd === null ? -1 : Number(row.tvl_24h_ago_usd);
   }
+  if (row.tvl_usd === null) return -1;
   const t = Number(row.tvl_usd);
   return Number.isFinite(t) ? t : -1;
 }
@@ -174,10 +175,18 @@ export function screenAndRank(
   const excluded: Record<string, number> = {};
   const kept: TopTokenRow[] = [];
   for (const row of rows) {
-    const tvl = Number(row.tvl_usd);
-    if (Number.isFinite(tvl) && tvl > IMPLAUSIBLE_TVL_USD) {
+    const tvl = row.tvl_usd === null ? null : Number(row.tvl_usd);
+    if (tvl !== null && Number.isFinite(tvl) && tvl > IMPLAUSIBLE_TVL_USD) {
       excluded["implausible_tvl"] = (excluded["implausible_tvl"] ?? 0) + 1;
       continue;
+    }
+    if (tvl === null) {
+      // Null is not zero: a token with no reservable value is counted, not ranked.
+      excluded["no_reserve"] = (excluded["no_reserve"] ?? 0) + 1;
+      continue;
+    }
+    if (row.tvl_24h_ago_usd === null) {
+      excluded["no_24h_snapshot"] = (excluded["no_24h_snapshot"] ?? 0) + 1;
     }
     if (rankBy === "volume_24h" && rankValueOf(row, rankBy) < 0) {
       excluded["no_volume_24h"] = (excluded["no_volume_24h"] ?? 0) + 1;
@@ -189,7 +198,7 @@ export function screenAndRank(
     const d = rankValueOf(y, rankBy, window) - rankValueOf(x, rankBy, window);
     // Deterministic tie-break: TVL, then address — no stable-sort luck.
     if (d !== 0) return d;
-    const tvl = Number(y.tvl_usd) - Number(x.tvl_usd);
+    const tvl = (y.tvl_usd === null ? 0 : Number(y.tvl_usd)) - (x.tvl_usd === null ? 0 : Number(x.tvl_usd));
     if (Number.isFinite(tvl) && tvl !== 0) return tvl;
     return x.address.localeCompare(y.address);
   });
@@ -578,7 +587,7 @@ export function buildTokenTopRouter(deps: Deps): Router {
         if (!a) {
           a = {
             symbol: sym, address: addr, risk_level: risk, is_stablecoin: stable,
-            pool_count: 0, oldest_pool_at: poolAt, tvl_current: 0, tvl_24h: null,
+            pool_count: 0, oldest_pool_at: poolAt, tvl_current: null, tvl_24h: null,
             val: valByAddr.get(addr.toLowerCase()) ?? null,
             safety: safeByAddr.get(addr.toLowerCase())?.safety_score ?? null,
           };
@@ -594,9 +603,13 @@ export function buildTokenTopRouter(deps: Deps): Router {
       // 10^decimals inflated chain-1 rankings to 1e32 USD (measured
       // 2026-10-21T05:20Z: ADI at 6.55e32). No decimals = no value, counted —
       // never a guessed 18.
+      // D-SEL-2 (decision 5, 2026-10-21): a pool with NO reserve row is not a
+      // pool holding 0 — coalescing it to 0 fabricates a valuation and keeps the
+      // token rankable at "0.00". No reserve row => no value for that side.
       const valueOf = (raw: string | undefined, decimals: number | null, price: number | null): number | null => {
+        if (raw === undefined) return null;
         if (price === null || decimals === null || !Number.isFinite(decimals)) return null;
-        const v = Number(raw ?? 0) / 10 ** decimals;
+        const v = Number(raw) / 10 ** decimals;
         return Number.isFinite(v) ? v * price : null;
       };
       for (const p of poolsQ.rows) {
@@ -611,13 +624,13 @@ export function buildTokenTopRouter(deps: Deps): Router {
         if (p0 === null) excluded["no_price"] = (excluded["no_price"] ?? 0) + 1;
         else if (v0 === null) excluded["no_decimals"] = (excluded["no_decimals"] ?? 0) + 1;
         else {
-          a0.tvl_current += v0;
+          a0.tvl_current = (a0.tvl_current ?? 0) + v0;
           if (v0ago !== null) a0.tvl_24h = (a0.tvl_24h ?? 0) + v0ago;
         }
         if (p1 === null) excluded["no_price"] = (excluded["no_price"] ?? 0) + 1;
         else if (v1 === null) excluded["no_decimals"] = (excluded["no_decimals"] ?? 0) + 1;
         else {
-          a1.tvl_current += v1;
+          a1.tvl_current = (a1.tvl_current ?? 0) + v1;
           if (v1ago !== null) a1.tvl_24h = (a1.tvl_24h ?? 0) + v1ago;
         }
       }
@@ -648,7 +661,7 @@ export function buildTokenTopRouter(deps: Deps): Router {
         rankedAll.push({
           symbol: a.symbol,
           address: a.address,
-          tvl_usd: a.tvl_current.toFixed(2),
+          tvl_usd: a.tvl_current === null ? null : a.tvl_current.toFixed(2),
           tvl_24h_ago_usd: a.tvl_24h === null ? null : a.tvl_24h.toFixed(2),
           pool_count: a.pool_count,
           cache_score: a.safety,

@@ -513,7 +513,7 @@ export function TopPresetMenu({
                       <TableCell className="text-right tabular-nums">
                         {r.volume_24h_usd === null ? DASH : Number(r.volume_24h_usd).toLocaleString("en-US", { maximumFractionDigits: 0 })}
                       </TableCell>
-                      <TableCell className="text-right tabular-nums">{r.tvl_usd}</TableCell>
+                      <TableCell className="text-right tabular-nums">{r.tvl_usd ?? DASH}</TableCell>
                       <TableCell className="text-right tabular-nums">{r.tvl_24h_ago_usd ?? DASH}</TableCell>
                       <TableCell className="text-right tabular-nums">{r.pool_count}</TableCell>
                       <TableCell className="text-right tabular-nums">{r.validation_score ?? DASH}</TableCell>

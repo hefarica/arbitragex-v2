@@ -180,6 +180,23 @@ describe("screenAndRank — basis de ranking (D5, 2026-10-21)", () => {
     expect(ranked.map((r) => r.address)).toEqual(["0xcc", "0xaa"]);
   });
 
+  it("D-SEL-2: a null TVL is excluded and counted, never read as 0", () => {
+    const rows = [
+      row({ address: "0xnull", tvl_usd: null }),
+      row({ address: "0xok", tvl_usd: "10.00" }),
+    ];
+    const { ranked, excluded } = screenAndRank(rows, "tvl", 100);
+    expect(ranked.map((r) => r.address)).toEqual(["0xok"]);
+    expect(excluded["no_reserve"]).toBe(1);
+  });
+
+  it("D-SEL-1: a null 24h snapshot stays null and is counted separately", () => {
+    const rows = [row({ address: "0xnew", tvl_24h_ago_usd: null })];
+    const { excluded } = screenAndRank(rows, "tvl", 100);
+    expect(excluded["no_24h_snapshot"]).toBe(1);
+    expect(excluded["no_reserve"]).toBeUndefined();
+  });
+
   it("names its own basis in the served note", () => {
     expect(rankNote("volume_24h")).toContain("volumen 24h");
     expect(rankNote("tvl")).toContain("valor en pools");

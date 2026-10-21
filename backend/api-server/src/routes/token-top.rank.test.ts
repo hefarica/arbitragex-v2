@@ -26,6 +26,7 @@ const WETH = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
 const USDC = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
 const TOKA = "0x00000000000000000000000000000000000000aa";
 const WEIRD = "0x00000000000000000000000000000000000000bb";
+const NOLIQ = "0x00000000000000000000000000000000000000cc";
 
 const POOLS = [
   {
@@ -42,6 +43,12 @@ const POOLS = [
     id: "aaaaaaaa-0000-4000-8000-000000000003", created_at: new Date("2026-07-01T00:00:00Z"),
     s0: "WEIRD", a0: WEIRD, r0: "UNKNOWN", st0: false, d0: 0,
     s1: "USDC", a1: USDC, r1: "LOW", st1: true, d1: 6,
+  },
+  // No row in RESERVES for this pool: a priced token with no reservable value.
+  {
+    id: "aaaaaaaa-0000-4000-8000-000000000004", created_at: new Date("2026-06-01T00:00:00Z"),
+    s0: "NOLIQ", a0: NOLIQ, r0: "UNKNOWN", st0: false, d0: 18,
+    s1: "WETH", a1: WETH, r1: "LOW", st1: false, d1: 18,
   },
 ];
 
@@ -98,7 +105,7 @@ function app(opts: { volumeAsOf?: "present" | "absent" | "probe_fails" } = {}): 
   a.use(
     buildTokenTopRouter({
       pool: fakePool(opts) as never,
-      redis: { hgetall: async () => ({ WETH: "2500", USDC: "1", TOKA: "2", WEIRD: "300" }) } as never,
+      redis: { hgetall: async () => ({ WETH: "2500", USDC: "1", TOKA: "2", WEIRD: "300", NOLIQ: "7" }) } as never,
       logger: { warn: vi.fn(), info: vi.fn() },
     }),
   );
@@ -172,6 +179,13 @@ describe("GET /api/tokens/top — rank_by (D5)", () => {
     expect(res.body.rule_population["pool_age_24h"].diagnostic).toBe(true);
     // A diagnostic-only rule set cannot unlock the write.
     expect(res.body.save_gate.reasons).toEqual(["no_verified_rule_population"]);
+  });
+
+  it("D-SEL-2: a priced token with no reserve row is counted as no_reserve, never ranked 0.00", async () => {
+    const res = await get("chain_id=1&limit=100");
+    expect(res.body.ranked.some((r: { symbol: string }) => r.symbol === "NOLIQ")).toBe(false);
+    expect(res.body.excluded["no_reserve"]).toBeGreaterThanOrEqual(1);
+    for (const r of res.body.ranked) expect(r.tvl_usd).not.toBe("0.00");
   });
 
   it("rejects a bogus rank_by instead of silently falling back", async () => {
