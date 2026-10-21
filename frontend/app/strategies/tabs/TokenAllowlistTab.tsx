@@ -117,6 +117,10 @@ export function TokenAllowlistTab({ config, onSaved, adminToken, actor }: Props)
   // universe-wide per operator doctrine 2026-09-19).
   const [topLimit, setTopLimit] = useState<(typeof TOP_LIMITS)[number]>(20);
   const [topWindow, setTopWindow] = useState<"current" | "24h">("current");
+  // D5 (2026-10-21): the operator's census is filled by 24h traded VOLUME, not
+  // by pool value — pool value ranks where capital sits, volume ranks where it
+  // trades, and only the second one has arbitrage behind it.
+  const [topRankBy, setTopRankBy] = useState<"tvl" | "volume_24h">("volume_24h");
   const [rugRules, setRugRules] = useState<Set<RugRuleId>>(new Set(RUG_RULE_CATALOG.map((r) => r.id)));
   const [topResult, setTopResult] = useState<TokenTopResponse | null>(null);
   const [topLoading, setTopLoading] = useState(false);
@@ -133,7 +137,7 @@ export function TokenAllowlistTab({ config, onSaved, adminToken, actor }: Props)
   const onLoadTop = async () => {
     setTopLoading(true);
     setTopError(null);
-    const res = await getTopTokens(config.chain_id, topLimit, topWindow, [...rugRules]);
+    const res = await getTopTokens(config.chain_id, topLimit, topWindow, [...rugRules], topRankBy);
     setTopLoading(false);
     if (res.ok) {
       setTopResult(res.data);
@@ -302,6 +306,8 @@ export function TokenAllowlistTab({ config, onSaved, adminToken, actor }: Props)
         setTopLimit={setTopLimit}
         topWindow={topWindow}
         setTopWindow={setTopWindow}
+        topRankBy={topRankBy}
+        setTopRankBy={setTopRankBy}
         rugRules={rugRules}
         toggleRugRule={toggleRugRule}
         onLoadTop={() => void onLoadTop()}
@@ -332,6 +338,8 @@ export function TopPresetMenu({
   setTopLimit,
   topWindow,
   setTopWindow,
+  topRankBy = "tvl",
+  setTopRankBy = () => {},
   rugRules,
   toggleRugRule,
   onLoadTop,
@@ -344,6 +352,9 @@ export function TopPresetMenu({
   setTopLimit: (n: 20 | 30 | 40 | 100) => void;
   topWindow: "current" | "24h";
   setTopWindow: (w: "current" | "24h") => void;
+  /** D5: ranking basis. Optional so older call sites keep compiling. */
+  topRankBy?: "tvl" | "volume_24h";
+  setTopRankBy?: (r: "tvl" | "volume_24h") => void;
   rugRules: ReadonlySet<RugRuleId>;
   toggleRugRule: (id: RugRuleId) => void;
   onLoadTop: () => void;
@@ -357,7 +368,7 @@ export function TopPresetMenu({
         <CardTitle className="text-base">
           Preset Top-N · filtro de reflejo (PC-07)
           <span className="ml-2 text-sm font-normal text-muted-foreground">
-            ranking = valor on-chain en pools × torre de precios · discovery sigue universo-completo
+            ranking = {topRankBy === "volume_24h" ? "volumen 24h (traded)" : "valor on-chain en pools × torre de precios"} · discovery sigue universo-completo
           </span>
         </CardTitle>
       </CardHeader>
@@ -379,6 +390,21 @@ export function TopPresetMenu({
           </Button>
           <Button variant={topWindow === "24h" ? "default" : "outline"} size="sm" onClick={() => setTopWindow("24h")}>
             Últimas 24 horas
+          </Button>
+          <span className="ml-2 text-xs text-muted-foreground">base del ranking:</span>
+          <Button
+            variant={topRankBy === "volume_24h" ? "default" : "outline"}
+            size="sm"
+            onClick={() => setTopRankBy("volume_24h")}
+          >
+            Volumen 24h
+          </Button>
+          <Button
+            variant={topRankBy === "tvl" ? "default" : "outline"}
+            size="sm"
+            onClick={() => setTopRankBy("tvl")}
+          >
+            TVL on-chain
           </Button>
           <Button size="sm" className="ml-auto" onClick={onLoadTop} disabled={loading}>
             {loading ? "Cargando…" : `Cargar Top ${topLimit} → chips`}
@@ -427,6 +453,7 @@ export function TopPresetMenu({
                   <TableRow className="text-left text-muted-foreground">
                     <TableHead className="font-medium">#</TableHead>
                     <TableHead className="font-medium">Símbolo</TableHead>
+                    <TableHead className="text-right font-medium">Vol 24h USD</TableHead>
                     <TableHead className="text-right font-medium">TVL USD</TableHead>
                     <TableHead className="text-right font-medium">TVL 24h atrás</TableHead>
                     <TableHead className="text-right font-medium">Pools</TableHead>
@@ -442,6 +469,9 @@ export function TopPresetMenu({
                       <TableCell className="tabular-nums">{i + 1}</TableCell>
                       <TableCell className="font-medium" title={r.address}>
                         {r.symbol ?? DASH}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {r.volume_24h_usd === null ? DASH : Number(r.volume_24h_usd).toLocaleString("en-US", { maximumFractionDigits: 0 })}
                       </TableCell>
                       <TableCell className="text-right tabular-nums">{r.tvl_usd}</TableCell>
                       <TableCell className="text-right tabular-nums">{r.tvl_24h_ago_usd ?? DASH}</TableCell>

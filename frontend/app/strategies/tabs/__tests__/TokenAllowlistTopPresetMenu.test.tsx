@@ -91,3 +91,21 @@ describe("TopPresetMenu — PC-07 steady states", () => {
     expect(html).toContain("query_failed");
   });
 });
+
+describe("TopPresetMenu — base del ranking (D5, 2026-10-21)", () => {
+  it("offers both bases and names the active one in the header", () => {
+    const vol = renderMenu({ topRankBy: "volume_24h" });
+    expect(vol).toContain("Volumen 24h");
+    expect(vol).toContain("TVL on-chain");
+    expect(vol).toContain("ranking = volumen 24h (traded)");
+
+    const tvl = renderMenu({ topRankBy: "tvl" });
+    expect(tvl).toContain("ranking = valor on-chain en pools");
+  });
+
+  it("renders the measured 24h volume column and keeps R8 dashes for NULL", () => {
+    const html = renderMenu({ topRankBy: "volume_24h", result: RESULT });
+    expect(html).toContain("Vol 24h USD");
+    expect(html).toContain("100,000");
+  });
+});

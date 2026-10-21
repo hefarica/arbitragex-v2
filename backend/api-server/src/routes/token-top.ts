@@ -44,6 +44,27 @@ export const RUG_RULES = [
 ] as const;
 export type RugRuleId = (typeof RUG_RULES)[number]["id"];
 
+/**
+ * Ranking basis for the preset menu (operator 2026-10-21, D5).
+ *   tvl        — Σ (token-side reserve × price), the PC-07 default.
+ *   volume_24h — `token_validations.volume_24h_usd`, the only field in this
+ *                system that measures *traded* volume over 24h.
+ *
+ * Why volume is a separate basis and not a window: `window=24h` re-values the
+ * reserves snapshot from 24h ago at CURRENT prices — that is capital flow, not
+ * volume. Ranking by it answers "where did liquidity move", not "where is the
+ * trading". The operator asked for the latter.
+ */
+export const RANK_BASES = ["tvl", "volume_24h"] as const;
+export type RankBy = (typeof RANK_BASES)[number];
+
+/**
+ * A pool-side valuation above $1T is a scale defect (decimals / price-tower
+ * mismatch), not a market cap. Measured on chain 1 at 2026-10-21T05:20Z:
+ * the #1 token was served with tvl_usd = 6.55e32. Such a row can never rank.
+ */
+export const IMPLAUSIBLE_TVL_USD = 1_000_000_000_000;
+
 const MEMECOIN_PATTERNS = [
   "PEPE", "DOGE", "SHIB", "FLOKI", "BABY", "ELON", "MOON", "INU", "WOJAK",
   "BONK", "TURBO", "MEME", "PUMP", "CAT", "FROG", "DOGWIF", "NEIRO", "PEIPEI",
@@ -58,8 +79,8 @@ function isMemecoin(symbol: string | null, name: string | null): boolean {
 interface PoolRow {
   id: string;
   created_at: Date;
-  s0: string | null; a0: string; r0: string | null; st0: boolean;
-  s1: string | null; a1: string; r1: string | null; st1: boolean;
+  s0: string | null; a0: string; r0: string | null; st0: boolean; d0: number | null;
+  s1: string | null; a1: string; r1: string | null; st1: boolean; d1: number | null;
 }
 
 interface ReserveRow {
@@ -116,6 +137,69 @@ export interface TopTokenRow {
   memecoin_heuristic: boolean;
   failed_rules: RugRuleId[];
   unverified_rules: RugRuleId[];
+}
+
+/** Sort value for a row under the chosen basis; negative = cannot rank. */
+export function rankValueOf(
+  row: TopTokenRow,
+  rankBy: RankBy,
+  window: TopWindow = "current",
+): number {
+  if (rankBy === "volume_24h") {
+    const v = row.volume_24h_usd === null ? null : Number(row.volume_24h_usd);
+    return v !== null && Number.isFinite(v) && v > 0 ? v : -1;
+  }
+  if (window === "24h") {
+    return row.tvl_24h_ago_usd === null ? -1 : Number(row.tvl_24h_ago_usd);
+  }
+  const t = Number(row.tvl_usd);
+  return Number.isFinite(t) ? t : -1;
+}
+
+/**
+ * Final stage of the ranking, pure and testable: applies the two honesty
+ * screens and sorts. Returns the excluded counters so the caller can merge
+ * them with the rug-rule counters already accumulated.
+ *
+ * R8: a token with no measured 24h volume is NOT ranked as zero — it is
+ * excluded and counted, because "no data" and "no volume" are different facts.
+ */
+export function screenAndRank(
+  rows: readonly TopTokenRow[],
+  rankBy: RankBy,
+  limit: number,
+  window: TopWindow = "current",
+): { ranked: TopTokenRow[]; excluded: Record<string, number> } {
+  const excluded: Record<string, number> = {};
+  const kept: TopTokenRow[] = [];
+  for (const row of rows) {
+    const tvl = Number(row.tvl_usd);
+    if (Number.isFinite(tvl) && tvl > IMPLAUSIBLE_TVL_USD) {
+      excluded["implausible_tvl"] = (excluded["implausible_tvl"] ?? 0) + 1;
+      continue;
+    }
+    if (rankBy === "volume_24h" && rankValueOf(row, rankBy) < 0) {
+      excluded["no_volume_24h"] = (excluded["no_volume_24h"] ?? 0) + 1;
+      continue;
+    }
+    kept.push(row);
+  }
+  kept.sort((x, y) => {
+    const d = rankValueOf(y, rankBy, window) - rankValueOf(x, rankBy, window);
+    // Deterministic tie-break: TVL, then address — no stable-sort luck.
+    if (d !== 0) return d;
+    const tvl = Number(y.tvl_usd) - Number(x.tvl_usd);
+    if (Number.isFinite(tvl) && tvl !== 0) return tvl;
+    return x.address.localeCompare(y.address);
+  });
+  return { ranked: kept.slice(0, limit), excluded };
+}
+
+/** Human-readable basis for the served ranking (R8: the caller must see it). */
+export function rankNote(rankBy: RankBy): string {
+  return rankBy === "volume_24h"
+    ? "orden = volumen 24h (token_validations.volume_24h_usd); TVL sólo como columna de contexto"
+    : "orden = valor en pools × torre de precios (flujo de capital, no market cap)";
 }
 
 /**
@@ -204,6 +288,12 @@ export function buildTokenTopRouter(deps: Deps): Router {
       return;
     }
     const window = req.query["window"] === "24h" ? "24h" : "current";
+    const rankByRaw = String(req.query["rank_by"] ?? "tvl");
+    if (!(RANK_BASES as readonly string[]).includes(rankByRaw)) {
+      res.status(400).json({ error: "invalid_rank_by", allowed: RANK_BASES });
+      return;
+    }
+    const rankBy = rankByRaw as RankBy;
     const validRuleIds = new Set<string>(RUG_RULES.map((x) => x.id));
     const rules = new Set(
       String(req.query["rules"] ?? "")
@@ -217,7 +307,9 @@ export function buildTokenTopRouter(deps: Deps): Router {
       const poolsQ = await deps.pool.query<PoolRow>(
         `SELECT p.id, p.created_at,
                 t0.symbol AS s0, t0.address AS a0, t0.risk_level AS r0, t0.is_stablecoin AS st0,
-                t1.symbol AS s1, t1.address AS a1, t1.risk_level AS r1, t1.is_stablecoin AS st1
+                t0.decimals AS d0,
+                t1.symbol AS s1, t1.address AS a1, t1.risk_level AS r1, t1.is_stablecoin AS st1,
+                t1.decimals AS d1
            FROM pools p
            JOIN tokens t0 ON t0.id = p.token0_id
            JOIN tokens t1 ON t1.id = p.token1_id
@@ -228,7 +320,8 @@ export function buildTokenTopRouter(deps: Deps): Router {
         res.status(200).json({
           chain_id: chainId, window, limit, ranked: [], excluded: {},
           price_coverage: { symbols_priced: 0, symbols_total: 0 },
-          window_note: null, rules_applied: [...rules],
+          window_note: `sin pools activos para chain ${chainId}: no hay universo que ordenar (${rankNote(rankBy)})`,
+          rules_applied: [...rules],
         });
         return;
       }
@@ -328,15 +421,36 @@ export function buildTokenTopRouter(deps: Deps): Router {
       };
 
       const excluded: Record<string, number> = {};
+      // R8/scale: a reserve is a RAW integer. Valuing it without dividing by
+      // 10^decimals inflated chain-1 rankings to 1e32 USD (measured
+      // 2026-10-21T05:20Z: ADI at 6.55e32). No decimals = no value, counted —
+      // never a guessed 18.
+      const valueOf = (raw: string | undefined, decimals: number | null, price: number | null): number | null => {
+        if (price === null || decimals === null || !Number.isFinite(decimals)) return null;
+        const v = Number(raw ?? 0) / 10 ** decimals;
+        return Number.isFinite(v) ? v * price : null;
+      };
       for (const p of poolsQ.rows) {
         const a0 = ensure(p.a0, p.s0, p.r0, p.st0, p.created_at);
         const a1 = ensure(p.a1, p.s1, p.r1, p.st1, p.created_at);
         const p0 = priceOf(p.s0);
         const p1 = priceOf(p.s1);
+        const v0 = valueOf(nowRes.get(p.id)?.reserve0, p.d0, p0);
+        const v0ago = valueOf(agoRes.get(p.id)?.reserve0, p.d0, p0);
+        const v1 = valueOf(nowRes.get(p.id)?.reserve1, p.d1, p1);
+        const v1ago = valueOf(agoRes.get(p.id)?.reserve1, p.d1, p1);
         if (p0 === null) excluded["no_price"] = (excluded["no_price"] ?? 0) + 1;
-        else { a0.tvl_current += Number(nowRes.get(p.id)?.reserve0 ?? 0) * p0; a0.tvl_24h = (a0.tvl_24h ?? 0) + Number(agoRes.get(p.id)?.reserve0 ?? 0) * p0; }
+        else if (v0 === null) excluded["no_decimals"] = (excluded["no_decimals"] ?? 0) + 1;
+        else {
+          a0.tvl_current += v0;
+          if (v0ago !== null) a0.tvl_24h = (a0.tvl_24h ?? 0) + v0ago;
+        }
         if (p1 === null) excluded["no_price"] = (excluded["no_price"] ?? 0) + 1;
-        else { a1.tvl_current += Number(nowRes.get(p.id)?.reserve1 ?? 0) * p1; a1.tvl_24h = (a1.tvl_24h ?? 0) + Number(agoRes.get(p.id)?.reserve1 ?? 0) * p1; }
+        else if (v1 === null) excluded["no_decimals"] = (excluded["no_decimals"] ?? 0) + 1;
+        else {
+          a1.tvl_current += v1;
+          if (v1ago !== null) a1.tvl_24h = (a1.tvl_24h ?? 0) + v1ago;
+        }
       }
 
       // 6) Rank by the chosen window's TVL; unpriced tokens cannot rank.
@@ -375,19 +489,16 @@ export function buildTokenTopRouter(deps: Deps): Router {
         });
       }
 
-      const rankValue = (row: TopTokenRow) =>
-        window === "24h"
-          ? row.tvl_24h_ago_usd === null
-            ? -1
-            : Number(row.tvl_24h_ago_usd)
-          : Number(row.tvl_usd);
-      rankedAll.sort((x, y) => rankValue(y) - rankValue(x));
-      const ranked = rankedAll.slice(0, limit);
+      const screened = screenAndRank(rankedAll, rankBy, limit, window);
+      for (const [k, v] of Object.entries(screened.excluded)) {
+        excluded[k] = (excluded[k] ?? 0) + v;
+      }
+      const ranked = screened.ranked;
 
       deps.logger.info(
         {
           event: "tokens.top_served",
-          chain_id: chainId, window, limit,
+          chain_id: chainId, window, rank_by: rankBy, limit,
           pools: poolsQ.rowCount,
           tokens_considered: candidates.length,
           tokens_ranked: rankedAll.length,
@@ -406,11 +517,14 @@ export function buildTokenTopRouter(deps: Deps): Router {
           symbols_priced: distinctPriced,
           symbols_total: aggByAddr.size,
         },
-        // R8 honesty: the 24h window values OLD reserves at CURRENT prices —
-        // it measures capital flow, not historical market cap.
-        window_note: window === "24h"
-          ? "reservas de hace ≤24h valorizadas a precios ACTUALES (flujo de capital, no market cap histórico)"
-          : null,
+        // R8 honesty: the served ordering must name its own basis. `window=24h`
+        // values OLD reserves at CURRENT prices (capital flow, not historical
+        // market cap); `rank_by=volume_24h` orders by measured traded volume.
+        window_note: rankBy === "volume_24h"
+          ? rankNote(rankBy)
+          : window === "24h"
+            ? "reservas de hace ≤24h valorizadas a precios ACTUALES (flujo de capital, no market cap histórico)"
+            : rankNote(rankBy),
         rules_applied: [...rules],
         rule_catalog: RUG_RULES,
       });
