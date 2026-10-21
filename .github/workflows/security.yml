@@ -265,6 +265,22 @@ jobs:
           #      zip fix is a MAJOR (>=9.0.0) and svm-rs pins `zip = "0.6"`
           #      (API-incompatible, no valid in-line bump). Plan: dies with the
           #      ethers-rs 2.0.14 removal sprint.
+          # ── 2026-10-21 (advisory refresh, not a merge) ────────────────────
+          #      `cargo audit` went red on main with 5 new vulnerabilities while
+          #      no code changed: 39618440145 died at 'Run cargo audit' and, with
+          #      it, the deploy of every SHA ('Failed gates: security.yml').
+          #      RUSTSEC-2026-0381/0382/0383 are the bundled-CA-root /
+          #      cert-verification family:
+          #        • 0382 rustls-webpki — fix is >=0.103.16,<0.104; we carry TWO
+          #          lines (0.101.7 pinned by the rustls 0.21 chain, 0.103.14);
+          #          the 0.101 line cannot move without a rustls major bump.
+          #        • 0381/0383 webpki-roots — fix is >=1.0.10, a MAJOR jump from
+          #          the 0.25/0.26 lines pulled by the same rustls chains.
+          #      Exposure: bundled trust anchors for OUTBOUND HTTPS to fixed,
+          #      operator-configured endpoints (RPC/relays); no client-supplied
+          #      certificate is verified against them. Plan: retire with the
+          #      rustls/reqwest chain upgrade (same sprint as the ethers removal).
+          #      tls_dependency_guard.py still passes on this lockfile.
           # Expiry unchanged (2030-12-31, enforced by the fail-honest step above);
           # these entries were added/re-justified 2026-10-18.
           RUSTSEC_IGNORES: >-
@@ -291,6 +307,9 @@ jobs:
             --ignore RUSTSEC-2026-0367
             --ignore RUSTSEC-2026-0368
             --ignore RUSTSEC-2026-0369
+            --ignore RUSTSEC-2026-0381
+            --ignore RUSTSEC-2026-0382
+            --ignore RUSTSEC-2026-0383
 
   gitleaks:
     name: gitleaks (secrets scan)
