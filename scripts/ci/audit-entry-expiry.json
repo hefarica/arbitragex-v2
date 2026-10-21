@@ -1,0 +1,25 @@
+{
+  "cargo": [
+    {
+      "id": "RUSTSEC-2026-0381",
+      "reason": "webpki-roots 0.25.4 (reqwest 0.11 chain) and 0.26.11 (sqlx-core 0.8.1 / tokio-tungstenite 0.28) — bundled CA roots for OUTBOUND HTTPS to operator-configured endpoints only; no client-supplied certificate is verified against them. Fix is >=1.0.10, a MAJOR jump that requires the rustls/reqwest migration.",
+      "owner": "MANTIS",
+      "expires": "2026-11-20",
+      "enforced": true
+    },
+    {
+      "id": "RUSTSEC-2026-0382",
+      "reason": "rustls-webpki 0.101.7 pinned by the rustls 0.21.12 chain (no in-line fix; the patched line is 0.103.16+, which the 0.103.14 copy already needs). Dies with the rustls 0.21 -> 0.23 / reqwest 0.11 -> 0.12 migration.",
+      "owner": "MANTIS",
+      "expires": "2026-11-20",
+      "enforced": true
+    },
+    {
+      "id": "RUSTSEC-2026-0383",
+      "reason": "webpki-root-certs 1.0.9 via rustls-platform-verifier 0.7.0 — patched in 1.0.10; entry kept only until the lock bump lands so the gate cannot hide a fixable advisory.",
+      "owner": "MANTIS",
+      "expires": "2026-11-20",
+      "enforced": true
+    }
+  ]
+}
