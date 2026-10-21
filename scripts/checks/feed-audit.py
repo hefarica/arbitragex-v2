@@ -40,8 +40,8 @@ import sys
 import urllib.error
 import urllib.request
 
-INSTRUMENT_VERSION = "feed-audit/2.0.0"
-THRESHOLDS_VERSION = "th/2026-10-21.1"
+INSTRUMENT_VERSION = "feed-audit/2.1.0"
+THRESHOLDS_VERSION = "th/2026-10-21.2"
 
 TH = {
     # Definicional, sin tuning: un ida y vuelta autofinanciado no devuelve más
@@ -59,7 +59,7 @@ TH = {
 ENDPOINT = "/api/opportunities/live"
 QUERY = ("?viable_only={viable}&limit={limit}&max_age_seconds={window}"
          "&order=profit_usd&route_representative=best_net")
-BASE_DEFAULT = "https://edge-arbx.ape-tv.net"
+BASE_DEFAULT = "https://edge-arbx.ape-tv.net"  # referencia documentada: NO es un default de CLI
 UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
       "Chrome/124.0 Safari/537.36")
 
@@ -130,15 +130,20 @@ def ratio_of(row):
     return gross / notional
 
 
-def full_cost_net(row):
-    """Net de coste COMPLETO persistido. `net_expected_profit_usd` es gas-only
-    por construcción y no decide: se reporta aparte, nunca como el net."""
+def new_net_field(row):
+    """El campo NUEVO del contrato (b1): `economics.net_profit_usd` persistido."""
     econ = row.get("economics")
     if isinstance(econ, dict):
         for key in ("net_profit_usd", "net_usd", "net"):
             if econ.get(key) is not None:
                 return econ[key]
-    return row.get("simulated_net_profit_usd")
+    return None
+
+
+def legacy_net_field(row):
+    """`net_expected_profit_usd`: gas-only por construcción. DIAGNÓSTICO, jamás
+    criterio de PASS (decisión del dueño del instrumento, 2026-10-21)."""
+    return row.get("net_expected_profit_usd")
 
 
 def cost_breakdown(row) -> dict:
@@ -222,13 +227,22 @@ def build_gates(items, viable_payload, ordering) -> list:
     gates.append(_gate("G01", "filas viables (executed/simulated/viable)", "cobertura", "cobertura",
                        n, count(lambda x: x.get("status") in VIABLE_STATES),
                        detail="viable_only=true -> count=%s" % (viable_payload or {}).get("count")))
-    gates.append(_gate("G02", "economía persistida (economics)", "100%", "puerta", n,
+    # G02 mide el campo NUEVO (economics.net_profit_usd). NUNCA se pone verde
+    # midiendo el legacy (net_expected_profit_usd, gas-only): si la forma nueva
+    # no aparece en el payload, la puerta queda NOT COMPUTED y lo dice.
+    shape_rows = [x for x in items if isinstance(x.get("economics"), dict)]
+    new_field_rows = [x for x in items if new_net_field(x) is not None]
+    if not shape_rows:
+        gates.append(Gate("G02", "net_profit_usd nuevo persistido", "100%", "puerta", n, 0,
+                          state="NOT COMPUTED",
+                          detail="la forma nueva no aparece en el payload: no se juzga con el legacy"))
+    else:
+        gates.append(_gate("G02", "net_profit_usd nuevo persistido", "100%", "puerta", n,
+                           len(new_field_rows), nulls=len(new_field_rows) and 0,
+                           detail="la forma está emitida; el campo falta en %d filas" % (n - len(new_field_rows))))
+    gates.append(_gate("G03", "economics persistido en la fila (a0)", "100%", "puerta", n,
                        count(lambda x: x.get("economics") is not None),
                        detail="una fila sin economía no es ordenable ni auditable"))
-    gates.append(_gate("G03", "net de coste completo publicable", "100%", "puerta", n,
-                       count(lambda x: full_cost_net(x) is not None),
-                       detail="gas-only presente=%d (no decide)"
-                              % count(lambda x: x.get("net_expected_profit_usd") is not None)))
     gates.append(_gate("G04", "topología de dos patas (dex_b + 2 pozos)", ">0", "puerta", n,
                        count(has_two_legs), detail="aceptación de #13: se cuenta, no se declara"))
     gates.append(_gate("G05", "anclaje (block_number)", "cobertura", "cobertura", n,
@@ -280,6 +294,41 @@ def build_gates(items, viable_payload, ordering) -> list:
                       detail=("suelos %.0f–%.0f bps: el suelo global de %.0f bps es decorativo"
                               % (min(floors), max(floors), TH["suelo_global_bps"])) if floors
                              else "sin nocional calculable"))
+    price_rows = [x for x in items if isinstance(x.get("token_prices_usd"), dict)]
+
+    def literal_price_match(x):
+        """El precio se busca por símbolo: si la clave no coincide LITERALMENTE con
+        `token_in_info.symbol`, un consumidor sensible a mayúsculas obtiene nocional
+        nulo y cobertura falsa. Vale la coincidencia literal o una declaración
+        explícita de normalización en el propio payload."""
+        prices = x.get("token_prices_usd") or {}
+        sym = (x.get("token_in_info") or {}).get("symbol")
+        if sym and sym in prices:
+            return True
+        return bool(prices.get("__normalized__") or prices.get("normalized"))
+
+    literal = [x for x in price_rows if literal_price_match(x)]
+    case_only = [x for x in price_rows
+                 if not literal_price_match(x)
+                 and any(str(k).upper() == str((x.get("token_in_info") or {}).get("symbol") or "").upper()
+                         for k in x["token_prices_usd"])]
+    if not price_rows:
+        gates.append(Gate("G14", "caso símbolo/precio declarado", "100%", "puerta", 0, 0,
+                          state="NOT COMPUTED", detail="sin precios no hay nocional"))
+    else:
+        gates.append(_gate("G14", "caso símbolo/precio declarado", "100%", "puerta", len(price_rows),
+                           len(literal), nulls=n - len(price_rows),
+                           detail="coincidencia literal=%d · sólo normalizando=%d"
+                                  % (len(literal), len(case_only))))
+
+    quarantine = [t for t in ratios if t[0] > TH["ratio_banda"]]
+    ordered_in_quarantine = [t for t in quarantine if t[1].get("expected_profit_usd") is not None]
+    gates.append(Gate("G15", "cuarentena >5% no ordena", "0 fallos", "puerta", len(ratios),
+                      len(ratios) - len(ordered_in_quarantine), nulls=n - len(ratios),
+                      failures=len(ordered_in_quarantine),
+                      state="VIOLACION" if ordered_in_quarantine else ("OK" if ratios else "NOT COMPUTED"),
+                      detail="%d en cuarentena siguen ordenando (no deben)" % len(ordered_in_quarantine)))
+
     return gates, ratios
 
 
@@ -362,6 +411,10 @@ def report(items, viable_payload, header, ratios, gates, out, strict):
     nc = [g for g in gates if g.state == "NOT COMPUTED"]
 
     band = sorted([r for r, _ in ratios if TH["ratio_banda"] < r <= TH["ratio_imposible"]], reverse=True)
+    legacy = sum(1 for x in items if legacy_net_field(x) is not None)
+    lines.append("")
+    lines.append("DIAGNÓSTICO LEGACY (no es puerta, jamás criterio de PASS):"
+                 " net_expected_profit_usd presente=%d/%d (gas-only)" % (legacy, n))
     lines.append("")
     lines.append("G09 DIAGNÓSTICO (no es puerta) — banda %.2f < bruto/nocional <= %.2f: n=%d"
                  % (TH["ratio_banda"], TH["ratio_imposible"], len(band)))
@@ -401,10 +454,10 @@ def report(items, viable_payload, header, ratios, gates, out, strict):
         with open(out, "w", encoding="utf-8") as fh:
             fh.write(text + "\n")
     if bad:
-        return 1
+        return 1, [g.gid for g in nc]
     if strict and nc:
-        return 3
-    return 0
+        return 3, [g.gid for g in nc]
+    return 0, [g.gid for g in nc]
 
 
 def header_block(source, captured_at, payload_sha, payload_bytes, population, viable, sha12):
@@ -447,7 +500,7 @@ def run_payload(population, viable, source, captured_at, out, strict, sha12, raw
         if out:
             with open(out, "w", encoding="utf-8") as fh:
                 fh.write("\n".join(lines) + "\n")
-        return 2
+        return 2, []
     ordering = ordering_gate(items, viable)
     gates, ratios = build_gates(items, viable, ordering)
     return report(items, viable, lines, ratios, gates, out, strict)
@@ -462,14 +515,18 @@ def load_fixture(path):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Auditoría read-only de la superficie de oportunidades")
-    ap.add_argument("--url", default=BASE_DEFAULT)
+    ap.add_argument("--url", help="base explícita, p. ej. https://edge-arbx.ape-tv.net "
+                                 "(obligatoria si no se usa --fixture/--from-file)")
+    ap.add_argument("--from-file", help="audita bytes guardados en vez de la red")
+    ap.add_argument("--from-file-viable", help="payload de viable_only=true, si se guardó")
+    ap.add_argument("--expect-sha256", help="con --from-file: si el sha256 no coincide, NO se audita")
     ap.add_argument("--window", type=int, default=86400)
     ap.add_argument("--limit", type=int, default=200)
     ap.add_argument("--fixture", help="lee una fixture congelada en vez de la red")
     ap.add_argument("--controls", action="store_true",
                     help="corre los tres controles (positivo/negativo/vacío) y verifica los exit")
     ap.add_argument("--fixtures-dir", default=os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                                           "..", "fixtures", "feed-audit"))
+                                                           os.pardir, "fixtures", "feed-audit"))
     ap.add_argument("--out", help="escribe el informe en un archivo")
     ap.add_argument("--strict", action="store_true", help="exit 3 si alguna puerta queda NOT COMPUTED")
     a = ap.parse_args(argv)
@@ -479,9 +536,32 @@ def main(argv=None):
         return run_controls(a, sha12)
     if a.fixture:
         population, viable, meta = load_fixture(a.fixture)
-        return run_payload(population, viable,
+        rc, _ = run_payload(population, viable,
                            "fixture %s (%s)" % (a.fixture, meta.get("kind", "?")),
                            meta.get("captured_at_utc", "-"), a.out, a.strict, sha12)
+    if a.from_file:
+        with open(a.from_file, "rb") as fh:
+            raw = fh.read()
+        got = hashlib.sha256(raw).hexdigest()
+        if a.expect_sha256 and not got.startswith(a.expect_sha256.lower()):
+            lines = header_block("from-file %s" % a.from_file, "-", got, len(raw), {}, {}, sha12)
+            lines.append("")
+            lines.append("SHA256 NO COINCIDE: esperado %s…, leído %s -> exit 2 (no se audita)"
+                         % (a.expect_sha256[:12], got[:12]))
+            print("\n".join(lines))
+            return 2
+        viable = {}
+        if a.from_file_viable:
+            with open(a.from_file_viable, "r", encoding="utf-8") as fh:
+                viable = json.load(fh)
+        rc, _ = run_payload(json.loads(raw.decode("utf-8")), viable,
+                            "from-file %s (sha256 %s…)" % (a.from_file, got[:12]),
+                            "-", a.out, a.strict, sha12, raw=raw)
+        return rc
+    if not a.url:
+        print("FALTA --url: la base se pasa explícita (o se auditan bytes guardados con --from-file)."
+              " Este instrumento no adivina a qué host está midiendo -> exit 2")
+        return 2
     q_all = ENDPOINT + QUERY.format(viable="false", limit=a.limit, window=a.window)
     q_via = ENDPOINT + QUERY.format(viable="true", limit=a.limit, window=a.window)
     try:
@@ -495,23 +575,39 @@ def main(argv=None):
         return 2
     import datetime
     now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    return run_payload(population, viable, "live %s%s" % (a.url, q_all), now, a.out, a.strict, sha12, raw=raw)
+    rc, _ = run_payload(population, viable, "live %s%s" % (a.url, q_all), now, a.out, a.strict, sha12, raw=raw)
+    return rc
 
 
 def run_controls(a, sha12):
-    expected = (("positive", 0), ("negative", 1), ("empty", 2))
+    """Controles offline, con `--strict` OBLIGATORIO.
+
+    En los controles la población es conocida y congelada, así que una puerta
+    NOT COMPUTED no puede pasar por buena: es exactamente el verde por
+    proximidad, con forma de ausencia. En corridas sobre el wire `--strict`
+    queda opcional, porque ahí la población la dicta el despliegue y no el
+    instrumento.
+    """
+    expected = (
+        ("positive", 0, set()),
+        ("negative", 1, {"G02"}),
+        ("empty", 2, None),
+    )
     base = os.path.abspath(a.fixtures_dir)
     rc, fails = 0, []
-    for name, want in expected:
+    for name, want_code, want_nc in expected:
         path = os.path.join(base, "%s.json" % name)
         population, viable, meta = load_fixture(path)
-        got = run_payload(population, viable, "fixture %s.json" % name,
-                          meta.get("captured_at_utc", "-"), None, False, sha12)
-        status = "OK" if got == want else "FALLA"
-        if got != want:
-            fails.append((name, want, got))
+        got_code, got_nc = run_payload(population, viable, "fixture %s.json" % name,
+                                       meta.get("captured_at_utc", "-"), None, True, sha12)
+        ok = got_code == want_code and (want_nc is None or set(got_nc) == want_nc)
+        if not ok:
+            fails.append((name, want_code, want_nc, got_code, got_nc))
             rc = 1
-        print("CONTROL %-9s exit esperado=%d obtenido=%d  %s" % (name, want, got, status))
+        print("CONTROL %-9s exit esperado=%d obtenido=%d · NOT COMPUTED esperadas=%s obtenidas=%s  %s"
+              % (name, want_code, got_code,
+                 "todas" if want_nc is None else (sorted(want_nc) or "ninguna"),
+                 sorted(got_nc) or "ninguna", "OK" if ok else "FALLA"))
         print("-" * 72)
     print("CONTROLES: %d/%d %s" % (len(expected) - len(fails), len(expected),
                                    "-> exit 0" if not fails else "-> exit 1"))

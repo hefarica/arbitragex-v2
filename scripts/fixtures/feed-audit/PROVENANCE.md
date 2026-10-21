@@ -37,11 +37,28 @@ ningún pipeline la lee.
 
 ## Controles y recuento esperado
 
-| control | exit | violaciones | puertas NOT COMPUTED |
+| control | exit | violaciones | NOT COMPUTED (declaradas) |
 | --- | --- | --- | --- |
-| `positive` | 0 | 0 | 0 |
-| `negative` | 1 | 7 (G02, G03, G04, G08, G10, G11, G12) | 0 |
-| `empty` | 2 | — (población 0) | todas |
+| `positive` | 0 | 0 | **ninguna** |
+| `negative` | 1 | 8 (G03, G04, G08, G10, G11, G12, G14, G15) | **{G02}** exactamente |
+| `empty` | 2 | — (población 0) | todas (es el contrato) |
+
+**`--strict` es obligatorio dentro de `--controls`** y opcional sobre el wire.
+En los controles la población es conocida y congelada, así que una puerta
+NOT COMPUTED no puede pasar por buena: es el verde por proximidad con forma de
+ausencia. Sobre el wire la población la dicta el despliegue, no el instrumento,
+y por eso `--strict` queda opcional ahí. El propio `--controls` verifica el
+conjunto de NOT COMPUTED, no sólo el exit.
+
+### Interfaz (contrato de invocación)
+
+    python3 scripts/checks/feed-audit.py --url <base>          # red, base explícita
+    python3 scripts/checks/feed-audit.py --from-file <bytes.json> [--expect-sha256 <hex>] [--from-file-viable <json>]
+    python3 scripts/checks/feed-audit.py --fixture <envelope.json> | --controls [--strict] [--out <txt>]
+
+`--url` **no tiene valor por defecto**: la base se pasa explícita o se auditan
+bytes guardados, y `--expect-sha256` aborta con exit 2 si los bytes no son los
+que se creía medir. Un instrumento no adivina a qué host está midiendo.
 
 ### Reconciliación con la corrida v1 del 2026-10-21T05:55:29Z (8 violaciones)
 
@@ -57,6 +74,10 @@ dos decisiones del dueño del instrumento, y cada cambio tiene su razón.
 | — | **G11** nocional reproducible: 0/200 | nuevo: `token_prices_usd` llega sin instante de precio, así que el nocional cambia entre lecturas |
 | — | **G12** el orden publicado: violación | nuevo y medido: el orden sólo lo explica `COALESCE(net_expected, expected)` (n=30), no el campo que se publica |
 | — | **G13** traza aritmética del net: OK 13/13 | nuevo: los 13 nets publicados salen de su propio breakdown; los suelos por fila van de **93 a 1248 bps** (el suelo global de 93 bps es decorativo) |
+| — | **G14** caso símbolo/precio: 167/200 literales | nuevo, pedido explícito: `token_prices_usd` va por símbolo y su caso no siempre coincide con `token_in_info.symbol`; un consumidor sensible a mayúsculas obtiene nocional nulo y cobertura falsa. Cuenta coincidencia literal vs sólo-normalizando (10) |
+| — | **G15** cuarentena >5 % no ordena: 12 fallos | nuevo, de (b): las filas por encima del 5 % no deben ordenar y hoy 12 siguen llevando campo ordenable |
+| G03 «net de coste completo publicable» | **G03** = `economics` persistido (a0), y **G02** = `net_profit_usd` **nuevo** | el net legacy (`net_expected_profit_usd`, gas-only) sale de las puertas y queda como **diagnóstico impreso**, jamás criterio de PASS |
+| — | **G02 «campo ausente ⇒ NOT COMPUTED»** | pedido explícito: si la forma nueva no aparece en el payload, la puerta se declara NOT COMPUTED y lo dice; nunca se pone verde midiendo el campo legacy. Por eso el control negativo espera `{G02}` en NOT COMPUTED y 8 violaciones |
 
 El control negativo sigue en **rojo**, que es lo que debe probar.
 
@@ -84,3 +105,16 @@ umbral sólo cambia con una versión nueva del archivo.
   sigue abierta y no se rellena con una hipótesis.
 - El UA de navegador en las lecturas de red es condición de acceso: el WAF del
   edge responde 403 al UA por defecto de `urllib` (medido).
+- **Trampa de caso, medida:** el precio se busca por símbolo y la clave no
+  coincide literalmente con `token_in_info.symbol` en **167/200** filas de esta
+  captura (33 fallan; 10 sólo normalizando). Un instrumento que normalice sin
+  decirlo mide una cobertura que el consumidor real no tiene: por eso G14 exige
+  coincidencia literal o una declaración de normalización en el payload.
+
+## Trazabilidad de mi propia numeración
+
+Las cifras de este documento están atadas a **su captura**. Dos lecturas a 50 s
+de distancia cambian `simulated_*` en 13/13 filas mientras `bruto` y
+`net_expected_profit_usd` no cambian: el campo estable es el equivocado. Por eso
+la fixture `negative.json` está congelada con su sha256 y toda cifra publicada
+desde aquí tiene que declarar su instante.

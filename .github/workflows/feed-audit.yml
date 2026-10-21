@@ -4,9 +4,14 @@
 # mide, y sin control negativo no se sabe si puede ponerse rojo. Este job corre
 # los tres controles OFFLINE (sin red, sobre fixtures congeladas):
 #
-#   positive.json -> exit 0   (las puertas pueden cumplirse todas a la vez)
-#   negative.json -> exit 1   (los bytes del 2026-10-21 producen violaciones)
+#   positive.json -> exit 0, NOT COMPUTED = ninguna
+#   negative.json -> exit 1, NOT COMPUTED = {G02} exactamente, 8 puertas en VIOLACION
 #   empty.json    -> exit 2   (población 0 => NOT COMPUTED: el vacío nunca es OK)
+#
+# `--strict` es OBLIGATORIO dentro de --controls (población conocida y
+# congelada: una puerta NOT COMPUTED ahí no puede pasar por buena, que es el
+# verde por proximidad con forma de ausencia) y queda OPCIONAL sobre el wire,
+# donde la población la dicta el despliegue y no el instrumento.
 #
 # El instrumento NO viaja con el artefacto que mide (decisión del dueño,
 # 2026-10-21): vive en su rama y su PR propios, y no es dependencia de #997.
@@ -47,14 +52,21 @@ jobs:
           rc=$?
           echo "exit del control negativo: $rc"
           cat feed-audit-negative.txt
-          # El control negativo DEBE estar rojo: exit 1.
+          # El control negativo DEBE estar rojo: exit 1, y G02 (campo nuevo
+          # ausente en el payload) no puede convertirse en verde midiendo el legacy.
           if [ "$rc" -ne 1 ]; then
             echo "::error::el control negativo no dio exit 1 (dio $rc): el instrumento no puede ponerse rojo"
             exit 1
           fi
-          # Y el rojo tiene que estar donde se declara, no en otro sitio.
-          grep -E "G02|G03|G04|G08|G10|G11|G12" feed-audit-negative.txt | grep -c "VIOLACION" | \
-            awk '{ if ($1 != 7) { print "::error::se esperaban 7 puertas en VIOLACION, hay " $1; exit 1 } }'
+          # Y el rojo tiene que estar EXACTAMENTE donde se declara: ni una puerta
+          # de más (ajuste para verde) ni una de menos (control que deja de medir).
+          esperadas="G03 G04 G08 G10 G11 G12 G14 G15"
+          obtenidas=$(grep -E "^  G[0-9]+ .*VIOLACION" feed-audit-negative.txt | awk '{print $1}' | sort | tr '\n' ' ' | sed 's/ *$//')
+          echo "puertas en VIOLACION: $obtenidas"
+          if [ "$obtenidas" != "G03 G04 G08 G10 G11 G12 G14 G15" ]; then
+            echo "::error::las puertas en VIOLACION no son las declaradas ($esperadas): $obtenidas"
+            exit 1
+          fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:
