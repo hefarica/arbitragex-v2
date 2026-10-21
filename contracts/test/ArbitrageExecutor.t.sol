@@ -1070,9 +1070,7 @@ contract ArbitrageExecutorTest is Test {
         feeToken.approve(address(executor), amountIn);
         // ATOMIC-CAUSE-01: 1% fee-on-transfer skims amountIn/100 on the pull, so the
         // observed credit is amountIn - fee vs. the expected amountIn.
-        vm.expectRevert(
-            abi.encodeWithSelector(FlashFundedPullMismatch.selector, amountIn - amountIn / 100, amountIn)
-        );
+        vm.expectRevert(abi.encodeWithSelector(FlashFundedPullMismatch.selector, amountIn - amountIn / 100, amountIn));
         executor.executeArbitrageFlashFunded(
             bytes32(0), address(feeToken), address(feeToken), amountIn, 0, routers, payloads
         );
@@ -1127,11 +1125,7 @@ contract ArbitrageExecutorTest is Test {
         // token left the executor at B + (amountIn+profit) - (amountIn+profit) - fee
         // (1% on the outbound return) — below B. Both values ride the revert.
         uint256 returned = amountIn + profit;
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                FlashFundedCapitalRetentionViolation.selector, B - returned / 100, B
-            )
-        );
+        vm.expectRevert(abi.encodeWithSelector(FlashFundedCapitalRetentionViolation.selector, B - returned / 100, B));
         executor.executeArbitrageFlashFunded(
             bytes32(0), address(outFee), address(outFee), amountIn, 10e18, routers, payloads
         );

@@ -378,9 +378,7 @@ contract FlashLoanRoundTripTest is Test {
         vm.prank(executorRole);
         // ATOMIC-CAUSE-01: the shortfall is named: available (amount + profit) vs.
         // owed (amount + premium).
-        vm.expectRevert(
-            abi.encodeWithSelector(FL_RepaymentShortfall.selector, amount + profit, amount + premium)
-        );
+        vm.expectRevert(abi.encodeWithSelector(FL_RepaymentShortfall.selector, amount + profit, amount + premium));
         fl.requestFlashLoan(address(token), amount, params);
 
         assertEq(token.balanceOf(address(aave)), LIQUIDITY, "aave liquidity intact after shortfall revert");

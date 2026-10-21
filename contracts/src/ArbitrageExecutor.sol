@@ -495,10 +495,7 @@ contract ArbitrageExecutor is
                 // real tokenOut shortfall, never on a supported route.
                 if (IERC20(tokenOut).balanceOf(address(this)) < tokenOutBefore) {
                     // ATOMIC-CAUSE-01: name the drained amount (observed vs. snapshot).
-                    revert TokenOutRetentionViolation(
-                        IERC20(tokenOut).balanceOf(address(this)),
-                        tokenOutBefore
-                    );
+                    revert TokenOutRetentionViolation(IERC20(tokenOut).balanceOf(address(this)), tokenOutBefore);
                 }
             }
         }

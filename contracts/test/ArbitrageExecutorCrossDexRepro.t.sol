@@ -452,11 +452,7 @@ contract ArbitrageExecutorCrossDexReproTest is Test {
         // `intermediate` and leg 1 pulled `intermediate + intermediate/100` (1% surcharge),
         // the executor holds B_out - intermediate/100 vs. its pre-route snapshot B_out.
         vm.prank(executorRole);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                TokenOutRetentionViolation.selector, B_out - intermediate / 100, B_out
-            )
-        );
+        vm.expectRevert(abi.encodeWithSelector(TokenOutRetentionViolation.selector, B_out - intermediate / 100, B_out));
         executor.executeArbitrage(bytes32(0), address(tokenIn), address(tokenOut), amountIn, 0, routers, payloads);
 
         // Atomic revert: B_out retained EXACTLY - no silent leak of pre-existing tokenOut.

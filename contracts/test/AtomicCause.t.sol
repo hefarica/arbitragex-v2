@@ -203,7 +203,9 @@ contract AC_MockAavePoolRT {
         uint256 amount,
         bytes calldata params,
         uint16 /*referralCode*/
-    ) external {
+    )
+        external
+    {
         require(_asset == address(asset), "wrong asset");
         asset.transfer(receiverAddress, amount);
         FlashLoanExecutor(receiverAddress).executeOperation(_asset, amount, premium, receiverAddress, params);
@@ -315,9 +317,7 @@ contract AtomicCauseTest is Test {
             )
         );
         vm.prank(executorRole);
-        executor.executeArbitrage(
-            bytes32(0), address(tokenA), address(tokenB), 1_000e18, 0, routers, payloads
-        );
+        executor.executeArbitrage(bytes32(0), address(tokenA), address(tokenB), 1_000e18, 0, routers, payloads);
     }
 
     // =====================================================================
@@ -370,8 +370,7 @@ contract AtomicCauseTest is Test {
         uint256 boost = 1; // realised profit: exactly 1 wei
         uint256 minProfit = 100e18; // operator floor
 
-        AC_EchoProfitRouter router =
-            new AC_EchoProfitRouter(address(tokenA), address(tokenA), amountIn, boost);
+        AC_EchoProfitRouter router = new AC_EchoProfitRouter(address(tokenA), address(tokenA), amountIn, boost);
         _approveRouter(address(router));
 
         tokenA.mint(address(executor), amountIn);
@@ -408,18 +407,10 @@ contract AtomicCauseTest is Test {
         _approveRouter(address(router));
 
         // expected credit = balBeforePull (0) + amountIn; observed = amountIn - fee.
-        vm.expectRevert(
-            abi.encodeWithSelector(FlashFundedPullMismatch.selector, amountIn - fee, 0 + amountIn)
-        );
+        vm.expectRevert(abi.encodeWithSelector(FlashFundedPullMismatch.selector, amountIn - fee, 0 + amountIn));
         vm.prank(executorRole);
         executor.executeArbitrageFlashFunded(
-            bytes32(0),
-            address(feeToken),
-            address(feeToken),
-            amountIn,
-            0,
-            _oneLeg(address(router)),
-            _onePayload()
+            bytes32(0), address(feeToken), address(feeToken), amountIn, 0, _oneLeg(address(router)), _onePayload()
         );
     }
 
@@ -464,18 +455,10 @@ contract AtomicCauseTest is Test {
         uint256 expectedAfter = capital + amountIn + push - returned - fee; // = 980e18
         assertEq(expectedAfter, 980e18, "arithmetic sanity");
 
-        vm.expectRevert(
-            abi.encodeWithSelector(FlashFundedCapitalRetentionViolation.selector, expectedAfter, capital)
-        );
+        vm.expectRevert(abi.encodeWithSelector(FlashFundedCapitalRetentionViolation.selector, expectedAfter, capital));
         vm.prank(executorRole);
         executor.executeArbitrageFlashFunded(
-            bytes32(0),
-            address(outToken),
-            address(outToken),
-            amountIn,
-            0,
-            _oneLeg(address(router)),
-            _onePayload()
+            bytes32(0), address(outToken), address(outToken), amountIn, 0, _oneLeg(address(router)), _onePayload()
         );
     }
 
@@ -516,13 +499,9 @@ contract AtomicCauseTest is Test {
         payloads[1] = abi.encodePacked(MOCK_SELECTOR);
 
         // available = bOut - drain; snapshotBefore = bOut.
-        vm.expectRevert(
-            abi.encodeWithSelector(AccountingDeltaUnderflow.selector, bOut - drain, bOut)
-        );
+        vm.expectRevert(abi.encodeWithSelector(AccountingDeltaUnderflow.selector, bOut - drain, bOut));
         vm.prank(executorRole);
-        executor.executeArbitrage(
-            bytes32(0), address(tokenA), address(tokenB), 1_000e18, 0, routers, payloads
-        );
+        executor.executeArbitrage(bytes32(0), address(tokenA), address(tokenB), 1_000e18, 0, routers, payloads);
     }
 
     // =====================================================================
@@ -572,13 +551,9 @@ contract AtomicCauseTest is Test {
         payloads[0] = abi.encodePacked(MOCK_SELECTOR);
         payloads[1] = abi.encodePacked(MOCK_SELECTOR);
 
-        vm.expectRevert(
-            abi.encodeWithSelector(TokenOutRetentionViolation.selector, expectedAfter, bOut)
-        );
+        vm.expectRevert(abi.encodeWithSelector(TokenOutRetentionViolation.selector, expectedAfter, bOut));
         vm.prank(executorRole);
-        executor.executeArbitrage(
-            bytes32(0), address(tokenA), address(tokenOut), 1_000e18, 0, routers, payloads
-        );
+        executor.executeArbitrage(bytes32(0), address(tokenA), address(tokenOut), 1_000e18, 0, routers, payloads);
     }
 
     // =====================================================================
@@ -621,9 +596,8 @@ contract AtomicCauseTest is Test {
         pool.fund(1_000e18);
 
         FlashLoanExecutor fleImpl = new FlashLoanExecutor();
-        bytes memory fleInit = abi.encodeWithSelector(
-            FlashLoanExecutor.initialize.selector, admin, address(pool), address(executor)
-        );
+        bytes memory fleInit =
+            abi.encodeWithSelector(FlashLoanExecutor.initialize.selector, admin, address(pool), address(executor));
         ERC1967Proxy fleProxy = new ERC1967Proxy(address(fleImpl), fleInit);
         FlashLoanExecutor fle = FlashLoanExecutor(payable(address(fleProxy)));
         fle.grantRole(fle.EXECUTOR_ROLE(), address(this));
@@ -685,9 +659,8 @@ contract AtomicCauseTest is Test {
         pool.fund(amount);
 
         FlashLoanExecutor fleImpl = new FlashLoanExecutor();
-        bytes memory fleInit = abi.encodeWithSelector(
-            FlashLoanExecutor.initialize.selector, admin, address(pool), address(executor)
-        );
+        bytes memory fleInit =
+            abi.encodeWithSelector(FlashLoanExecutor.initialize.selector, admin, address(pool), address(executor));
         ERC1967Proxy fleProxy = new ERC1967Proxy(address(fleImpl), fleInit);
         FlashLoanExecutor fle = FlashLoanExecutor(payable(address(fleProxy)));
         fle.grantRole(fle.EXECUTOR_ROLE(), address(this));
@@ -713,9 +686,7 @@ contract AtomicCauseTest is Test {
         );
 
         // FLE after the round trip: amount + 5; owed: amount + 10.
-        vm.expectRevert(
-            abi.encodeWithSelector(FL_RepaymentShortfall.selector, amount + boost, amount + premium)
-        );
+        vm.expectRevert(abi.encodeWithSelector(FL_RepaymentShortfall.selector, amount + boost, amount + premium));
         fle.requestFlashLoan(address(asset), amount, params);
 
         // Nothing reached the pool: repayment never happened, the whole tx
@@ -772,9 +743,7 @@ contract AtomicCauseTest is Test {
             "AccountingDeltaUnderflow(uint256,uint256)"
         );
         assertEq(
-            bytes4(keccak256("ETHRescueFailed(address,bytes)")),
-            bytes4(0x57b4b222),
-            "ETHRescueFailed(address,bytes)"
+            bytes4(keccak256("ETHRescueFailed(address,bytes)")), bytes4(0x57b4b222), "ETHRescueFailed(address,bytes)"
         );
         assertEq(
             bytes4(keccak256("FL_ArbitrageExecutionFailed(bytes)")),
