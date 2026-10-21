@@ -130,8 +130,19 @@ fn resolve_fork_block() -> Option<u64> {
 fn require_success(outcome: CallOutcome, label: &str) -> u64 {
     match outcome {
         CallOutcome::Success { gas_used, .. } => gas_used,
-        CallOutcome::Reverted { gas_used, reason } => {
-            panic!("{label} reverted on the fork (gas {gas_used}): {reason}")
+        // REVERT-TRACE-01: the frame names the failing contract + pc +
+        // opcode — include it in the panic so a fork regression points at
+        // the exact frame instead of an anonymous decoded string.
+        CallOutcome::Reverted {
+            gas_used,
+            reason,
+            frame,
+        } => {
+            let frame_note = frame
+                .as_ref()
+                .map(|f| format!(" [{}]", f.annotation()))
+                .unwrap_or_default();
+            panic!("{label} reverted on the fork (gas {gas_used}): {reason}{frame_note}")
         }
         CallOutcome::Halted { gas_used, reason } => {
             panic!("{label} halted on the fork (gas {gas_used}): {reason}")
