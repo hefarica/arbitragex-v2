@@ -39,7 +39,7 @@ const RESULT: TokenTopResponse = {
     {
       symbol: "WETH", address: "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
       tvl_usd: "1000000.00", tvl_24h_ago_usd: "900000.00", pool_count: 5,
-      safety_score: 80, validation_score: 75, final_status: "VERIFIED",
+      cache_score: 80, validation_score: 75, final_status: "VERIFIED",
       liquidity_usd: "500000.00", volume_24h_usd: "100000.00", vol_liq_ratio: 0.2,
       registry_verified: true, oldest_pool_age_hours: 5000, risk_level: "LOW",
       is_stablecoin: false, memecoin_heuristic: false,
@@ -48,7 +48,7 @@ const RESULT: TokenTopResponse = {
     {
       symbol: null, address: "0xdead",
       tvl_usd: "500.00", tvl_24h_ago_usd: null, pool_count: 1,
-      safety_score: null, validation_score: null, final_status: null,
+      cache_score: null, validation_score: null, final_status: null,
       liquidity_usd: null, volume_24h_usd: null, vol_liq_ratio: null,
       registry_verified: null, oldest_pool_age_hours: 1, risk_level: null,
       is_stablecoin: false, memecoin_heuristic: true,

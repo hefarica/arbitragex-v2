@@ -516,7 +516,7 @@ export function TopPresetMenu({
                       <TableCell className="text-right tabular-nums">{r.tvl_usd}</TableCell>
                       <TableCell className="text-right tabular-nums">{r.tvl_24h_ago_usd ?? DASH}</TableCell>
                       <TableCell className="text-right tabular-nums">{r.pool_count}</TableCell>
-                      <TableCell className="text-right tabular-nums">{r.safety_score ?? DASH}</TableCell>
+                      <TableCell className="text-right tabular-nums">{r.validation_score ?? DASH}</TableCell>
                       <TableCell>{r.final_status ?? DASH}</TableCell>
                       <TableCell className="text-right tabular-nums">
                         {r.vol_liq_ratio === null ? DASH : r.vol_liq_ratio.toFixed(2)}

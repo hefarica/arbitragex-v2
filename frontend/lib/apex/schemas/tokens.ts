@@ -146,7 +146,7 @@ export const TopTokenRowSchema = z.object({
   tvl_usd: z.string(),
   tvl_24h_ago_usd: z.string().nullable(),
   pool_count: z.number().int().min(0),
-  safety_score: z.number().nullable(),
+  cache_score: z.number().nullable(),
   validation_score: z.number().nullable(),
   final_status: z.string().nullable(),
   liquidity_usd: z.string().nullable(),

@@ -99,7 +99,7 @@ function row(over: Partial<TopTokenRow> & { address: string }): TopTokenRow {
     tvl_usd: "1000000.00",
     tvl_24h_ago_usd: "900000.00",
     pool_count: 3,
-    safety_score: 80,
+    cache_score: 80,
     validation_score: 75,
     final_status: "VERIFIED",
     liquidity_usd: "500000.00",
@@ -206,6 +206,18 @@ describe("evaluateVolumeGate — §2(i)(ii) volume freshness (2026-10-21)", () =
   it("a fresh population makes the volume basis MEASURED and reports its size", () => {
     const g = evaluateVolumeGate({ rankBy: "volume_24h", columnPresent: true, probeFailed: false, orderable: 42 });
     expect(g).toEqual({ selection_state: "MEASURED", selection_reason: null, volume_orderable: 42 });
+  });
+});
+
+describe("min_safety_score — one instrument, one threshold (D-SEL-6, decision 7)", () => {
+  it("the threshold applies to validations.score, not to the cache score", () => {
+    const onlyCache = agg({ safety: 95, val: { ...agg().val!, score: 30 } });
+    expect(evaluateRugRules(onlyCache, new Set<RugRuleId>(["min_safety_score"])).failed)
+      .toEqual(["min_safety_score"]);
+
+    const onlyValidations = agg({ safety: 10, val: { ...agg().val!, score: 90 } });
+    expect(evaluateRugRules(onlyValidations, new Set<RugRuleId>(["min_safety_score"])).failed)
+      .toEqual([]);
   });
 });
 

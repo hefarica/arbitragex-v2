@@ -124,7 +124,7 @@ export interface TopTokenRow {
   tvl_usd: string;
   tvl_24h_ago_usd: string | null;
   pool_count: number;
-  safety_score: number | null;
+  cache_score: number | null;
   validation_score: number | null;
   final_status: string | null;
   liquidity_usd: string | null;
@@ -311,8 +311,12 @@ export function evaluateRugRules(
   const unverified: RugRuleId[] = [];
   const v = agg.val;
 
+  // D-SEL-6 (decision 7, 2026-10-21): two instruments, two fields. The
+  // threshold applies ONLY to validations.score; token_safety_cache.safety_score
+  // is published as `cache_score` and never participates. Blending them under
+  // one threshold made the rule mean neither instrument.
   if (rules.has("min_safety_score")) {
-    const s = agg.safety ?? v?.score ?? null;
+    const s = v?.score ?? null;
     if (s === null) unverified.push("min_safety_score");
     else if (s < 40) failed.push("min_safety_score");
   }
@@ -640,7 +644,7 @@ export function buildTokenTopRouter(deps: Deps): Router {
           tvl_usd: a.tvl_current.toFixed(2),
           tvl_24h_ago_usd: a.tvl_24h === null ? null : a.tvl_24h.toFixed(2),
           pool_count: a.pool_count,
-          safety_score: a.safety ?? a.val?.score ?? null,
+          cache_score: a.safety,
           validation_score: a.val?.score ?? null,
           final_status: a.val?.final_status ?? null,
           liquidity_usd: liq === null ? null : liq.toFixed(2),
