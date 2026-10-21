@@ -202,6 +202,62 @@ export function rankNote(rankBy: RankBy): string {
     : "orden = valor en pools × torre de precios (flujo de capital, no market cap)";
 }
 
+/** Served note for a NOT COMPUTED selection: names the basis and the cause. */
+export function selectionNote(rankBy: RankBy, gate: VolumeGate): string {
+  const cause =
+    gate.selection_reason === "volume_as_of_absent"
+      ? "token_validations.volume_as_of no existe: no hay edad de snapshot de volumen"
+      : gate.selection_reason === "no_fresh_volume_snapshot"
+        ? `0 filas con volumen y volume_as_of <= ${VOLUME_SNAPSHOT_MAX_AGE_HOURS} h`
+        : gate.selection_reason === "volume_as_of_probe_failed"
+          ? "no se pudo comprobar volume_as_of"
+          : "no computable";
+  return `selection = NOT COMPUTED (${cause}); no se sustituye por TVL (${rankNote(rankBy)})`;
+}
+
+/**
+ * Freshness gate for the volume basis (contract §2(i)(ii), ratified 2026-10-21).
+ *
+ * `volume_24h_usd` lives in `token_validations` but has NO snapshot timestamp
+ * there: `validated_at` is the validator's run, not the DEX Screener snapshot.
+ * Ordering by a volume of unknown age is not a ranking, it is an appearance of
+ * one. Until `volume_as_of` exists (PR #1004) and is populated, `rank_by=
+ * volume_24h` answers NOT COMPUTED — and it NEVER falls back to TVL in
+ * silence: substituting the definition would hide the gap.
+ */
+export const VOLUME_SNAPSHOT_MAX_AGE_HOURS = 6;
+
+export type SelectionState = "MEASURED" | "NOT COMPUTED";
+
+export interface VolumeGateInput {
+  rankBy: RankBy;
+  columnPresent: boolean;
+  probeFailed: boolean;
+  orderable: number;
+}
+
+export interface VolumeGate {
+  selection_state: SelectionState;
+  selection_reason: string | null;
+  volume_orderable: number;
+}
+
+export function evaluateVolumeGate(i: VolumeGateInput): VolumeGate {
+  if (i.rankBy !== "volume_24h") {
+    return { selection_state: "MEASURED", selection_reason: null, volume_orderable: i.orderable };
+  }
+  if (i.probeFailed) {
+    return { selection_state: "NOT COMPUTED", selection_reason: "volume_as_of_probe_failed", volume_orderable: 0 };
+  }
+  if (!i.columnPresent) {
+    return { selection_state: "NOT COMPUTED", selection_reason: "volume_as_of_absent", volume_orderable: 0 };
+  }
+  if (i.orderable === 0) {
+    return { selection_state: "NOT COMPUTED", selection_reason: "no_fresh_volume_snapshot", volume_orderable: 0 };
+  }
+  return { selection_state: "MEASURED", selection_reason: null, volume_orderable: i.orderable };
+}
+
 /**
  * Pure evaluator — exported for direct testing. A rule with a NULL metric is
  * `unverified`, never a pass/fail fabrication (R8).
@@ -262,6 +318,39 @@ export function evaluateRugRules(
   return { failed, unverified };
 }
 
+/**
+ * Detect `token_validations.volume_as_of` the way the SQL check does
+ * (information_schema), never with a try/catch that reports green: a failed
+ * probe is its own cause, distinct from "column absent".
+ */
+async function probeVolumeAsOf(
+  pool: Pool,
+  chainId: number,
+): Promise<{ columnPresent: boolean; probeFailed: boolean; orderable: number }> {
+  try {
+    const col = await pool.query<{ present: number }>(
+      `SELECT count(*)::int AS present
+         FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'token_validations'
+          AND column_name = 'volume_as_of'`,
+    );
+    const present = Number(col.rows[0]?.present ?? 0) > 0;
+    if (!present) return { columnPresent: false, probeFailed: false, orderable: 0 };
+    const q = await pool.query<{ orderable: number }>(
+      `SELECT count(*)::int AS orderable
+         FROM token_validations
+        WHERE chain_id = $1
+          AND volume_24h_usd IS NOT NULL AND volume_24h_usd > 0
+          AND volume_as_of IS NOT NULL
+          AND volume_as_of >= NOW() - INTERVAL '6 hours'`,
+      [chainId],
+    );
+    return { columnPresent: true, probeFailed: false, orderable: Number(q.rows[0]?.orderable ?? 0) };
+  } catch {
+    return { columnPresent: false, probeFailed: true, orderable: 0 };
+  }
+}
+
 interface Deps {
   pool: Pool | null;
   redis: Redis;
@@ -302,7 +391,28 @@ export function buildTokenTopRouter(deps: Deps): Router {
         .filter((s) => validRuleIds.has(s)),
     ) as Set<RugRuleId>;
 
+    const volumeProbe = await probeVolumeAsOf(deps.pool, chainId);
+    const gate = evaluateVolumeGate({ rankBy, ...volumeProbe });
+
     try {
+      if (gate.selection_state === "NOT COMPUTED") {
+        res.status(200).json({
+          chain_id: chainId,
+          window,
+          limit,
+          ranked: [],
+          excluded: {},
+          price_coverage: { symbols_priced: 0, symbols_total: 0 },
+          selection_state: gate.selection_state,
+          selection_reason: gate.selection_reason,
+          volume_orderable: gate.volume_orderable,
+          window_note: selectionNote(rankBy, gate),
+          rules_applied: [...rules],
+          rule_catalog: RUG_RULES,
+        });
+        return;
+      }
+
       // 1) Active pools + token identity for the chain.
       const poolsQ = await deps.pool.query<PoolRow>(
         `SELECT p.id, p.created_at,
@@ -320,6 +430,9 @@ export function buildTokenTopRouter(deps: Deps): Router {
         res.status(200).json({
           chain_id: chainId, window, limit, ranked: [], excluded: {},
           price_coverage: { symbols_priced: 0, symbols_total: 0 },
+          selection_state: "NOT COMPUTED",
+          selection_reason: "no_active_pools",
+          volume_orderable: gate.volume_orderable,
           window_note: `sin pools activos para chain ${chainId}: no hay universo que ordenar (${rankNote(rankBy)})`,
           rules_applied: [...rules],
         });
@@ -517,6 +630,9 @@ export function buildTokenTopRouter(deps: Deps): Router {
           symbols_priced: distinctPriced,
           symbols_total: aggByAddr.size,
         },
+        selection_state: gate.selection_state,
+        selection_reason: gate.selection_reason,
+        volume_orderable: gate.volume_orderable,
         // R8 honesty: the served ordering must name its own basis. `window=24h`
         // values OLD reserves at CURRENT prices (capital flow, not historical
         // market cap); `rank_by=volume_24h` orders by measured traded volume.

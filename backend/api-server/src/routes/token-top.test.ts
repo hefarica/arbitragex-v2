@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-  evaluateRugRules, RUG_RULES, rankNote, rankValueOf, screenAndRank,
-  IMPLAUSIBLE_TVL_USD, type RankBy, type RugRuleId, type TopTokenRow,
+  evaluateRugRules, evaluateVolumeGate, RUG_RULES, rankNote, rankValueOf,
+  screenAndRank, selectionNote, IMPLAUSIBLE_TVL_USD,
+  type RankBy, type RugRuleId, type TopTokenRow,
 } from "./token-top.js";
 
 const ALL = new Set<RugRuleId>(RUG_RULES.map((r) => r.id));
@@ -174,5 +175,36 @@ describe("screenAndRank — basis de ranking (D5, 2026-10-21)", () => {
   it("names its own basis in the served note", () => {
     expect(rankNote("volume_24h")).toContain("volumen 24h");
     expect(rankNote("tvl")).toContain("valor en pools");
+  });
+});
+
+describe("evaluateVolumeGate — §2(i)(ii) volume freshness (2026-10-21)", () => {
+  it("volume basis without the column is NOT COMPUTED with its own cause", () => {
+    const g = evaluateVolumeGate({ rankBy: "volume_24h", columnPresent: false, probeFailed: false, orderable: 0 });
+    expect(g.selection_state).toBe("NOT COMPUTED");
+    expect(g.selection_reason).toBe("volume_as_of_absent");
+    expect(selectionNote("volume_24h", g)).toContain("volume_as_of no existe");
+  });
+
+  it("volume basis with the column but zero fresh rows is NOT COMPUTED, not 0/0 green", () => {
+    const g = evaluateVolumeGate({ rankBy: "volume_24h", columnPresent: true, probeFailed: false, orderable: 0 });
+    expect(g.selection_state).toBe("NOT COMPUTED");
+    expect(g.selection_reason).toBe("no_fresh_volume_snapshot");
+  });
+
+  it("a probe failure is its own cause, never a silent pass", () => {
+    const g = evaluateVolumeGate({ rankBy: "volume_24h", columnPresent: true, probeFailed: true, orderable: 9 });
+    expect(g.selection_state).toBe("NOT COMPUTED");
+    expect(g.selection_reason).toBe("volume_as_of_probe_failed");
+  });
+
+  it("the tvl basis is out of scope of this gate", () => {
+    const g = evaluateVolumeGate({ rankBy: "tvl", columnPresent: false, probeFailed: false, orderable: 0 });
+    expect(g.selection_state).toBe("MEASURED");
+  });
+
+  it("a fresh population makes the volume basis MEASURED and reports its size", () => {
+    const g = evaluateVolumeGate({ rankBy: "volume_24h", columnPresent: true, probeFailed: false, orderable: 42 });
+    expect(g).toEqual({ selection_state: "MEASURED", selection_reason: null, volume_orderable: 42 });
   });
 });

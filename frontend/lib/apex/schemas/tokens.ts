@@ -170,6 +170,11 @@ export const TokenTopResponseSchema = z.object({
   excluded: z.record(z.string(), z.number().int()),
   price_coverage: z.object({ symbols_priced: z.number().int(), symbols_total: z.number().int() }),
   window_note: z.string().nullable(),
+  // Contract §2 (ratified 2026-10-21): the served ordering names whether it is
+  // computable at all. NOT COMPUTED never carries a substituted basis.
+  selection_state: z.enum(["MEASURED", "NOT COMPUTED"]),
+  selection_reason: z.string().nullable(),
+  volume_orderable: z.number().int().min(0),
   rules_applied: z.array(RugRuleIdSchema),
   rule_catalog: z.array(z.object({ id: RugRuleIdSchema, label: z.string() }).strict()),
 }).strict();

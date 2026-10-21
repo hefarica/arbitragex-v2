@@ -68,9 +68,19 @@ const SAFETY = [
   { token_address: WEIRD, safety_score: 55 },
 ];
 
-function fakePool() {
+function fakePool(opts: { volumeAsOf?: "present" | "absent" | "probe_fails" } = {}) {
+  const mode = opts.volumeAsOf ?? "present";
   return {
     query: vi.fn(async (sql: string) => {
+      // Contract §2(i)(ii): the gate probes information_schema, like S09 does.
+      if (sql.includes("information_schema.columns")) {
+        if (mode === "probe_fails") throw new Error("relation pg_catalog is on fire");
+        return { rows: [{ present: mode === "present" ? 1 : 0 }], rowCount: 1 };
+      }
+      if (sql.includes("AS orderable")) {
+        // 3 validation rows carry a volume with volume_as_of <= 6 h.
+        return { rows: [{ orderable: 3 }], rowCount: 1 };
+      }
       if (sql.includes("FROM pools p")) return { rows: POOLS, rowCount: POOLS.length };
       if (sql.includes("unnest($1::uuid[])")) {
         const rows = [...RESERVES.entries()].map(([pool_id, r]) => ({ pool_id, ...r }));
@@ -83,11 +93,11 @@ function fakePool() {
   };
 }
 
-function app(): Express {
+function app(opts: { volumeAsOf?: "present" | "absent" | "probe_fails" } = {}): Express {
   const a = express();
   a.use(
     buildTokenTopRouter({
-      pool: fakePool() as never,
+      pool: fakePool(opts) as never,
       redis: { hgetall: async () => ({ WETH: "2500", USDC: "1", TOKA: "2", WEIRD: "300" }) } as never,
       logger: { warn: vi.fn(), info: vi.fn() },
     }),
@@ -95,7 +105,8 @@ function app(): Express {
   return a;
 }
 
-const get = (qs: string) => request(app()).get(`/api/tokens/top?${qs}`);
+const get = (qs: string, opts: { volumeAsOf?: "present" | "absent" | "probe_fails" } = {}) =>
+  request(app(opts)).get(`/api/tokens/top?${qs}`);
 
 describe("GET /api/tokens/top — rank_by (D5)", () => {
   it("orders by measured 24h volume and counts the NULL-volume token", async () => {
@@ -116,6 +127,28 @@ describe("GET /api/tokens/top — rank_by (D5)", () => {
     expect(Number(wethUsdc.tvl_usd)).toBeCloseTo(250_500, 0);
     expect(res.body.ranked.some((r: { symbol: string }) => r.symbol === "WEIRD")).toBe(false);
     expect(res.body.excluded["implausible_tvl"]).toBe(1);
+  });
+
+  it("contract §2: volume basis without a fresh snapshot is NOT COMPUTED, never a TVL fallback", async () => {
+    const absent = await get("chain_id=1&limit=100&rank_by=volume_24h", { volumeAsOf: "absent" });
+    expect(absent.status).toBe(200);
+    expect(absent.body.selection_state).toBe("NOT COMPUTED");
+    expect(absent.body.selection_reason).toBe("volume_as_of_absent");
+    expect(absent.body.ranked).toEqual([]);
+    expect(absent.body.window_note).toContain("NOT COMPUTED");
+    expect(absent.body.window_note).toContain("no se sustituye por TVL");
+
+    const failed = await get("chain_id=1&limit=100&rank_by=volume_24h", { volumeAsOf: "probe_fails" });
+    expect(failed.body.selection_state).toBe("NOT COMPUTED");
+    expect(failed.body.selection_reason).toBe("volume_as_of_probe_failed");
+    expect(failed.body.ranked).toEqual([]);
+  });
+
+  it("a tvl-based request is not blocked by the volume gate and names selection_state", async () => {
+    const res = await get("chain_id=1&limit=100", { volumeAsOf: "absent" });
+    expect(res.status).toBe(200);
+    expect(res.body.selection_state).toBe("MEASURED");
+    expect(res.body.ranked.length).toBeGreaterThan(0);
   });
 
   it("rejects a bogus rank_by instead of silently falling back", async () => {
