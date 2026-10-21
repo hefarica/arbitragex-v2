@@ -1,0 +1,63 @@
+# feed-audit — controles del instrumento de auditoría del wire de oportunidades.
+#
+# POR QUÉ EXISTE: un instrumento de medición sin control positivo no se sabe si
+# mide, y sin control negativo no se sabe si puede ponerse rojo. Este job corre
+# los tres controles OFFLINE (sin red, sobre fixtures congeladas):
+#
+#   positive.json -> exit 0   (las puertas pueden cumplirse todas a la vez)
+#   negative.json -> exit 1   (los bytes del 2026-10-21 producen violaciones)
+#   empty.json    -> exit 2   (población 0 => NOT COMPUTED: el vacío nunca es OK)
+#
+# El instrumento NO viaja con el artefacto que mide (decisión del dueño,
+# 2026-10-21): vive en su rama y su PR propios, y no es dependencia de #997.
+#
+# ALCANCE: sólo se dispara con cambios en estos paths, así que NO bloquea merges
+# de otros caminos. Nace sin los dos controles no podría exigirse nada; hoy los
+# tres existen (scripts/fixtures/feed-audit/PROVENANCE.md).
+name: feed-audit
+
+on:
+  pull_request:
+    paths:
+      - "scripts/checks/feed-audit.py"
+      - "scripts/fixtures/feed-audit/**"
+      - ".github/workflows/feed-audit.yml"
+  push:
+    branches: [main]
+    paths:
+      - "scripts/checks/feed-audit.py"
+      - "scripts/fixtures/feed-audit/**"
+  workflow_dispatch:
+
+jobs:
+  controls:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Controles positivos/negativos/vacío (offline, sin red)
+        run: python3 scripts/checks/feed-audit.py --controls
+      - name: Informe del control negativo (para leer el rojo en el log)
+        if: always()
+        run: |
+          set +e
+          python3 scripts/checks/feed-audit.py --fixture scripts/fixtures/feed-audit/negative.json --out feed-audit-negative.txt
+          rc=$?
+          echo "exit del control negativo: $rc"
+          cat feed-audit-negative.txt
+          # El control negativo DEBE estar rojo: exit 1.
+          if [ "$rc" -ne 1 ]; then
+            echo "::error::el control negativo no dio exit 1 (dio $rc): el instrumento no puede ponerse rojo"
+            exit 1
+          fi
+          # Y el rojo tiene que estar donde se declara, no en otro sitio.
+          grep -E "G02|G03|G04|G08|G10|G11|G12" feed-audit-negative.txt | grep -c "VIOLACION" | \
+            awk '{ if ($1 != 7) { print "::error::se esperaban 7 puertas en VIOLACION, hay " $1; exit 1 } }'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: feed-audit-negative-report
+          path: feed-audit-negative.txt
+          if-no-files-found: warn
