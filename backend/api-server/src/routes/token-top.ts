@@ -23,7 +23,32 @@ import { Router, type Request, type Response } from "express";
 import type { Pool } from "pg";
 import type { Redis } from "ioredis";
 
-export const TOKEN_PRICES_KEY = "arbx:token_prices:1";
+/**
+ * Price-tower key per chain (decision 5, 2026-10-21). The hash is
+ * `arbx:token_prices:<chain_id>` — the same naming prices-stream.ts,
+ * prices-live.ts and opportunities-live.ts already use; this route was the one
+ * that pinned chain 1 for every chain.
+ */
+export function tokenPricesKey(chainId: number): string {
+  return `arbx:token_prices:${chainId}`;
+}
+
+/**
+ * Chains whose tower is proven populated. Chain != 1 answers NOT COMPUTED
+ * (`price_tower_not_parameterized`) instead of valuing tokens with chain-1
+ * prices: a price from another chain is not an incomplete datum, it is a false
+ * one. The list widens only when S10 proves the key exists for that chain.
+ */
+export const PRICE_TOWER_PROVEN_CHAINS: readonly number[] = [1];
+
+export function evaluateChainGate(chainId: number): {
+  selection_state: SelectionState;
+  selection_reason: string | null;
+} {
+  return PRICE_TOWER_PROVEN_CHAINS.includes(chainId)
+    ? { selection_state: "MEASURED", selection_reason: null }
+    : { selection_state: "NOT COMPUTED", selection_reason: "price_tower_not_parameterized" };
+}
 
 export const TOP_LIMITS = [20, 30, 40, 100] as const;
 export type TopLimit = (typeof TOP_LIMITS)[number];
@@ -452,6 +477,29 @@ export function buildTokenTopRouter(deps: Deps): Router {
         .filter((s) => validRuleIds.has(s)),
     ) as Set<RugRuleId>;
 
+    const chainGate = evaluateChainGate(chainId);
+    if (chainGate.selection_state === "NOT COMPUTED") {
+      res.status(200).json({
+        chain_id: chainId,
+        window,
+        limit,
+        ranked: [],
+        excluded: {},
+        price_coverage: { symbols_priced: 0, symbols_total: 0 },
+        selection_state: chainGate.selection_state,
+        selection_reason: chainGate.selection_reason,
+        volume_orderable: 0,
+        save_gate: { allowed: false, reasons: ["selection_not_computed"] },
+        rule_population: {},
+        window_note:
+          `selection = NOT COMPUTED (torre de precios no parametrizada para chain ${chainId}: ` +
+          `no se valora con precios de chain 1)`,
+        rules_applied: [...rules],
+        rule_catalog: RUG_RULES,
+      });
+      return;
+    }
+
     const volumeProbe = await probeVolumeAsOf(deps.pool, chainId);
     const gate = evaluateVolumeGate({ rankBy, ...volumeProbe });
 
@@ -546,10 +594,31 @@ export function buildTokenTopRouter(deps: Deps): Router {
 
       // 3) Sovereign price tower (symbol → USD).
       let prices: Record<string, string> = {};
+      let towerFailed = false;
       try {
-        prices = await deps.redis.hgetall(TOKEN_PRICES_KEY);
+        prices = await deps.redis.hgetall(tokenPricesKey(chainId));
       } catch {
-        // no tower = no ranking possible; honest empty with reason
+        towerFailed = true;
+      }
+      if (!towerFailed && Object.keys(prices).length === 0) {
+        // An empty tower is not an empty ranking: it is a missing measurement.
+        res.status(200).json({
+          chain_id: chainId,
+          window,
+          limit,
+          ranked: [],
+          excluded: {},
+          price_coverage: { symbols_priced: 0, symbols_total: 0 },
+          selection_state: "NOT COMPUTED",
+          selection_reason: "price_tower_empty",
+          volume_orderable: gate.volume_orderable,
+          save_gate: { allowed: false, reasons: ["selection_not_computed"] },
+          rule_population: {},
+          window_note: `selection = NOT COMPUTED (torre ${tokenPricesKey(chainId)} vacía o ausente): sin precios no hay valoración`,
+          rules_applied: [...rules],
+          rule_catalog: RUG_RULES,
+        });
+        return;
       }
       const priceOf = (sym: string | null): number | null => {
         if (!sym) return null;

@@ -100,20 +100,27 @@ function fakePool(opts: { volumeAsOf?: "present" | "absent" | "probe_fails" } = 
   };
 }
 
-function app(opts: { volumeAsOf?: "present" | "absent" | "probe_fails" } = {}): Express {
+function app(opts: {
+  volumeAsOf?: "present" | "absent" | "probe_fails";
+  prices?: Record<string, string>;
+} = {}): Express {
   const a = express();
+  const hgetall = vi.fn(async (_key: string) =>
+    opts.prices ?? { WETH: "2500", USDC: "1", TOKA: "2", WEIRD: "300", NOLIQ: "7" });
   a.use(
     buildTokenTopRouter({
       pool: fakePool(opts) as never,
-      redis: { hgetall: async () => ({ WETH: "2500", USDC: "1", TOKA: "2", WEIRD: "300", NOLIQ: "7" }) } as never,
+      redis: { hgetall } as never,
       logger: { warn: vi.fn(), info: vi.fn() },
     }),
   );
   return a;
 }
 
-const get = (qs: string, opts: { volumeAsOf?: "present" | "absent" | "probe_fails" } = {}) =>
-  request(app(opts)).get(`/api/tokens/top?${qs}`);
+const get = (
+  qs: string,
+  opts: { volumeAsOf?: "present" | "absent" | "probe_fails"; prices?: Record<string, string> } = {},
+) => request(app(opts)).get(`/api/tokens/top?${qs}`);
 
 describe("GET /api/tokens/top — rank_by (D5)", () => {
   it("orders by measured 24h volume and counts the NULL-volume token", async () => {
@@ -186,6 +193,24 @@ describe("GET /api/tokens/top — rank_by (D5)", () => {
     expect(res.body.ranked.some((r: { symbol: string }) => r.symbol === "NOLIQ")).toBe(false);
     expect(res.body.excluded["no_reserve"]).toBeGreaterThanOrEqual(1);
     for (const r of res.body.ranked) expect(r.tvl_usd).not.toBe("0.00");
+  });
+
+  it("decision 5: chain != 1 is NOT COMPUTED with price_tower_not_parameterized (no chain-1 prices)", async () => {
+    const res = await get("chain_id=42161&limit=100");
+    expect(res.status).toBe(200);
+    expect(res.body.selection_state).toBe("NOT COMPUTED");
+    expect(res.body.selection_reason).toBe("price_tower_not_parameterized");
+    expect(res.body.ranked).toEqual([]);
+    expect(res.body.save_gate.allowed).toBe(false);
+    expect(res.body.window_note).toContain("no se valora con precios de chain 1");
+  });
+
+  it("decision 5: an empty tower is a missing measurement, not an empty ranking", async () => {
+    const res = await get("chain_id=1&limit=100", { prices: {} });
+    expect(res.status).toBe(200);
+    expect(res.body.selection_state).toBe("NOT COMPUTED");
+    expect(res.body.selection_reason).toBe("price_tower_empty");
+    expect(res.body.ranked).toEqual([]);
   });
 
   it("rejects a bogus rank_by instead of silently falling back", async () => {

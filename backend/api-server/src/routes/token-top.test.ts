@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-  computeSaveGate, evaluateRugRules, evaluateVolumeGate, RUG_RULES, rankNote,
-  rankValueOf, screenAndRank, selectionNote, IMPLAUSIBLE_TVL_USD,
+  computeSaveGate, evaluateChainGate, evaluateRugRules, evaluateVolumeGate,
+  RUG_RULES, rankNote, rankValueOf, screenAndRank, selectionNote,
+  tokenPricesKey, IMPLAUSIBLE_TVL_USD,
   type RankBy, type RugRuleId, type TopTokenRow,
 } from "./token-top.js";
 
@@ -292,5 +293,20 @@ describe("computeSaveGate — write lock (decision 3, 2026-10-21)", () => {
     });
     expect(g.allowed).toBe(false);
     expect(g.reasons).toEqual(["no_verified_rule_population"]);
+  });
+});
+
+describe("price tower per chain — §6 (decision 5, 2026-10-21)", () => {
+  it("builds the key from the chain, never a literal chain-1 key", () => {
+    expect(tokenPricesKey(1)).toBe("arbx:token_prices:1");
+    expect(tokenPricesKey(42161)).toBe("arbx:token_prices:42161");
+  });
+
+  it("only a proven chain is ranked; the rest are NOT COMPUTED", () => {
+    expect(evaluateChainGate(1)).toEqual({ selection_state: "MEASURED", selection_reason: null });
+    expect(evaluateChainGate(8453)).toEqual({
+      selection_state: "NOT COMPUTED",
+      selection_reason: "price_tower_not_parameterized",
+    });
   });
 });
