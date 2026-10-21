@@ -2791,8 +2791,9 @@ async fn decode_and_score_tx<'a>(
                 reject_tag = tag,
                 reason = ?reason,
             );
-            opportunity.economics =
-                Some(crate::economics::economics_error("strategy_config_gate_blocked"));
+            opportunity.economics = Some(crate::economics::economics_error(
+                "strategy_config_gate_blocked",
+            ));
             opportunity.roi_pct = None;
             opportunity.risk_score = None;
             opportunity.rejection_reason = Some(format!("{tag}:{reason:?}"));
