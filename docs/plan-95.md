@@ -195,10 +195,25 @@ PEDIDO: …
 
 Añadido por MANTIS. No modifica el cuerpo del plan: lo data. Formato §0.2.
 
+### D.1 — Inventario (corregido 2026-10-21T14:0xZ)
+
 | id | familia | dueño | artefacto esperado | criterio de aceptación | estado | evidencia |
 |---|---|---|---|---|---|---|
 | D-01 (§C4) | Código | HYDRA | Inspector de traza + payload completo del `Panic(0x11)` + `timestamp` 0 corregido | Los tres merges son ancestros de la base del PR; la rama sobrante no existe en origin | **HECHO** | #978 `462de71`, #992 `4873c53`, #991 `d3bdd5a` — `merge-base --is-ancestor` YES ×3 sobre `54b11804`; #991 mergeado `2026-10-20T13:58:16Z` |
-| D-02 (§C2) | Código | LEVI (C-17) / ejecuta HYDRA | Fallback `sizingUsd=null → minBoundUsd`, con gas < 0,5 % del nocional | Fila con nocional calculado y no nulo, o rechazo explícito `below_min_bound`; control negativo con `dustUsd=0,01` | **ABIERTO (parcial)** — `sizingUsd=null` desplegado por C-16; falta el fallback | Recibo de `/api/trading-config?chain_id=1` + id de la tarjeta C-17 (pendiente de pegar por HYDRA) |
-| D-03 (§C1, #13) | Código | LEVI (cableado) / ejecuta HYDRA | Un emisor que entregue intents de **2 patas** al pipeline V2 | `count(*) FILTER (WHERE dex_b IS NOT NULL) > 0` en `opportunities` con `economics` presentes, misma ventana; hoy **0/200** | **ABIERTO — es cablear, no construir** | Productor de 2 patas existe y es el único que fija `dex_b`: `engines/dex_engine.rs:1307`. Bajo V2 el camino legacy retorna antes: `scanner.rs:2016-2019`. El scanner de bloques emite intents de una pata: `cartridge_boot.rs:953-955`. Los cartuchos **sí** aceptan multi-pata (`cartridge_boot.rs:3821`, `:3907`) |
+| D-02 (§C2) | Código | LEVI (C-17) / ejecuta HYDRA | Fallback `sizingUsd=null → minBoundUsd`, gas < 0,5 % del nocional | Fila con nocional calculado y no nulo, o rechazo `below_min_bound`; control negativo con `dustUsd=0,01` | **ABIERTO (parcial)** — `sizingUsd=null` desplegado por C-16; falta el fallback | Recibo de `/api/trading-config?chain_id=1` + id de C-17 (pendiente) |
+| D-03 (§C1, #13) | Código | LEVI (cableado) / ejecuta HYDRA | Un emisor que entregue intents de **2 patas** al pipeline V2 | `count(*) FILTER (WHERE dex_b IS NOT NULL) > 0` con `economics` presentes en la misma ventana; hoy **0/200** | **ABIERTO — cablear, no construir** | Emisor real de una pata: `block_scanner.rs:492` (`legs: vec![RouteIntentLeg{ …, dex_hint: None, … }]`). V2 corta el legacy: `scanner.rs:2016-2019`. El cartucho **sí** lleva `dex_b` multi-pata: `cartridge_boot.rs:3821`, `:3907`. `legs[1]` sólo se lee en el ciclo cerrado: `cartridge_boot.rs:536-543`. Único setter de ruta de 2 patas: `engines/dex_engine.rs:1307` |
+
+### D.2 — Reglas de publicación (vinculantes desde 2026-10-21)
+
+1. `C95` es el registro y el único número que se publica como «95 %». Denominador congelado al abrir ciclo; los ítems nuevos van al ciclo siguiente.
+2. `GATE-VIVO` (watchdog) y `HITO-ECONÓMICO` se publican **con su nombre y su ventana**, aparte. Un `GATE-VIVO` verde no suma cobertura; un `GATE-VIVO` rojo impide declarar el ciclo verde.
+3. `status=executed` es peldaño, no cierre: el cierre económico exige `recon.total>0`. Un 95 % de `C95` con `recon=0` es un ciclo **rojo**, no un ciclo al 95 %.
+
+### D.3 — Grano del censo (A2)
+
+4. La población **1.625 no existe en el repo**: única fuente `comet_message_id=7130103`. Se publica como **declarada, no auditada**.
+5. El censo es `docs/cumplimiento-95/censo-<fecha>.json`, una fila por id, columnas de §0.2 + `fuente` + `ts_observado`, sha256 publicado.
+6. Se publican tres cifras: `población_declarada`, `con_fila`, `sin_fila`. Mientras `sin_fila > 0`, el porcentaje es **NOT COMPUTED** — nunca 0, nunca «provisional».
+7. `sin_fila` **no** es `vacuo`: lo no enumerado no se clasifica por defecto. `vacuo` exige razón y fuente.
 
 **Consecuencia sobre la Fase C:** C1 baja de «construir la segunda pata» a «cablear el emisor bajo V2»; C2 sigue entero; C4 sale del cómputo como HECHO con artefacto. Los tres movimientos son gratis en el numerador (§0.3: duplicado/ancestro y hecho con artefacto) — pero **solo cuentan si el Anexo D está en el fichero**, no en el hilo. Por eso va dentro: un documento que declara pendiente lo ya fusionado es un documento que miente en disco, y el 95 % se mide contra el disco.
