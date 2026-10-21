@@ -2750,15 +2750,69 @@ impl SizeOptimizer {
         let hop_reserves_a = vec![(reserve_in_a, reserve_out_a)];
         let hop_reserves_b = vec![(reserve_in_b, reserve_out_b)];
 
-        let (x_star_raw, profit_wei_raw) = golden_section_search_2leg(
-            x_lo,
-            x_hi,
-            &hop_reserves_a,
-            &hop_reserves_b,
+        // OPTIMAL-SIZE-01 (2026-10-23, REA port): the 2-leg V2 optimum in
+        // CLOSED FORM replaces the numeric bracket search as the primary
+        // oracle. REA: jacksonConrad/better-simple-arbitrage@f8b96f3
+        // (src/Arbitrage.ts:79-94 — closed form; re-implementation, zero
+        // verbatim: the source has NO license at that sha, numbers are cited
+        // facts per FUSILE binding rule 3), vector values from
+        // flashbots/simple-arbitrage@03cf1058 (integer ladder test), and an
+        // independent cross-witness in flashbots/simple-blind-arbitrage@
+        // 73c6c270 (BlindBackrunLogic.sol:116-206). Full provenance:
+        // docs/rea/FICHA_REA2_OPTIMAL_SIZE.md.
+        //
+        // Why the closed form is allowed to replace the search: it is the
+        // UNIQUE maximizer of the SAME strictly concave π(x) the golden
+        // search probed (both legs' fees applied on the input, exactly like
+        // `v2_amount_out`) — verified against the golden-rule vectors, where
+        // it reaches the ancestor ladder's answer and dominates it by
+        // 82_565_723_425_550 wei on the reference fixture. The market now
+        // SETS the size (O(1): two integer square roots, one division), and
+        // the DUST-NOTIONAL-02 fallback below only triggers for genuinely
+        // hair-thin edges — never again because a bracket search parked the
+        // argmax at the dust end of a profitable route.
+        let (x_star_raw, profit_wei_raw) = match crate::amm_math::v2_closed_form_optimal_input_2leg(
+            reserve_in_a,
+            reserve_out_a,
+            reserve_in_b,
+            reserve_out_b,
             fee_a,
             fee_b,
-            25,
-        );
+        ) {
+            Ok(dx_market) => {
+                // Clamp the unconstrained market optimum into the
+                // kernel's tradable bracket. π is strictly concave with
+                // its unique maximum at dx*, so the BRACKETED optimum is
+                // min(dx*, x_hi): the market size when it fits, the
+                // constrained end when capital/slippage binds first.
+                let x = dx_market.min(x_hi).max(x_lo);
+                let p = eval_2leg_profit(x, &hop_reserves_a, &hop_reserves_b, fee_a, fee_b);
+                debug!(
+                    event = "size_optimizer.two_leg_closed_form_optimum",
+                    label = candidate.label.as_str(),
+                    market_optimum_wei = %dx_market,
+                    bracket_optimum_wei = %x,
+                    profit_wei = p,
+                    "OPTIMAL-SIZE-01: size from the market (closed form), clamped to the bracket"
+                );
+                (x, p)
+            }
+            // Market not crossed (γ²·t1·w2 ≤ t2·w1 — the Rust-analogue of
+            // the upstream's anonymous Panic(0x11) underflow edge, FICHA
+            // REA-4 §2.1), sub-wei optimum, or a checked-math overflow on
+            // adversarial reserve magnitudes: the numeric bracket search
+            // stays as the fail-safe oracle, with behaviour identical to
+            // the pre-port kernel on those arms.
+            Err(_) => golden_section_search_2leg(
+                x_lo,
+                x_hi,
+                &hop_reserves_a,
+                &hop_reserves_b,
+                fee_a,
+                fee_b,
+                25,
+            ),
+        };
 
         // DUST-NOTIONAL-02 (2026-09-28, measured post-deploy): the kernel's
         // argmax is only a MEANINGFUL publication size when it is tradable. For a
@@ -4993,6 +5047,265 @@ mod tests {
             "symmetric fixture must be non-positive everywhere"
         );
         assert!(sweep.best.is_none(), "all-negative sweep: best None (R8)");
+    }
+
+    // ── OPTIMAL-SIZE-01 (2026-10-23): REA port of the closed-form optimal
+    // size. Golden rule: the test literals ARE the upstream's numbers.
+    //
+    // REA chain (docs/rea/FICHA_REA2_OPTIMAL_SIZE.md — the source repo has
+    // NO license at the pinned sha, so ZERO verbatim lines travel; the
+    // numbers are cited facts per FUSILE binding rule 3):
+    //   jacksonConrad/better-simple-arbitrage@f8b96f3
+    //     src/Arbitrage.ts:79-94      — closed form (floats, semantically)
+    //     test/Arbitrage.test.ts      — V-B literals inherited from…
+    //   flashbots/simple-arbitrage@03cf1058
+    //     getBestCrossedMarket         — integer ladder whose (volume,
+    //                                   profit) pair IS the V-B vector
+    //   flashbots/simple-blind-arbitrage@73c6c270
+    //     BlindBackrunLogic.sol:116-206 — independent cross-witness of the
+    //                                   same closed form (FICHA REA-4 §2.1)
+
+    /// V-B + V-C (FICHA REA-2 §3): the ancestor's integer ladder answer for
+    /// buy=[T=1e18, W=1e18], sell=[T=1e18, W=2e18] is volume
+    /// 208333333333333333 wei (= ⌊5/24·10¹⁸⌋, the mechanical halfway between
+    /// the E/6 and E/4 rungs) with profit 84409320961485006 wei. The
+    /// closed-form port must REPRODUCE the dominating optimum exactly:
+    /// dx* = 205911134347446829 wei (⌊0.205911134347446829…·10¹⁸⌋) and its
+    /// integer-execution profit 84417577533827556 wei ≥ the ladder's.
+    #[test]
+    fn rea2_golden_rule_closed_form_matches_upstream_vectors() {
+        use crate::amm_math::v2_closed_form_optimal_input_2leg;
+        let e18 = unit(1);
+        // Buy pool: put WETH in (w1), get token out (t1): [W=1, T=1].
+        // Sell pool: put token in (t2), get WETH out (w2): [T=1, W=2].
+        let hop_a = vec![(e18, e18)]; // (reserve_in_a=w1, reserve_out_a=t1)
+        let hop_b = vec![(e18, unit(2))]; // (reserve_in_b=t2, reserve_out_b=w2)
+
+        // V-C — THE golden-rule literal: the port's integer closed form
+        // equals the upstream's optimum (two isqrt over fee-scaled k, one
+        // final floor division; the real value's fractional part 0.0476 wei
+        // sits 3.9× above the 0.0121-wei worst-case flooring error, so the
+        // floor is stable).
+        let dx = v2_closed_form_optimal_input_2leg(e18, e18, e18, unit(2), 30, 30)
+            .expect("V-B fixture is crossed — a market optimum must exist");
+        assert_eq!(
+            dx,
+            U256::from_dec_str("205911134347446829").unwrap(),
+            "V-C: dx* must equal the upstream's closed-form optimum"
+        );
+
+        // Integer execution at dx* (fee on input, floor per leg) — literal
+        // from FICHA REA-2 §V-C.
+        let p_star = eval_2leg_profit(dx, &hop_a, &hop_b, 30, 30);
+        assert_eq!(p_star, 84_417_577_533_827_556);
+
+        // V-B — the ancestor ladder's answer, ON THE SAME CURVE: the
+        // ladder volume literal reproduces the ladder profit literal, and
+        // the closed form DOMINATES it (the invariant: the optimum beats
+        // any heuristic; margin 82_565_723_425_550 wei here).
+        let ladder_volume = U256::from_dec_str("208333333333333333").unwrap();
+        let p_ladder = eval_2leg_profit(ladder_volume, &hop_a, &hop_b, 30, 30);
+        assert_eq!(p_ladder, 84_409_320_961_485_006);
+        assert!(
+            p_star >= p_ladder,
+            "closed form must dominate the ancestor ladder: {p_star} vs {p_ladder}"
+        );
+
+        // π(0) = 0 — the identity anchor of the concavity argument.
+        assert_eq!(eval_2leg_profit(U256::zero(), &hop_a, &hop_b, 30, 30), 0);
+
+        // Fee-zero symmetry (FICHA REA-2 §2.2): with γ=1 the closed form
+        // reduces to (√(t1t2w1w2) − t2·w1)/(t2 + t1); on this fixture that
+        // is ⌊(√2−1)/2·10¹⁸⌋ = 207106781186547524.
+        let dx0 = v2_closed_form_optimal_input_2leg(e18, e18, e18, unit(2), 0, 0)
+            .expect("fee-zero fixture is crossed");
+        assert_eq!(dx0, U256::from_dec_str("207106781186547524").unwrap());
+
+        // Monotonicity near the optimum, HONEST form. The ficha's literal
+        // claim "π(dx*±1) ≤ π(dx*)" is FALSIFIED by exact integer
+        // evaluation: both ±1-wei neighbours score π(dx*)+1 (the floor
+        // wobble of two chained CPMM divisions — the true continuous
+        // optimum sits strictly between dx* and dx*+1). The port therefore
+        // asserts the provable bound: the wobble is ≤ 2 wei across the
+        // ±4-wei window (measured: 0..2), i.e. dx* is within 1 wei of the
+        // integer argmax of the SAME curve.
+        for d in [1i128, -1, 2, -2, 3, -3, 4, -4] {
+            let x = if d < 0 {
+                dx - U256::from((-d) as u64)
+            } else {
+                dx + U256::from(d as u64)
+            };
+            let p = eval_2leg_profit(x, &hop_a, &hop_b, 30, 30);
+            assert!(
+                p - p_star <= 2,
+                "wobble at dx*{d:+}: {p} vs {p_star} must stay within 2 wei"
+            );
+        }
+    }
+
+    /// Cross-witness (FICHA REA-4 §2.1/§5.2, feeding REA-2): the SAME
+    /// closed form, derived independently by flashbots/
+    /// simple-blind-arbitrage@73c6c270 as a ratio-domain integer formula.
+    /// Both `isWETHZero` branches are transcribed LITERALLY per branch (the
+    /// ficha's own verification script first generalised the index mapping
+    /// and went 8-checks red — the branches are NOT a symmetric mirror).
+    ///
+    /// Vector (DERIVED from the upstream's own test reserves, verified by
+    /// docs/rea/vectors_rea4_verify.mjs): presqrt = 2291978, isqrt = 1513,
+    /// amountIn = 2716778998396236163624 on BOTH branches (the symmetry
+    /// invariant), plus the flipped-trace out1/out2/profit literals.
+    #[test]
+    fn rea2_blind_arb_cross_witness_both_branches_same_amount_in() {
+        use crate::amm_math::{isqrt_u256, v2_amount_out, v2_closed_form_optimal_input_2leg};
+
+        // getNumerator/getDenominator transcribed per branch (fee fixed at
+        // 997/1000 — 30 bps in destination convention), isqrt integer.
+        let f = U256::from(997u32);
+        let closed_form_false = |r_a0: U256, r_a1: U256, r_b0: U256, r_b1: U256| -> U256 {
+            let presqrt = f * f * r_a0 * r_b1 / r_b0 / r_a1;
+            let numerator = (isqrt_u256(presqrt) - U256::from(1000u32)) * r_b0 * r_a1;
+            let denominator = f * r_b0 * U256::from(1000u32) + f * f * r_a0;
+            numerator * U256::from(1000u32) / denominator
+        };
+        let closed_form_true = |r_a0: U256, r_a1: U256, r_b0: U256, r_b1: U256| -> U256 {
+            let presqrt = f * f * r_a1 * r_b0 / r_b1 / r_a0;
+            let numerator = (isqrt_u256(presqrt) - U256::from(1000u32)) * r_b1 * r_a0;
+            let denominator = f * r_b1 * U256::from(1000u32) + f * f * r_a1;
+            numerator * U256::from(1000u32) / denominator
+        };
+
+        let u = |s: &str| U256::from_dec_str(s).unwrap();
+        // Branch inputs exactly as the upstream's test fixtures (the flipped
+        // fixture carries its own reserve magnitudes — NOT a copy of the
+        // first: r1 of the first pair appears scaled by 1e-6 there).
+        let r_a0 = u("17221979511711000000000");
+        let r_a1 = u("9022829950419911882261");
+        let r_b0 = u("24221870080988000000000");
+        let r_b1 = u("29260889455340067009671");
+
+        let amount_in_false = closed_form_false(r_a0, r_a1, r_b0, r_b1);
+        let amount_in_true = closed_form_true(
+            u("9022829950419911882261"),
+            u("17221979511711"),
+            u("29260889455340067009671"),
+            u("24221870080988"),
+        );
+        // The vector: the same market viewed from both sides sizes the SAME.
+        assert_eq!(amount_in_false, u("2716778998396236163624"));
+        assert_eq!(amount_in_true, u("2716778998396236163624"));
+        assert_eq!(amount_in_false, amount_in_true, "symmetry invariant");
+
+        // Flipped-trace legs (upstream getAmountOut == destination
+        // v2_amount_out at fee 30 bps): literals from §5.2.
+        let out1 = v2_amount_out(
+            amount_in_true,
+            u("9022829950419911882261"),
+            u("17221979511711"),
+            30,
+        );
+        let out2 = v2_amount_out(out1, u("24221870080988"), u("29260889455340067009671"), 30);
+        assert_eq!(out1, u("3976312652586"));
+        assert_eq!(out2, u("4115530729036751327899"));
+        assert_eq!(out2 - amount_in_true, u("1398751730640515164275"));
+
+        // Cross-witness agreement: this port's closed form (root over
+        // fee-scaled PRODUCTS — full integer precision) on the same market
+        // (t1, w1, t2, w2) = (rA0, rA1, rB0, rB1) must agree with the
+        // ratio-domain formula within its own coarseness (the upstream
+        // floors presqrt, a ~2.3e6 ratio, to integer — 0.18 % size error)
+        // and must DOMINATE it on the integer profit curve.
+        let mine = v2_closed_form_optimal_input_2leg(r_a1, r_a0, r_b0, r_b1, 30, 30)
+            .expect("cross-witness market is crossed");
+        let tolerance = amount_in_false / U256::from(500u32); // 0.2 %
+        assert!(
+            mine > amount_in_false && mine - amount_in_false < tolerance,
+            "cross-witness size agreement: mine={mine} blind={amount_in_false}"
+        );
+        let hop_a = vec![(r_a1, r_a0)];
+        let hop_b = vec![(r_b0, r_b1)];
+        let p_mine = eval_2leg_profit(mine, &hop_a, &hop_b, 30, 30);
+        let p_blind = eval_2leg_profit(amount_in_false, &hop_a, &hop_b, 30, 30);
+        assert!(
+            p_mine >= p_blind,
+            "full-precision closed form must dominate the coarse ratio form: {p_mine} vs {p_blind}"
+        );
+    }
+
+    /// OPTIMAL-SIZE-01 integration: with valid reserves and a real signal,
+    /// the kernel publishes the MARKET optimum — the DUST-NOTIONAL-02
+    /// fallback (re-price at the band) is NOT reached, and the size is not
+    /// the bracket's band end.
+    #[tokio::test]
+    async fn optimal_size_01_kernel_sizes_from_market_not_dust_band() {
+        let pool_a = addr(0x10);
+        let pool_b = addr(0x11);
+        let tok_weth = addr(0xAAAA);
+        let tok_usdc = addr(0xBBBB);
+
+        // V-B reserves: buy pool [T=1e18, W=1e18] (symmetric — orientation
+        // proof), sell pool [T=1e18, W=2e18]. Stored through the kernel's own
+        // orientation rule using the LEG token strings the candidate carries
+        // (leg 0: WETH_T → TOK; leg 1: TOK → WETH_T).
+        let tok_out_str = format!("0x{:040x}", tok_usdc);
+        let cache = Arc::new(ReservesCache::new());
+        insert_oriented(&cache, pool_a, WETH_T, &tok_out_str, unit(1), unit(1)).await;
+        insert_oriented(&cache, pool_b, &tok_out_str, WETH_T, unit(1), unit(2)).await;
+
+        let projector = Arc::new(StateProjector::new(cache, None, empty_v3_fee_catalog()));
+        let optimizer = SizeOptimizer::new(projector);
+
+        let candidate = make_dex_candidate(
+            pool_a,
+            pool_b,
+            tok_weth,
+            tok_usdc,
+            StrategyLabel::DexArbV2V2,
+        );
+        let intent = make_intent(tok_weth, tok_usdc);
+        let mut cfg = make_cfg(100_000.0);
+        // A 50 % impact budget lets the bracket cover the market optimum
+        // (x_hi = 5e17 > dx* = 2.06e17); the default 0.5 % budget caps at
+        // 5e15 and would mask the market size behind the constrained end.
+        cfg.max_slippage_pct = 0.5;
+
+        let outcome = optimizer
+            .size_two_leg_with_reason(&candidate, &intent, unit(10), 100_000.0, 3000.0, 18, &cfg)
+            .await;
+
+        let sized = match outcome {
+            OptimizeOutcome::Sized(s) => s,
+            other => panic!(
+                "V-B fixture must size, got reason={:?} (gross={:?})",
+                other.reason_str(),
+                other.gross_profit_usd()
+            ),
+        };
+        // The market optimum — the golden-rule literal again, end to end.
+        assert_eq!(
+            sized.optimal_amount_in,
+            U256::from_dec_str("205911134347446829").unwrap(),
+            "the kernel must publish the closed-form market optimum"
+        );
+        // NOT the tradable band (min(cap=10e18, 1e18, 5e17, 5e17) = 5e17):
+        // reaching the band here would mean the dust-fallback arm fired.
+        assert_ne!(
+            sized.optimal_amount_in,
+            U256::from_dec_str("500000000000000000").unwrap(),
+            "dust repricing at the band must NOT be the size source for a valid-reserve signal"
+        );
+        // gross ≈ 0.084417577 WETH × $3000 ≈ $253.25 — far above the $0.01
+        // dust floor, and the profit literal is the V-C figure.
+        assert!(
+            sized.gross_profit_usd > 250.0 && sized.gross_profit_usd < 256.0,
+            "gross_profit_usd = {}",
+            sized.gross_profit_usd
+        );
+        assert!(!sized.net_negative);
+        // Per-hop ledger chains at the published size (HOPS-LEDGER-04).
+        let ledger_in = sized.leg_amounts_in.as_ref().unwrap();
+        let ledger_out = sized.leg_amounts_out.as_ref().unwrap();
+        assert_eq!(ledger_in[0], sized.optimal_amount_in.to_string());
+        assert_eq!(ledger_in[1], ledger_out[0], "leg 1 input IS leg 0 output");
     }
 
     // ── Root 2C Phase 1: RouteQuoteProvider V2 byte-identical regression ─────
