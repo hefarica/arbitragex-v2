@@ -537,8 +537,9 @@ def main(argv=None):
     if a.fixture:
         population, viable, meta = load_fixture(a.fixture)
         rc, _ = run_payload(population, viable,
-                           "fixture %s (%s)" % (a.fixture, meta.get("kind", "?")),
-                           meta.get("captured_at_utc", "-"), a.out, a.strict, sha12)
+                            "fixture %s (%s)" % (a.fixture, meta.get("kind", "?")),
+                            meta.get("captured_at_utc", "-"), a.out, a.strict, sha12)
+        return rc
     if a.from_file:
         with open(a.from_file, "rb") as fh:
             raw = fh.read()
