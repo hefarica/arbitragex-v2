@@ -85,8 +85,9 @@ function fakePool(opts: { volumeAsOf?: "present" | "absent" | "probe_fails" } = 
         return { rows: [{ present: mode === "present" ? 1 : 0 }], rowCount: 1 };
       }
       if (sql.includes("AS orderable")) {
-        // 3 validation rows carry a volume with volume_as_of <= 6 h.
-        return { rows: [{ orderable: 3 }], rowCount: 1 };
+        // 3 validation rows carry a volume with volume_as_of <= 6 h; the oldest
+        // snapshot is 1 day old (outside the 6 h window, so it does not order).
+        return { rows: [{ orderable: 3, p50_age_s: "900", max_age_s: "86400" }], rowCount: 1 };
       }
       if (sql.includes("FROM pools p")) return { rows: POOLS, rowCount: POOLS.length };
       if (sql.includes("unnest($1::uuid[])")) {
@@ -129,6 +130,11 @@ describe("GET /api/tokens/top — rank_by (D5)", () => {
     expect(res.body.ranked.map((r: { symbol: string }) => r.symbol)).toEqual(["USDC", "WETH"]);
     expect(res.body.excluded["no_volume_24h"]).toBe(1);
     expect(res.body.window_note).toContain("volumen 24h");
+    expect(res.body.window_note).toContain("par primario por token");
+    expect(res.body.window_note).toContain("frescura de volumen: measured");
+    expect(res.body.volume_freshness).toEqual({
+      state: "measured", p50_age_s: 900, max_age_s: 86400, reason: null,
+    });
   });
 
   it("defaults to tvl, normalizes raw reserves by decimals, and drops the implausible row", async () => {
@@ -151,6 +157,8 @@ describe("GET /api/tokens/top — rank_by (D5)", () => {
     expect(absent.body.ranked).toEqual([]);
     expect(absent.body.window_note).toContain("NOT COMPUTED");
     expect(absent.body.window_note).toContain("no se sustituye por TVL");
+    expect(absent.body.volume_freshness.state).toBe("NOT COMPUTED");
+    expect(absent.body.volume_freshness.reason).toContain("volume_as_of");
 
     const failed = await get("chain_id=1&limit=100&rank_by=volume_24h", { volumeAsOf: "probe_fails" });
     expect(failed.body.selection_state).toBe("NOT COMPUTED");

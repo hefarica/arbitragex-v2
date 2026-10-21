@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   computeSaveGate, evaluateChainGate, evaluateRugRules, evaluateVolumeGate,
   RUG_RULES, rankNote, rankValueOf, screenAndRank, selectionNote,
-  tokenPricesKey, IMPLAUSIBLE_TVL_USD,
+  tokenPricesKey, volumeFreshnessNote, IMPLAUSIBLE_TVL_USD,
   type RankBy, type RugRuleId, type TopTokenRow,
 } from "./token-top.js";
 
@@ -198,9 +198,16 @@ describe("screenAndRank — basis de ranking (D5, 2026-10-21)", () => {
     expect(excluded["no_reserve"]).toBeUndefined();
   });
 
-  it("names its own basis in the served note", () => {
+  it("names its own basis, its scope and its freshness in the served note", () => {
     expect(rankNote("volume_24h")).toContain("volumen 24h");
+    // Decision 7: the scope label is printed, not only written in the contract.
+    expect(rankNote("volume_24h")).toContain("par primario por token");
+    expect(rankNote("volume_24h")).toContain("NO es «toda la red»");
     expect(rankNote("tvl")).toContain("valor en pools");
+    expect(volumeFreshnessNote({ state: "measured", p50_age_s: 900, max_age_s: 86400, reason: null }))
+      .toContain("p50 900 s / máx 86400 s");
+    expect(volumeFreshnessNote({ state: "NOT COMPUTED", p50_age_s: null, max_age_s: null, reason: "sin volume_as_of" }))
+      .toContain("NOT COMPUTED (sin volume_as_of)");
   });
 });
 

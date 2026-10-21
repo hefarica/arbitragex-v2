@@ -233,8 +233,30 @@ export function screenAndRank(
 /** Human-readable basis for the served ranking (R8: the caller must see it). */
 export function rankNote(rankBy: RankBy): string {
   return rankBy === "volume_24h"
-    ? "orden = volumen 24h (token_validations.volume_24h_usd); TVL sólo como columna de contexto"
+    ? "orden = volumen 24h (token_validations.volume_24h_usd), par primario por token — NO es «toda la red»; TVL sólo como columna de contexto"
     : "orden = valor en pools × torre de precios (flujo de capital, no market cap)";
+}
+
+const FRESHNESS_NOT_MEASURED: VolumeFreshness = {
+  state: "NOT COMPUTED",
+  p50_age_s: null,
+  max_age_s: null,
+  reason: "no medido en este camino",
+};
+
+export interface VolumeFreshness {
+  state: "measured" | "NOT COMPUTED";
+  p50_age_s: number | null;
+  max_age_s: number | null;
+  reason: string | null;
+}
+
+/** Served freshness of the volume snapshot, and its absence when unmeasurable. */
+export function volumeFreshnessNote(f: VolumeFreshness): string {
+  if (f.state !== "measured") {
+    return `frescura de volumen: NOT COMPUTED (${f.reason ?? "sin volume_as_of"})`;
+  }
+  return `frescura de volumen: measured, edad p50 ${f.p50_age_s ?? "?"} s / máx ${f.max_age_s ?? "?"} s (límite ${VOLUME_SNAPSHOT_MAX_AGE_HOURS} h)`;
 }
 
 /** Served note for a NOT COMPUTED selection: names the basis and the cause. */
@@ -247,7 +269,7 @@ export function selectionNote(rankBy: RankBy, gate: VolumeGate): string {
         : gate.selection_reason === "volume_as_of_probe_failed"
           ? "no se pudo comprobar volume_as_of"
           : "no computable";
-  return `selection = NOT COMPUTED (${cause}); no se sustituye por TVL (${rankNote(rankBy)})`;
+  return `selection = NOT COMPUTED (${cause}); no se sustituye por TVL. ${rankNote(rankBy)}`;
 }
 
 /**
@@ -412,7 +434,13 @@ export function evaluateRugRules(
 async function probeVolumeAsOf(
   pool: Pool,
   chainId: number,
-): Promise<{ columnPresent: boolean; probeFailed: boolean; orderable: number }> {
+): Promise<{
+  columnPresent: boolean;
+  probeFailed: boolean;
+  orderable: number;
+  p50_age_s: number | null;
+  max_age_s: number | null;
+}> {
   try {
     const col = await pool.query<{ present: number }>(
       `SELECT count(*)::int AS present
@@ -421,19 +449,31 @@ async function probeVolumeAsOf(
           AND column_name = 'volume_as_of'`,
     );
     const present = Number(col.rows[0]?.present ?? 0) > 0;
-    if (!present) return { columnPresent: false, probeFailed: false, orderable: 0 };
-    const q = await pool.query<{ orderable: number }>(
-      `SELECT count(*)::int AS orderable
+    if (!present) {
+      return { columnPresent: false, probeFailed: false, orderable: 0, p50_age_s: null, max_age_s: null };
+    }
+    const q = await pool.query<{ orderable: number; p50_age_s: string | null; max_age_s: string | null }>(
+      `SELECT count(*) FILTER (WHERE volume_as_of >= NOW() - INTERVAL '6 hours')::int AS orderable,
+              round(extract(epoch FROM NOW())
+                    - percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM volume_as_of)))::bigint AS p50_age_s,
+              round(extract(epoch FROM NOW())
+                    - min(extract(epoch FROM volume_as_of)))::bigint AS max_age_s
          FROM token_validations
         WHERE chain_id = $1
           AND volume_24h_usd IS NOT NULL AND volume_24h_usd > 0
-          AND volume_as_of IS NOT NULL
-          AND volume_as_of >= NOW() - INTERVAL '6 hours'`,
+          AND volume_as_of IS NOT NULL`,
       [chainId],
     );
-    return { columnPresent: true, probeFailed: false, orderable: Number(q.rows[0]?.orderable ?? 0) };
+    const row = q.rows[0];
+    return {
+      columnPresent: true,
+      probeFailed: false,
+      orderable: Number(row?.orderable ?? 0),
+      p50_age_s: row?.p50_age_s === null || row?.p50_age_s === undefined ? null : Number(row.p50_age_s),
+      max_age_s: row?.max_age_s === null || row?.max_age_s === undefined ? null : Number(row.max_age_s),
+    };
   } catch {
-    return { columnPresent: false, probeFailed: true, orderable: 0 };
+    return { columnPresent: false, probeFailed: true, orderable: 0, p50_age_s: null, max_age_s: null };
   }
 }
 
@@ -489,6 +529,7 @@ export function buildTokenTopRouter(deps: Deps): Router {
         selection_state: chainGate.selection_state,
         selection_reason: chainGate.selection_reason,
         volume_orderable: 0,
+        volume_freshness: FRESHNESS_NOT_MEASURED,
         save_gate: { allowed: false, reasons: ["selection_not_computed"] },
         rule_population: {},
         window_note:
@@ -502,6 +543,19 @@ export function buildTokenTopRouter(deps: Deps): Router {
 
     const volumeProbe = await probeVolumeAsOf(deps.pool, chainId);
     const gate = evaluateVolumeGate({ rankBy, ...volumeProbe });
+    const freshness: VolumeFreshness =
+      volumeProbe.columnPresent && volumeProbe.p50_age_s !== null
+        ? { state: "measured", p50_age_s: volumeProbe.p50_age_s, max_age_s: volumeProbe.max_age_s, reason: null }
+        : {
+            state: "NOT COMPUTED",
+            p50_age_s: null,
+            max_age_s: null,
+            reason: volumeProbe.probeFailed
+              ? "probe falló"
+              : volumeProbe.columnPresent
+                ? "sin filas con volume_as_of"
+                : "token_validations.volume_as_of ausente",
+          };
 
     try {
       if (gate.selection_state === "NOT COMPUTED") {
@@ -515,9 +569,10 @@ export function buildTokenTopRouter(deps: Deps): Router {
           selection_state: gate.selection_state,
           selection_reason: gate.selection_reason,
           volume_orderable: gate.volume_orderable,
+          volume_freshness: freshness,
           save_gate: { allowed: false, reasons: ["selection_not_computed"] },
           rule_population: {},
-          window_note: selectionNote(rankBy, gate),
+          window_note: `${selectionNote(rankBy, gate)}; ${volumeFreshnessNote(freshness)}`,
           rules_applied: [...rules],
           rule_catalog: RUG_RULES,
         });
@@ -544,6 +599,7 @@ export function buildTokenTopRouter(deps: Deps): Router {
           selection_state: "NOT COMPUTED",
           selection_reason: "no_active_pools",
           volume_orderable: gate.volume_orderable,
+          volume_freshness: FRESHNESS_NOT_MEASURED,
           save_gate: { allowed: false, reasons: ["selection_not_computed"] },
           rule_population: {},
           window_note: `sin pools activos para chain ${chainId}: no hay universo que ordenar (${rankNote(rankBy)})`,
@@ -612,6 +668,7 @@ export function buildTokenTopRouter(deps: Deps): Router {
           selection_state: "NOT COMPUTED",
           selection_reason: "price_tower_empty",
           volume_orderable: gate.volume_orderable,
+          volume_freshness: FRESHNESS_NOT_MEASURED,
           save_gate: { allowed: false, reasons: ["selection_not_computed"] },
           rule_population: {},
           window_note: `selection = NOT COMPUTED (torre ${tokenPricesKey(chainId)} vacía o ausente): sin precios no hay valoración`,
@@ -781,13 +838,14 @@ export function buildTokenTopRouter(deps: Deps): Router {
         selection_state: gate.selection_state,
         selection_reason: gate.selection_reason,
         volume_orderable: gate.volume_orderable,
+        volume_freshness: freshness,
         save_gate: computeSaveGate({ selectionState: gate.selection_state, rulePopulation, rulesApplied: [...rules] }),
         rule_population: rulePopulation,
         // R8 honesty: the served ordering must name its own basis. `window=24h`
         // values OLD reserves at CURRENT prices (capital flow, not historical
         // market cap); `rank_by=volume_24h` orders by measured traded volume.
         window_note: rankBy === "volume_24h"
-          ? rankNote(rankBy)
+          ? `${rankNote(rankBy)}; ${volumeFreshnessNote(freshness)}`
           : window === "24h"
             ? "reservas de hace ≤24h valorizadas a precios ACTUALES (flujo de capital, no market cap histórico)"
             : rankNote(rankBy),

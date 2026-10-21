@@ -178,6 +178,13 @@ export const TokenTopResponseSchema = z.object({
   volume_orderable: z.number().int().min(0),
   // Write lock (contract decision 3): the ranking may serve NOT COMPUTED rows,
   // the allowlist save cannot be enabled without a verifiable rule population.
+  // §2/§7: the volume ordering must print its freshness, not only its table.
+  volume_freshness: z.object({
+    state: z.enum(["measured", "NOT COMPUTED"]),
+    p50_age_s: z.number().nullable(),
+    max_age_s: z.number().nullable(),
+    reason: z.string().nullable(),
+  }).strict(),
   save_gate: z.object({
     allowed: z.boolean(),
     reasons: z.array(z.string()),
