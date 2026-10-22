@@ -275,3 +275,21 @@ Reglas del port:
 - [ ] A3 license: cero líneas verbatim del fuente; solo números + derivación propia.
 - [ ] A4 allowlist: enmienda firmada por el operador ANTES de mergear código (esta ficha
       trabaja en modo solo-vectores y no lo requiere).
+
+---
+
+## ERRATA (2026-10-23, impl-sizing t7 — el port detectó dos dígitos equivocados)
+
+§2.2 borde `dx → 0` dice `γ⁻² = 1.00601803…`. Valor exacto: **γ⁻² = (10 000/9 970)² =
+1.0060271084064631…** (la ficha también computa mal la holgura contra `1.003² = 1.006009`:
+es 1.81e-5, no 9.0e-6). Ningún vector ni ninguna conclusión cambian: el umbral sigue
+separando 1.0060 (rechaza) de 1.0070 (acepta), y así lo afirman los tests del port
+(`rea2_closed_form_edges_named_and_checked_before_subtraction`). Verificación reproducible:
+`python -c "from decimal import Decimal as D,getcontext; getcontext().prec=50; print((D(10000)/D(9970))**2)"`.
+
+Estado del gate al momento del PR (actualizado por impl-sizing, ver FUSILE_SOURCE_POLICY.md
+asiento bdf4e88f): el operador firmó `CONFIRMED: allowlist amendment
+jacksonConrad/better-simple-arbitrage` (Tier 2 → backend/searcher-rs), PERO el repo NO
+TIENE LICENCIA al sha f8b96f3 ⇒ verbatim sigue PROHIBIDO (binding rule 3). El port es
+re-implementación en convenciones del destino; los números viajan como tests, no como código.
+
