@@ -1,5 +1,5 @@
 {
-  "iteration": 5,
+  "iteration": 6,
   "unit_in_progress": null,
   "units": {
     "REA-01-TWO-LEG": {"estado": "MERGED", "commit": "d975eb30", "deploy_sha": null, "gate": "PR #1015 MERGED (GATE1); deploy/fase-gate pendiente de reporte"},
@@ -8,20 +8,28 @@
     "REA-06-POBLACION": {"estado": "MERGED", "commit": "78ab15ee", "deploy_sha": null, "gate": "PR #1013 MERGED (GATE1)"},
     "REA-07-REVERT-TRACE": {"estado": "MERGED", "commit": "098d1c3a", "deploy_sha": null, "gate": "PR #1016 MERGED (GATE1)"},
     "REA-03-V3-MATH": {"estado": "IN_PROGRESS", "commit": "710639ae", "deploy_sha": null, "gate": "PASS 6/6", "pr": "https://github.com/hefarica/arbitragex-v2/pull/1019"},
-    "REA-04-NEG-CYCLE": {"estado": "BLOCKED", "commit": "76c66539", "deploy_sha": null, "gate": "PASO 0 FALLA (artemis sin cycle_enumerator); premisa corregida", "tipo": "INSPIRACION", "pr": "https://github.com/hefarica/arbitragex-v2/pull/1020"},
+    "REA-04-NEG-CYCLE": {"estado": "BLOCKED", "commit": "76c66539", "deploy_sha": null, "gate": "PASO 0 FALLA (artemis sin cycle_enumerator)", "tipo": "INSPIRACION", "pr": "https://github.com/hefarica/arbitragex-v2/pull/1020"},
     "REA-08-PROTECTIONS": {"estado": "IN_PROGRESS", "commit": "ec678b9a", "deploy_sha": null, "gate": "PASS 5/5", "pr": "https://github.com/hefarica/arbitragex-v2/pull/1021"},
     "REA-09-DETERMINISTIC": {"estado": "BLOCKED", "commit": "56ee8992", "deploy_sha": null, "gate": "YA SATISFECHO por medicion", "tipo": "INSPIRACION", "pr": "https://github.com/hefarica/arbitragex-v2/pull/1022"},
-    "REA-10-PER-LEG-LEDGER": {"estado": "BLOCKED", "commit": "docs: REA-10-PER-LEG-LEDGER.md", "deploy_sha": null, "gate": "YA SATISFECHO por medicion: leg_amounts_in/out cableado en 95 refs del sizing, attach_leg_ledger all-or-nothing, persistencia y producer vivo", "tipo": "INSPIRACION"}
+    "REA-10-PER-LEG-LEDGER": {"estado": "BLOCKED", "commit": "1b94aee8", "deploy_sha": null, "gate": "YA SATISFECHO por medicion", "tipo": "INSPIRACION", "pr": "https://github.com/hefarica/arbitragex-v2/pull/1023"},
+    "REA-11-CONNECTORS": {"estado": "PENDING", "commit": null, "deploy_sha": null, "gate": "PARCIAL: venues existen (binance_ws/price_worker/cex_dex_worker); multi-venue normalizado = integracion de red, fuera del alcance REA", "sweep": "BARRIDO-P1-P2.md"},
+    "REA-12-BUNDLE": {"estado": "PENDING", "commit": null, "deploy_sha": null, "gate": "MAYORMENTE PRESENTE (relays+submit+no-submit sim); bundle-vs-tip PARTIAL", "sweep": "BARRIDO-P1-P2.md"},
+    "REA-13-BEST-SOLUTION": {"estado": "PENDING", "commit": null, "deploy_sha": null, "gate": "SCAFFOLD (INTENT_AUCTION registrado, sin subasta); gap real grande", "sweep": "BARRIDO-P1-P2.md"},
+    "REA-14-SIGNED-ORDER": {"estado": "PENDING", "commit": null, "deploy_sha": null, "gate": "GAP REAL: cero matches de signed_order/limit_order/uniswapx/seaport", "sweep": "BARRIDO-P1-P2.md"},
+    "REA-15-NO-TRANSFER": {"estado": "BLOCKED", "commit": null, "deploy_sha": null, "gate": "PRESENTE: cex_dex_engine (inventory-based) — premisa stale", "sweep": "BARRIDO-P1-P2.md"},
+    "REA-16-MEV-CLASS": {"estado": "PENDING", "commit": null, "deploy_sha": null, "gate": "GAP REAL (analitica): classifier.rs clasifica IDs, no trazas; fuente sin licencia", "sweep": "BARRIDO-P1-P2.md"},
+    "REA-17-LIQUIDATION": {"estado": "BLOCKED", "commit": null, "deploy_sha": null, "gate": "PRESENTE: liquidation_engine/snipe_engine/worker — premisa stale", "sweep": "BARRIDO-P1-P2.md"},
+    "REA-18-V3-SIM": {"estado": "BLOCKED", "commit": null, "deploy_sha": null, "gate": "GAP BLOQUEADO por REA-03-WIRE (slot0)", "sweep": "BARRIDO-P1-P2.md"}
   },
   "followups": [
-    "REA-03-WIRE: ledger V3 contiguo — slot0 en RouteLeg/StateProjector.",
+    "REA-03-WIRE: ledger V3 contiguo — slot0 en RouteLeg/StateProjector (desbloquea REA-18).",
     "REA-04-CLOSE: grafo BF desde universo real + tests de ciclo inyectado.",
     "REA-08-WIRE: consumir stoploss_guard/max_drawdown_protection antes de emitir + modo equity.",
     "REA-18-V3-SIM: consumir v3_get_sqrt_ratio_at_tick/v3_get_amount*_delta en simulator-v2.",
-    "REA-10: PnL USD por pata (hoy montos wei in/out) si se quiere valoración por hop."
+    "REA-12: pricing de inclusion (bundle vs tip) como unidad separada si el operador la quiere."
   ],
-  "next_unit": "REA-11-CONNECTORS",
+  "next_unit": "REA-14-SIGNED-ORDER",
   "death_criterion_fired": false,
   "mode": "loop",
-  "notes": "Iteracion 5 cerrada 2026-10-21: REA-10 YA SATISFECHO (ledger por pata cableado; premisa stale). 3 de 5 unidades medidas resultaron ya cumplidas. Siguiente: REA-11-CONNECTORS (ccxt) con auditoria de premisa previa; si tambien esta cubierta, pivotar a P2 (BUNDLE/NO-TRANSFER/MEV-CLASS/LIQUIDATION) que son genuinamente nuevos."
+  "notes": "Iteracion 6 = BARRIDO P1/P2 (acta docs/rea/units/BARRIDO-P1-P2.md): 2 presentes (REA-15, REA-17), 1 mayormente presente (REA-12), 1 scaffold (REA-13), 2 gaps reales (REA-14, REA-16) y 1 bloqueado (REA-18). Siguiente: REA-14-SIGNED-ORDER (EIP-712 order hash + fill amounts). GATE1 (fase) sigue en vuelo."
 }
