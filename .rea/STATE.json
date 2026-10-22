@@ -1,0 +1,21 @@
+{
+  "iteration": 1,
+  "unit_in_progress": "REA-03-V3-MATH",
+  "units": {
+    "REA-01-TWO-LEG": {"estado": "IN_PROGRESS", "commit": "d975eb30", "deploy_sha": null, "gate": "PR #1015 CI verde; merge pendiente de GATE1"},
+    "REA-02-OPTIMAL-SIZE": {"estado": "IN_PROGRESS", "commit": "e8990fd8", "deploy_sha": null, "gate": "PR #1017 CI verde; merge pendiente de GATE1"},
+    "REA-05-ATOMIC-CAUSE": {"estado": "IN_PROGRESS", "commit": "72aca3d5", "deploy_sha": null, "gate": "PR #1014 CI verde; merge pendiente de GATE1"},
+    "REA-06-POBLACION": {"estado": "IN_PROGRESS", "commit": "78ab15ee", "deploy_sha": null, "gate": "PR #1013 CI verde; merge pendiente de GATE1"},
+    "REA-07-REVERT-TRACE": {"estado": "IN_PROGRESS", "commit": "098d1c3a", "deploy_sha": null, "gate": "PR #1016 CI verde; merge pendiente de GATE1"},
+    "REA-03-V3-MATH": {"estado": "IN_PROGRESS", "commit": "pendiente-gate", "deploy_sha": null, "gate": "cargo test -p searcher-rs --lib rea_03 (background)"}
+  },
+  "followups": [
+    "REA-03-WIRE: el gate del backlog (ledger V3 contiguo en reledger_at) no es alcanzable sin plomería de datos: RouteLeg (prioritization-spine/src/route_plan.rs:27) NO trae sqrt_price_x96/liquidity; ReservesCache (triangular_engine.rs:84) es V2-only (U256,U256); reledger_at (size_optimizer.rs:1398) no tiene Redis ni chain_id. Requiere: slot0 cache en StateProjector + campos V3 en RouteLeg + emisores.",
+    "REA-04-NEG-CYCLE: Bellman-Ford sobre grafo de pools (math-engine/src/route_math.rs ya tiene rate_to_bellman_ford_weight; falta el ciclo completo).",
+    "REA-18-V3-SIM: consumir v3_get_sqrt_ratio_at_tick/v3_get_amount*_delta en simulator-v2 para simulación V3 exacta."
+  ],
+  "next_unit": "REA-04-NEG-CYCLE",
+  "death_criterion_fired": false,
+  "mode": "loop",
+  "notes": "Loop inicializado 2026-10-21 desde estado real: 5 PRs P0 abiertos/verdes (GATE1 del equipo en vuelo), REA-03 math aterrizada, cableado declarado FOLLOWUP."
+}

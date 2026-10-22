@@ -1966,3 +1966,300 @@ mod v3_spot_snapshot_tests {
         assert!(snap.virtual_reserves_hint.is_finite() && snap.virtual_reserves_hint > 0.0);
     }
 }
+
+// ============================================================================
+// REA-03-V3-MATH — Uniswap V3 core math (TickMath + SqrtPriceMath)
+// ============================================================================
+//
+// REA: Uniswap/v3-core contracts/libraries/TickMath.sol:23-54 @ aab5aa0
+// REA: Uniswap/v3-core contracts/libraries/SqrtPriceMath.sol:153-194 @ aab5aa0
+// Licencia origen: BUSL-1.1 con Change Date 2023-04-01 (vencida) -> el fichero
+// declara SPDX GPL-2.0-or-later. PORTADO: matematica extraida, cero lineas
+// verbatim (ver docs/rea/units/REA-03-V3-MATH.md).
+//
+// Vectores de origen (test del upstream, byte-exactos):
+//   test/TickMath.spec.ts:31-53        -> min/max/min+1/max-1
+//   test/SqrtPriceMath.spec.ts:240-338 -> getAmount0/1Delta roundUp vs roundDown
+//
+// R8: estas funciones devuelven None (nunca un valor fabricado) cuando el
+// input cae fuera del dominio canonico (tick fuera de rango, sqrt precio
+// cero, denominador cero, resultado > U256).
+
+/// `MIN_TICK` / `MAX_TICK` (TickMath.sol:9-11).
+pub const REA_V3_MIN_TICK: i32 = -887_272;
+pub const REA_V3_MAX_TICK: i32 = 887_272;
+
+/// Q96 = 2^96 (FixedPoint96.RESOLUTION en Uniswap V3).
+#[inline]
+fn rea_q96() -> U256 {
+    U256::one() << 96u32
+}
+
+/// `getSqrtRatioAtTick(tick)` — sqrt(1.0001^tick) * 2^96 como U256 exacto.
+///
+/// Port entero del algoritmo de `TickMath.sol` (constantes Q128.128 de
+/// `1.0001^(2^i)`). `None` si `|tick| > 887272` — el `require(...,'T')` del
+/// upstream, sin panic.
+pub fn v3_get_sqrt_ratio_at_tick(tick: i32) -> Option<U256> {
+    let abs_tick = tick.unsigned_abs();
+    if abs_tick > REA_V3_MAX_TICK as u32 {
+        return None;
+    }
+    // 1.0001^(2^i) en Q128.128, i = 1..=19 (TickMath.sol:28-46).
+    const RATIOS: [(u32, &str); 19] = [
+        (0x2, "fff97272373d413259a46990580e213a"),
+        (0x4, "fff2e50f5f656932ef12357cf3c7fdcc"),
+        (0x8, "ffe5caca7e10e4e61c3624eaa0941cd0"),
+        (0x10, "ffcb9843d60f6159c9db58835c926644"),
+        (0x20, "ff973b41fa98c081472e6896dfb254c0"),
+        (0x40, "ff2ea16466c96a3843ec78b326b52861"),
+        (0x80, "fe5dee046a99a2a811c461f1969c3053"),
+        (0x100, "fcbe86c7900a88aedcffc83b479aa3a4"),
+        (0x200, "f987a7253ac413176f2b074cf7815e54"),
+        (0x400, "f3392b0822b70005940c7a398e4b70f3"),
+        (0x800, "e7159475a2c29b7443b29c7fa6e889d9"),
+        (0x1000, "d097f3bdfd2022b8845ad8f792aa5825"),
+        (0x2000, "a9f746462d870fdf8a65dc1f90e061e5"),
+        (0x4000, "70d869a156d2a1b890bb3df62baf32f7"),
+        (0x8000, "31be135f97d08fd981231505542fcfa6"),
+        (0x10000, "9aa508b5b7a84e1c677de54f3e99bc9"),
+        (0x20000, "5d6af8dedb81196699c329225ee604"),
+        (0x40000, "2216e584f5fa1ea926041bedfe98"),
+        (0x80000, "48a170391f7dc42444e8fa2"),
+    ];
+    let mut ratio = if abs_tick & 1 != 0 {
+        U256::from_str_radix("fffcb933bd6fad37aa2d162d1a594001", 16).ok()?
+    } else {
+        U256::one() << 128u32
+    };
+    for (bit, hex) in RATIOS {
+        if abs_tick & bit != 0 {
+            let m = U256::from_str_radix(hex, 16).ok()?;
+            ratio = (ratio * m) >> 128u32;
+        }
+    }
+    if tick > 0 {
+        ratio = U256::MAX / ratio;
+    }
+    // Q128.128 -> Q128.96 redondeando hacia arriba (TickMath.sol:50-53).
+    let mut sqrt_price_x96 = ratio >> 32u32;
+    if ratio & (U256::from((1u128 << 32) - 1)) != U256::zero() {
+        sqrt_price_x96 = sqrt_price_x96.checked_add(U256::one())?;
+    }
+    Some(sqrt_price_x96)
+}
+
+/// `FullMath.mulDivRoundingUp(a, b, denom)` — ceil(a*b/denom) en precision
+/// completa (U512 intermedio). `None` en denom=0 o cociente > U256.
+pub fn v3_mul_div_rounding_up(a: U256, b: U256, denom: U256) -> Option<U256> {
+    if denom.is_zero() {
+        return None;
+    }
+    let prod: U512 = a.full_mul(b);
+    let mut db = [0u8; 64];
+    denom.to_big_endian(&mut db[32..64]);
+    let d = U512::from_big_endian(&db);
+    let mut q = prod / d;
+    if prod % d != U512::zero() {
+        q = q + U512::one();
+    }
+    let mut qb = [0u8; 64];
+    q.to_big_endian(&mut qb);
+    if qb[..32].iter().any(|&byte| byte != 0) {
+        return None; // cociente no cabe en U256 — no se estrecha a ciegas
+    }
+    Some(U256::from_big_endian(&qb[32..64]))
+}
+
+/// `UnsafeMath.divRoundingUp(a, b)` — ceil(a/b). `None` en b=0 / overflow.
+pub fn v3_div_rounding_up(a: U256, b: U256) -> Option<U256> {
+    if b.is_zero() {
+        return None;
+    }
+    let q = a / b;
+    if a % b != U256::zero() {
+        q.checked_add(U256::one())
+    } else {
+        Some(q)
+    }
+}
+
+/// `SqrtPriceMath.getAmount0Delta(sqrtA, sqrtB, liquidity, roundUp)` —
+/// token0 necesario para cubrir la posicion entre ambos precios:
+/// `L * (sqrtB - sqrtA) / (sqrtB * sqrtA)` con la semantica de redondeo del
+/// upstream (mulDivRoundingUp dentro de un divRoundingUp cuando roundUp).
+pub fn v3_get_amount0_delta(
+    sqrt_ratio_a_x96: U256,
+    sqrt_ratio_b_x96: U256,
+    liquidity: U256,
+    round_up: bool,
+) -> Option<U256> {
+    let (a, b) = if sqrt_ratio_a_x96 > sqrt_ratio_b_x96 {
+        (sqrt_ratio_b_x96, sqrt_ratio_a_x96)
+    } else {
+        (sqrt_ratio_a_x96, sqrt_ratio_b_x96)
+    };
+    if a.is_zero() || b.is_zero() {
+        return None; // upstream require(sqrtRatioAX96 > 0) — sin panic
+    }
+    if liquidity.is_zero() || b == a {
+        return Some(U256::zero());
+    }
+    let numerator1 = liquidity << 96u32;
+    let numerator2 = b - a;
+    if round_up {
+        let inner = v3_mul_div_rounding_up(numerator1, numerator2, b)?;
+        v3_div_rounding_up(inner, a)
+    } else {
+        Some(mul_div(numerator1, numerator2, b) / a)
+    }
+}
+
+/// `SqrtPriceMath.getAmount1Delta(sqrtA, sqrtB, liquidity, roundUp)` —
+/// token1 necesario: `L * (sqrtB - sqrtA) / Q96`.
+pub fn v3_get_amount1_delta(
+    sqrt_ratio_a_x96: U256,
+    sqrt_ratio_b_x96: U256,
+    liquidity: U256,
+    round_up: bool,
+) -> Option<U256> {
+    let (a, b) = if sqrt_ratio_a_x96 > sqrt_ratio_b_x96 {
+        (sqrt_ratio_b_x96, sqrt_ratio_a_x96)
+    } else {
+        (sqrt_ratio_a_x96, sqrt_ratio_b_x96)
+    };
+    if liquidity.is_zero() || b == a {
+        return Some(U256::zero());
+    }
+    let delta = b - a;
+    if round_up {
+        v3_mul_div_rounding_up(liquidity, delta, rea_q96())
+    } else {
+        Some(mul_div(liquidity, delta, rea_q96()))
+    }
+}
+
+#[cfg(test)]
+mod rea_v3_math_tests {
+    use super::*;
+
+    fn q96() -> U256 {
+        U256::one() << 96u32
+    }
+
+    fn e18() -> U256 {
+        U256::from(10u128).pow(18u128.into())
+    }
+
+    /// encodePriceSqrt(121, 100) del harness del upstream (mismo literal que
+    /// usa SqrtPriceMath.spec.ts: la raiz de 1.21 en Q96).
+    fn sqrt_121_100() -> U256 {
+        U256::from_dec_str("87150978765690771352898345369").unwrap()
+    }
+
+    // ---- TickMath.getSqrtRatioAtTick (TickMath.spec.ts:31-53) --------------
+
+    #[test]
+    fn rea_03_tickmath_upstream_vectors_byte_exact() {
+        assert_eq!(
+            v3_get_sqrt_ratio_at_tick(-887_272).unwrap(),
+            U256::from(4_295_128_739u64)
+        );
+        assert_eq!(
+            v3_get_sqrt_ratio_at_tick(-887_271).unwrap(),
+            U256::from(4_295_343_490u64)
+        );
+        assert_eq!(
+            v3_get_sqrt_ratio_at_tick(887_272).unwrap(),
+            U256::from_dec_str("1461446703485210103287273052203988822378723970342").unwrap()
+        );
+        assert_eq!(
+            v3_get_sqrt_ratio_at_tick(887_271).unwrap(),
+            U256::from_dec_str("1461373636630004318706518188784493106690254656249").unwrap()
+        );
+        // tick 0 = 1.0 en Q96 (la identidad del algoritmo de ratios).
+        assert_eq!(v3_get_sqrt_ratio_at_tick(0).unwrap(), q96());
+    }
+
+    #[test]
+    fn rea_03_tickmath_out_of_range_is_none_never_panic() {
+        // El require(...,'T') del upstream, en la forma R8: None.
+        assert!(v3_get_sqrt_ratio_at_tick(-887_273).is_none());
+        assert!(v3_get_sqrt_ratio_at_tick(887_273).is_none());
+        assert!(v3_get_sqrt_ratio_at_tick(i32::MIN).is_none());
+    }
+
+    #[test]
+    fn rea_03_tickmath_strictly_monotone() {
+        // Propiedad falsable: el ratio crece estrictamente con el tick.
+        let ticks = [-50_000i32, -1, 0, 1, 50_000];
+        let mut prev = U256::zero();
+        for (i, tick) in ticks.iter().enumerate() {
+            let cur = v3_get_sqrt_ratio_at_tick(*tick).unwrap();
+            if i > 0 {
+                assert!(cur > prev, "tick {tick}: sqrt ratio must strictly increase");
+            }
+            prev = cur;
+        }
+    }
+
+    // ---- SqrtPriceMath.getAmount0/1Delta (SqrtPriceMath.spec.ts:240-338) ---
+
+    #[test]
+    fn rea_03_amount_deltas_upstream_vectors_byte_exact() {
+        // getAmount0Delta: '90909090909090910', roundDown = amount - 1
+        let amount0_up = v3_get_amount0_delta(q96(), sqrt_121_100(), e18(), true).unwrap();
+        assert_eq!(
+            amount0_up,
+            U256::from_dec_str("90909090909090910").unwrap()
+        );
+        let amount0_down = v3_get_amount0_delta(q96(), sqrt_121_100(), e18(), false).unwrap();
+        assert_eq!(amount0_down, amount0_up - U256::one());
+
+        // getAmount1Delta: '100000000000000000', roundDown = amount - 1
+        let amount1_up = v3_get_amount1_delta(q96(), sqrt_121_100(), e18(), true).unwrap();
+        assert_eq!(
+            amount1_up,
+            U256::from_dec_str("100000000000000000").unwrap()
+        );
+        let amount1_down = v3_get_amount1_delta(q96(), sqrt_121_100(), e18(), false).unwrap();
+        assert_eq!(amount1_down, amount1_up - U256::one());
+    }
+
+    #[test]
+    fn rea_03_amount_deltas_degenerate_cases_are_zero_or_none() {
+        // L = 0 -> 0 (vector del upstream: 'returns 0 if liquidity is 0').
+        assert_eq!(
+            v3_get_amount0_delta(q96(), sqrt_121_100(), U256::zero(), true).unwrap(),
+            U256::zero()
+        );
+        assert_eq!(
+            v3_get_amount1_delta(q96(), sqrt_121_100(), U256::zero(), true).unwrap(),
+            U256::zero()
+        );
+        // Precios iguales -> 0 (vector del upstream).
+        assert_eq!(
+            v3_get_amount1_delta(q96(), q96(), e18(), true).unwrap(),
+            U256::zero()
+        );
+        // sqrtA = 0 -> None (require del upstream, sin panic).
+        assert!(v3_get_amount0_delta(U256::zero(), q96(), e18(), true).is_none());
+    }
+
+    #[test]
+    fn rea_03_negative_control_rounding_is_not_floor_only() {
+        // Control negativo (REA_MASTER §5.PASO 5): una implementacion
+        // floor-only devuelve 90909090909090909 donde el vector del upstream
+        // exige 90909090909090910; el test FALLA si se "simplifica" el
+        // redondeo ceil/floor — o sea, no es tautologico. Ademas el guard de
+        // rango debe devolver None en vez de un ratio fabricado (R8).
+        let up = v3_get_amount0_delta(q96(), sqrt_121_100(), e18(), true).unwrap();
+        let down = v3_get_amount0_delta(q96(), sqrt_121_100(), e18(), false).unwrap();
+        assert_eq!(up, down + U256::one());
+        assert_ne!(
+            up, down,
+            "roundUp == roundDown => the ceil/floor distinction was lost"
+        );
+        assert!(v3_get_sqrt_ratio_at_tick(887_273).is_none());
+    }
+}
