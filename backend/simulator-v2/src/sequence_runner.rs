@@ -49,6 +49,8 @@ use revm::context_interface::{ContextTr, TransactTo};
 use revm::database::CacheDB;
 use revm::handler::{MainBuilder, MainnetContext, MainnetEvm};
 use revm::interpreter::interpreter::EthInterpreter;
+use revm::interpreter::interpreter_types::Jumps;
+use revm::interpreter::{CallInputs, CreateInputs, CreateOutcome, Interpreter};
 use revm::primitives::{hardfork::SpecId, Address, Bytes, U256};
 use revm::{Context, InspectCommitEvm, InspectEvm, Inspector, MainContext};
 use sha2::{Digest, Sha256};
@@ -148,9 +150,23 @@ pub struct SequenceCall {
 /// Outcome of a single `call()`.
 #[derive(Debug, Clone)]
 pub enum CallOutcome {
-    Success { gas_used: u64, output: Vec<u8> },
-    Reverted { gas_used: u64, reason: String },
-    Halted { gas_used: u64, reason: String },
+    Success {
+        gas_used: u64,
+        output: Vec<u8>,
+    },
+    /// REVERT-TRACE-01: `frame` names the contract address + pc + opcode of
+    /// the frame that reverted (the innermost origin of the unwind).
+    /// `None` = not computed (no interpreter frame ran — R8, never a
+    /// fabricated empty frame).
+    Reverted {
+        gas_used: u64,
+        reason: String,
+        frame: Option<RevertFrame>,
+    },
+    Halted {
+        gas_used: u64,
+        reason: String,
+    },
 }
 
 impl CallOutcome {
@@ -176,9 +192,22 @@ pub struct SequenceDeploy {
 /// decoded from REVM's `Output::Create` — never computed client-side.
 #[derive(Debug, Clone)]
 pub enum DeployOutcome {
-    Success { address: Address, gas_used: u64 },
-    Reverted { gas_used: u64, reason: String },
-    Halted { gas_used: u64, reason: String },
+    Success {
+        address: Address,
+        gas_used: u64,
+    },
+    /// REVERT-TRACE-01: `frame` names the reverting init-code frame
+    /// (`address = "<create>"`, with its pc + opcode). `None` = not
+    /// computed (R8).
+    Reverted {
+        gas_used: u64,
+        reason: String,
+        frame: Option<RevertFrame>,
+    },
+    Halted {
+        gas_used: u64,
+        reason: String,
+    },
 }
 
 impl DeployOutcome {
@@ -216,19 +245,26 @@ pub struct SequenceResult {
 /// hot path) wraps the entire simulation in `spawn_blocking` so the
 /// tokio runtime is never parked on REVM.
 ///
-/// `I` is the revm inspector attached to the inner `Evm`. It defaults to
-/// [`NoopInspector`], so every existing call site (`SequenceContext::new`,
-/// `&mut SequenceContext`, ...) is unchanged and production runs the SAME
-/// single execution path with a zero-size, do-nothing inspector (
-/// monomorphised away — there is no fork of the production context, which is
-/// the recurring defect this repo keeps paying for). The revert tracer that
-/// names a failing frame is `revert-trace`-gated.
+/// `I` is the revm inspector attached to the inner `Evm`. The PRODUCTION
+/// default ([`SequenceContext::new`]) is now the REVERT-TRACE-01
+/// `RevertFrameInspector` — the revert stops being anonymous: every
+/// `call()`/`deploy()` revert carries the failing frame's address + pc +
+/// opcode, on the SAME single execution path (still no fork of the
+/// production context, which is the recurring defect this repo keeps
+/// paying for). `NoopInspector` remains available for callers that want a
+/// zero-hook run, and the verbose stack-top tracer stays
+/// `revert-trace`-gated.
 pub struct SequenceContext<I = NoopInspector> {
     evm: MainnetEvm<MainnetContext<CacheDB<LazyDb>>, I>,
     reads: HashMap<String, U256>,
     gas_used_total: u64,
     hasher: Sha256,
     successful_calls: u64,
+    /// REVERT-TRACE-01: reverting frames whose reverts were HANDLED by a
+    /// parent frame (the transact still succeeded) — retained for
+    /// diagnostics, never fatal. R8: empty = none observed, never
+    /// fabricated.
+    handled_revert_frames: Vec<RevertFrame>,
 }
 
 /// EVM block env for the paper path, taken from the pinned block header.
@@ -271,17 +307,321 @@ pub struct NoopInspector;
 
 impl<CTX> Inspector<CTX, EthInterpreter> for NoopInspector {}
 
-/// Bound for `SequenceContext<I>`. Blanket-implemented for every revm
-/// `Inspector` over the mainnet context that is also `Default`, so both
-/// `NoopInspector` and the feature-gated tracer fit without per-call-site
+/// Bound for `SequenceContext<I>`. Implemented for every revm `Inspector`
+/// over the mainnet context that is also `Default`, so both `NoopInspector`
+/// and the production `RevertFrameInspector` fit without per-call-site
 /// bounds (and without the signature ripple reaching every helper).
+///
+/// REVERT-TRACE-01: the bound now carries `take_revert_frames` so the
+/// generic `call()`/`deploy()` can drain whatever the attached inspector
+/// recorded. `NoopInspector` yields none (nothing is recorded); the frame
+/// inspector yields the reverting frames of the last transact.
 pub trait ContextInspector:
     Inspector<MainnetContext<CacheDB<LazyDb>>, EthInterpreter> + Default
 {
+    /// Drain the reverting frames recorded since the last transact
+    /// (appearance order, innermost-first). Empty for inspectors that do
+    /// not record frames — R8: absence of a frame is NEVER fabricated.
+    fn take_revert_frames(&mut self) -> Vec<RevertFrame>;
 }
-impl<T> ContextInspector for T where
-    T: Inspector<MainnetContext<CacheDB<LazyDb>>, EthInterpreter> + Default
-{
+
+impl ContextInspector for NoopInspector {
+    fn take_revert_frames(&mut self) -> Vec<RevertFrame> {
+        Vec::new()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// REVERT-TRACE-01 — the production revert frame (address + pc + opcode)
+// ---------------------------------------------------------------------------
+//
+// REA provenance (docs/rea/FICHA_REA_TRACE.md):
+//   * frame semantics (innermost-first attribution, handled-vs-fatal):
+//     flashbots/mev-inspect-rs@b6e2f0a4784d063375734e2773fa7196cf43174d
+//     (archived; Tier 3 REFERENCE ONLY — zero lines of its code are
+//     ported, and its parity traces carry no pc/opcode at all);
+//   * Panic(uint256) selector 0x4e487b71, the ten canonical panic codes
+//     and REVERT = instruction 0xfd: Solidity docs,
+//     "Panic via assert and Error via require"
+//     (docs.soliditylang.org/en/latest/control-structures.html);
+//   * the decode vectors are DERIVED (docs/rea/verifica_vectores_rea_trace.py,
+//     22/22 OK) — no upstream candidate carries an address+pc+opcode
+//     vector; declared in the ficha, transcribed byte-literal into the
+//     tests below.
+//
+// The revert was anonymous in production: `CallOutcome::Reverted { reason }`
+// carried only the top-level decoded string, and the tracer that names the
+// failing frame was `revert-trace`-gated (test-only). This section makes
+// the frame a PRODUCTION artifact: ONE execution path (no noop-vs-tracer
+// fork), captured on revert only.
+
+/// Structured classification of revert data. The DISPLAY of
+/// [`decode_revert_reason`] — the string that reaches `fail_reason` and the
+/// three baseline tests (`decode_revert_reason_parses_error_string`,
+/// `decode_revert_reason_hex_fallback`,
+/// `decode_revert_reason_keeps_the_panic_code`) — is UNCHANGED; the
+/// classification travels here, beside it (ficha §2.1: `deadbeef` is both a
+/// valid custom-error selector and raw data — the ambiguity is not
+/// resolvable without an ABI, so the display keeps the hex fallback while
+/// the kind records the structured verdict).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RevertKind {
+    /// ABI `Error(string)` (selector `0x08c379a0`) with the decoded UTF-8
+    /// message — `require(cond, "msg")` / `revert("msg")`.
+    ErrorString(String),
+    /// ABI `Panic(uint256)` (selector `0x4e487b71`, exact 36-byte payload).
+    /// `named` is `Some` for the ten canonical Solidity panic codes
+    /// (0x00, 0x01, 0x11, 0x12, 0x21, 0x22, 0x31, 0x32, 0x41, 0x51).
+    Panic {
+        code: u64,
+        named: Option<&'static str>,
+    },
+    /// 4+ bytes that are neither Error nor Panic — a custom-error selector
+    /// (`revert CustomError(...)`) or raw data. NOT nameable without the
+    /// contract ABI; only the selector is recorded.
+    Selector([u8; 4]),
+    /// Non-empty payload shorter than 4 bytes (no selector fits).
+    Raw,
+    /// `revert()` / `require(false)` — no data at all, not even a selector.
+    Empty,
+}
+
+impl RevertKind {
+    /// The ten canonical `Panic(uint256)` code names, verbatim from the
+    /// Solidity docs table ("Panic via assert and Error via require").
+    pub fn panic_code_name(code: u64) -> Option<&'static str> {
+        match code {
+            0x00 => Some("generic compiler panic"),
+            0x01 => Some("assert failed"),
+            0x11 => Some("arithmetic underflow/overflow"),
+            0x12 => Some("division or modulo by zero"),
+            0x21 => Some("enum conversion out of range"),
+            0x22 => Some("storage byte array incorrectly encoded"),
+            0x31 => Some("pop on empty array"),
+            0x32 => Some("array index out of bounds"),
+            0x41 => Some("too much memory allocated"),
+            0x51 => Some("zero-initialized internal function called"),
+            _ => None,
+        }
+    }
+
+    /// Classify revert payload bytes (the dispatch of ficha §2). Mirrors
+    /// `decode_revert_reason`'s `Error(string)` validity checks (selector +
+    /// length bounds + UTF-8) so the structured kind and the display string
+    /// never disagree about what they saw.
+    pub fn classify(data: &[u8]) -> Self {
+        const ERROR_SELECTOR: [u8; 4] = [0x08, 0xc3, 0x79, 0xa0];
+        const PANIC_SELECTOR: [u8; 4] = [0x4e, 0x48, 0x7b, 0x71];
+        if data.is_empty() {
+            return Self::Empty;
+        }
+        if data.len() >= 68 && data[0..4] == ERROR_SELECTOR {
+            if let Ok(len_bytes) = <[u8; 4]>::try_from(&data[64..68]) {
+                let msg_len = u32::from_be_bytes(len_bytes) as usize;
+                if data.len() >= 68 + msg_len {
+                    if let Ok(s) = std::str::from_utf8(&data[68..68 + msg_len]) {
+                        return Self::ErrorString(s.to_owned());
+                    }
+                }
+            }
+        }
+        if data.len() == 36 && data[0..4] == PANIC_SELECTOR {
+            // Full 32-byte ABI word (the canonical codes fit one byte; a
+            // wider word saturates instead of being truncated to its low
+            // byte, and stays `named: None`).
+            let word = U256::from_be_slice(&data[4..36]);
+            let code = u64::try_from(word).unwrap_or(u64::MAX);
+            return Self::Panic {
+                code,
+                named: Self::panic_code_name(code),
+            };
+        }
+        if data.len() >= 4 {
+            let mut selector = [0u8; 4];
+            selector.copy_from_slice(&data[0..4]);
+            return Self::Selector(selector);
+        }
+        Self::Raw
+    }
+
+    /// Human display of the classification (the derived-vector model of
+    /// `docs/rea/verifica_vectores_rea_trace.py::decode_revert`). For
+    /// `Selector`/`Raw` the display is the hex fallback of the payload
+    /// (capped at 36 bytes, same rule as `decode_revert_reason`), because
+    /// without an ABI the bytes carry no nameable meaning.
+    pub fn display(&self, data: &[u8]) -> String {
+        match self {
+            Self::Empty => "empty".to_string(),
+            Self::ErrorString(msg) => format!("Error(string): {msg}"),
+            Self::Panic { code, named } => match named {
+                Some(n) => format!("Panic(0x{code:02x}): {n}"),
+                None => format!("Panic(0x{code:02x}): unknown code"),
+            },
+            Self::Selector(_) | Self::Raw => {
+                let end = data.len().min(36);
+                format!("0x{}", hex::encode(&data[..end]))
+            }
+        }
+    }
+}
+
+/// The frame that produced a revert — REVERT-TRACE-01. The revert stops
+/// being anonymous: `address` is the EXECUTING code address of the frame
+/// that reverted (revm `inputs.bytecode_address` at `call_end`;
+/// `"<create>"` for a reverting contract-creation frame), `pc`/`opcode`
+/// are the last instruction that frame executed (the `REVERT` itself —
+/// `0xfd` — per the Solidity docs' revert instruction, or `INVALID`
+/// `0xfe` on legacy compiler panics).
+///
+/// Attribution (mev-inspect-rs semantics, ficha §3): frames unwrap
+/// innermost-first, so the FIRST reverting frame observed is the ORIGIN —
+/// a `Panic(uint256)` is attributed to the contract that panicked, not to
+/// the `catch` that re-encoded it higher up the unwind. `fatal` is `true`
+/// ONLY on the frame carried by a top-level `Reverted` outcome; a subcall
+/// revert the parent HANDLED (low-level call returning false, try/catch)
+/// is recorded with `fatal = false` and never fails the sequence — a
+/// handled subtrace revert does not imply a reverted transaction.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RevertFrame {
+    /// Executing code address of the reverting frame (revm `Address` debug
+    /// format).
+    pub address: String,
+    /// Call depth (0 = top-level).
+    pub depth: usize,
+    /// Program counter of the last instruction the frame executed.
+    pub pc: usize,
+    /// Opcode at that pc (`0xfd` REVERT / `0xfe` INVALID / ...).
+    pub opcode: u8,
+    /// Structured classification of the revert payload.
+    pub kind: RevertKind,
+    /// Raw revert payload (kept verbatim; revert data is tiny by nature).
+    pub data: Vec<u8>,
+    /// `true` only when this frame is the origin of a FATAL unwind (the
+    /// top-level outcome itself reverted). `false` = handled subcall revert.
+    pub fatal: bool,
+}
+
+impl RevertFrame {
+    /// Raw payload as `0x`-prefixed hex (diagnostics display).
+    pub fn data_hex(&self) -> String {
+        format!("0x{}", hex::encode(&self.data))
+    }
+
+    /// Compact one-line annotation for the persisted `fail_reason`:
+    /// `@<address> pc=0x<pc> op=0x<opcode> <kind display>` — the three
+    /// coordinates that name the frame plus its classification.
+    pub fn annotation(&self) -> String {
+        format!(
+            "@{} pc=0x{:x} op=0x{:02x} {}",
+            self.address,
+            self.pc,
+            self.opcode,
+            self.kind.display(&self.data)
+        )
+    }
+}
+
+/// The innermost reverting frame's last executed instruction.
+#[derive(Debug, Clone, Copy)]
+struct LastStep {
+    pc: usize,
+    opcode: u8,
+}
+
+/// REVERT-TRACE-01 production inspector: records the reverting frames of
+/// every transact — address, depth, pc, opcode, structured kind — with
+/// per-step bookkeeping limited to the last instruction's `pc`/`opcode`
+/// (no per-step stack snapshot: the 12-word stack top stays in the
+/// `revert-trace`-gated tracer for panic-operand forensics).
+/// `call()`/`deploy()` drain the recorded frames after each transact and
+/// attach the origin (first, innermost) to the `Reverted` outcome; frames
+/// whose reverts were handled by a parent are exposed via
+/// [`SequenceContext::handled_revert_frames`] instead.
+#[derive(Debug, Default)]
+pub struct RevertFrameInspector {
+    depth: usize,
+    last: Option<LastStep>,
+    frames: Vec<RevertFrame>,
+}
+
+impl RevertFrameInspector {
+    /// Drain the frames recorded since the last transact.
+    fn take_frames(&mut self) -> Vec<RevertFrame> {
+        std::mem::take(&mut self.frames)
+    }
+
+    fn capture(&mut self, address: String, data: &[u8]) {
+        let last = self.last;
+        // `self.depth` counts the call hooks entered (the top-level frame
+        // fires `call` too, so it sits at 1); the reported depth is the
+        // frame NESTING level (0 = top-level, 1 = one below, ...).
+        let depth = self.depth.saturating_sub(1);
+        self.frames.push(RevertFrame {
+            address,
+            depth,
+            pc: last.map(|s| s.pc).unwrap_or(0),
+            opcode: last.map(|s| s.opcode).unwrap_or(0),
+            kind: RevertKind::classify(data),
+            data: data.to_vec(),
+            fatal: false,
+        });
+    }
+}
+
+impl<CTX> Inspector<CTX, EthInterpreter> for RevertFrameInspector {
+    fn step(&mut self, interp: &mut Interpreter<EthInterpreter>, _context: &mut CTX) {
+        self.last = Some(LastStep {
+            pc: interp.bytecode.pc(),
+            opcode: interp.bytecode.opcode(),
+        });
+    }
+
+    fn call(
+        &mut self,
+        _context: &mut CTX,
+        _inputs: &mut CallInputs,
+    ) -> Option<revm::interpreter::CallOutcome> {
+        self.depth += 1;
+        None
+    }
+
+    fn call_end(
+        &mut self,
+        _context: &mut CTX,
+        inputs: &CallInputs,
+        outcome: &mut revm::interpreter::CallOutcome,
+    ) {
+        if outcome.result.result.is_revert() {
+            let address = format!("{:?}", inputs.bytecode_address);
+            let data = outcome.result.output.clone();
+            self.capture(address, data.as_ref());
+        }
+        self.depth = self.depth.saturating_sub(1);
+    }
+
+    fn create(&mut self, _context: &mut CTX, _inputs: &mut CreateInputs) -> Option<CreateOutcome> {
+        self.depth += 1;
+        None
+    }
+
+    fn create_end(
+        &mut self,
+        _context: &mut CTX,
+        _inputs: &CreateInputs,
+        outcome: &mut CreateOutcome,
+    ) {
+        if outcome.result.result.is_revert() {
+            let data = outcome.result.output.clone();
+            self.capture("<create>".to_string(), data.as_ref());
+        }
+        self.depth = self.depth.saturating_sub(1);
+    }
+}
+
+impl ContextInspector for RevertFrameInspector {
+    fn take_revert_frames(&mut self) -> Vec<RevertFrame> {
+        self.take_frames()
+    }
 }
 
 /// SIM-REVERT-TRACE-01 (feature `revert-trace`): a test-only inspector that
@@ -458,6 +798,16 @@ mod revert_trace {
 }
 
 #[cfg(feature = "revert-trace")]
+impl ContextInspector for revert_trace::RevertTracer {
+    // The gated tracer PRINTS its frames (VARIANCE_BENCH_REVERT_FRAME=…);
+    // it does not expose them through the outcome — R8: it records none for
+    // the generic drain, never a fabricated placeholder.
+    fn take_revert_frames(&mut self) -> Vec<RevertFrame> {
+        Vec::new()
+    }
+}
+
+#[cfg(feature = "revert-trace")]
 impl SequenceContext<revert_trace::RevertTracer> {
     /// Build a context whose inspector names the innermost reverting frame
     /// (address + depth + pc + opcode + raw data) and prints it once.
@@ -471,14 +821,23 @@ impl SequenceContext<revert_trace::RevertTracer> {
     }
 }
 
-impl SequenceContext<NoopInspector> {
+impl SequenceContext<RevertFrameInspector> {
     /// Build a fresh context around a freshly-constructed `LazyDb`. The
     /// `chain_id` and `block_number` define the REVM environment that
     /// every step shares — they are NEVER mutated by `call()`.
     ///
-    /// Uses the zero-size [`NoopInspector`] — this is the production context.
+    /// REVERT-TRACE-01: this PRODUCTION context carries the
+    /// `RevertFrameInspector`, so every reverted `call()`/`deploy()` names
+    /// its failing frame (address + pc + opcode + structured kind) instead
+    /// of returning an anonymous decoded string. One execution path — the
+    /// frame is captured in production, not behind a diagnostic feature.
     pub fn new(lazy_db: LazyDb, chain_id: u64, block_number: u64) -> Self {
-        Self::new_with_inspector(lazy_db, chain_id, block_number, NoopInspector)
+        Self::new_with_inspector(
+            lazy_db,
+            chain_id,
+            block_number,
+            RevertFrameInspector::default(),
+        )
     }
 
     /// Build from a canonical header using the chain's supported fork schedule.
@@ -496,13 +855,14 @@ impl SequenceContext<NoopInspector> {
                 cfg.chain_id = chain_id;
                 cfg.set_spec_and_mainnet_gas_params(spec);
             })
-            .build_mainnet_with_inspector(NoopInspector);
+            .build_mainnet_with_inspector(RevertFrameInspector::default());
         Ok(Self {
             evm,
             reads: HashMap::new(),
             gas_used_total: 0,
             hasher: Sha256::new(),
             successful_calls: 0,
+            handled_revert_frames: Vec::new(),
         })
     }
 }
@@ -556,6 +916,7 @@ where
             gas_used_total: 0,
             hasher: Sha256::new(),
             successful_calls: 0,
+            handled_revert_frames: Vec::new(),
         }
     }
 
@@ -581,6 +942,17 @@ where
         self.evm.ctx.cfg.disable_base_fee = true;
         let result = self.evm.inspect_tx(tx);
         self.evm.ctx.cfg.disable_base_fee = previous;
+        // REVERT-TRACE-01: view reverts surface as typed SequenceErrors on
+        // the read helpers; drain whatever the inspector recorded so it can
+        // never leak into the next committed call()'s frame attribution.
+        let stray_frames = self.evm.inspector.take_revert_frames();
+        if !stray_frames.is_empty() {
+            debug!(
+                event = "sequence_runner.view_revert_frames_discarded",
+                count = stray_frames.len(),
+                "read-only transact reverted; frames not attributed to any committed step"
+            );
+        }
         result
             .map(|r| r.result)
             .map_err(|e| SequenceError::TransactInfra(e.to_string()))
@@ -671,10 +1043,24 @@ where
             .inspect_tx_commit(tx)
             .map_err(|e| SequenceError::TransactInfra(format!("{e}")))?;
 
+        // REVERT-TRACE-01: drain the frames the inspector recorded for THIS
+        // transact before classifying the outcome — the origin (first,
+        // innermost) rides the Reverted variant; handled subcall reverts are
+        // retained for diagnostics.
+        let frames = self.evm.inspector.take_revert_frames();
+
         Ok(match exec {
             ExecutionResult::Success { gas, output, .. } => {
                 let gas_used = gas.tx_gas_used();
                 self.gas_used_total += gas_used;
+                if !frames.is_empty() {
+                    debug!(
+                        event = "sequence_runner.deploy_handled_subcall_reverts",
+                        count = frames.len(),
+                        "deploy succeeded while subcalls reverted (handled); frames retained"
+                    );
+                    self.handled_revert_frames.extend(frames);
+                }
                 // revm 42: `Output` is an enum — only the `Create` variant carries
                 // the deployed address. Fail-closed on anything else.
                 let address = match output {
@@ -717,13 +1103,34 @@ where
                 let gas_used = gas.tx_gas_used();
                 self.gas_used_total += gas_used;
                 let reason = decode_revert_reason(&output);
+                // The first recorded frame (innermost-first) is the origin
+                // of the FATAL unwind — mark it fatal and carry it. Frames
+                // recorded after it belong to the same unwind chain and are
+                // logged, not carried (the origin names the cause).
+                let mut frames = frames;
+                let frame = frames.first_mut().map(|f| {
+                    f.fatal = true;
+                    f.clone()
+                });
+                if frames.len() > 1 {
+                    debug!(
+                        event = "sequence_runner.deploy_revert_unwind_chain",
+                        deeper_frames = frames.len() - 1,
+                        "additional reverting frames observed in the same unwind"
+                    );
+                }
                 warn!(
                     event = "sequence_runner.deploy_revert",
                     label = %deploy.label,
                     gas_used,
                     reason = %reason,
+                    frame = frame.as_ref().map(|f| f.annotation()).as_deref(),
                 );
-                DeployOutcome::Reverted { gas_used, reason }
+                DeployOutcome::Reverted {
+                    gas_used,
+                    reason,
+                    frame,
+                }
             }
             ExecutionResult::Halt { reason, gas, .. } => {
                 let gas_used = gas.tx_gas_used();
@@ -770,11 +1177,26 @@ where
             .inspect_tx_commit(tx)
             .map_err(|e| SequenceError::TransactInfra(format!("{e}")))?;
 
+        // REVERT-TRACE-01: drain the frames the inspector recorded for THIS
+        // transact before classifying the outcome — the origin (first,
+        // innermost) rides the Reverted variant; handled subcall reverts are
+        // retained for diagnostics.
+        let frames = self.evm.inspector.take_revert_frames();
+
         let outcome = match exec {
             ExecutionResult::Success { gas, output, .. } => {
                 let gas_used = gas.tx_gas_used();
                 self.gas_used_total += gas_used;
                 self.successful_calls += 1;
+                if !frames.is_empty() {
+                    debug!(
+                        event = "sequence_runner.call_handled_subcall_reverts",
+                        label = %call.label,
+                        count = frames.len(),
+                        "call succeeded while subcalls reverted (handled); frames retained"
+                    );
+                    self.handled_revert_frames.extend(frames);
+                }
                 let bytes = output.into_data();
                 // Fold calldata + output into the combined trace hash.
                 self.hasher.update(&call.calldata);
@@ -793,13 +1215,37 @@ where
                 let gas_used = gas.tx_gas_used();
                 self.gas_used_total += gas_used;
                 let reason = decode_revert_reason(&output);
+                // The first recorded frame (innermost-first) is the origin
+                // of the FATAL unwind — mark it fatal and carry it. Frames
+                // recorded after it belong to the same unwind chain and are
+                // logged, not carried (the origin names the cause). A revert
+                // that ran no interpreter frames (e.g. validation-stage)
+                // carries None — R8, never a fabricated frame.
+                let mut frames = frames;
+                let frame = frames.first_mut().map(|f| {
+                    f.fatal = true;
+                    f.clone()
+                });
+                if frames.len() > 1 {
+                    debug!(
+                        event = "sequence_runner.call_revert_unwind_chain",
+                        label = %call.label,
+                        deeper_frames = frames.len() - 1,
+                        "additional reverting frames observed in the same unwind"
+                    );
+                }
                 warn!(
                     event = "sequence_runner.call_revert",
                     label = %call.label,
                     gas_used,
                     reason = %reason,
+                    frame = frame.as_ref().map(|f| f.annotation()).as_deref(),
                 );
-                CallOutcome::Reverted { gas_used, reason }
+                CallOutcome::Reverted {
+                    gas_used,
+                    reason,
+                    frame,
+                }
             }
             ExecutionResult::Halt { reason, gas, .. } => {
                 let gas_used = gas.tx_gas_used();
@@ -1034,6 +1480,21 @@ where
     /// `AmountSource::FromReadLabel` BEFORE building the backward call).
     pub fn reads(&self) -> &HashMap<String, U256> {
         &self.reads
+    }
+
+    /// REVERT-TRACE-01: reverting frames whose reverts were HANDLED by a
+    /// parent frame — the transact still succeeded, so they never ride an
+    /// outcome and are never fatal. Measured diagnostics (a reverted
+    /// subcall inside a successful swap is real signal, not noise); R8:
+    /// empty = none observed, never fabricated.
+    pub fn handled_revert_frames(&self) -> &[RevertFrame] {
+        &self.handled_revert_frames
+    }
+
+    /// REVERT-TRACE-01: drain the handled-revert ledger (after inspecting
+    /// it with [`Self::handled_revert_frames`]).
+    pub fn take_handled_revert_frames(&mut self) -> Vec<RevertFrame> {
+        std::mem::take(&mut self.handled_revert_frames)
     }
 }
 
@@ -1530,6 +1991,441 @@ mod tests {
         );
     }
 
+    // -----------------------------------------------------------------------
+    // REVERT-TRACE-01 — the production frame (address + pc + opcode)
+    // -----------------------------------------------------------------------
+
+    /// Seeds a code-less account with balance + nonce (the canonical caller
+    /// for committed paper calls).
+    fn seed_eoa(lazy: &LazyDb, address: Address, balance: u64) {
+        seed_account(
+            lazy,
+            address,
+            AccountInfo {
+                balance: U256::from(balance),
+                code_hash: KECCAK_EMPTY,
+                code: Some(Bytecode::new()),
+                ..Default::default()
+            },
+        );
+    }
+
+    /// Seeds a contract account with raw bytecode.
+    fn seed_contract(lazy: &LazyDb, address: Address, code_bytes: Vec<u8>) {
+        let code = Bytecode::new_raw(Bytes::from(code_bytes));
+        seed_account(
+            lazy,
+            address,
+            AccountInfo {
+                code_hash: code.hash_slow(),
+                code: Some(code),
+                ..Default::default()
+            },
+        );
+    }
+
+    /// `PUSH1 0 PUSH1 0 REVERT` — reverts with NO data at pc=4, opcode 0xfd.
+    const BARE_REVERT_CODE: [u8; 5] = [0x60, 0x00, 0x60, 0x00, 0xfd];
+
+    /// ACCEPTANCE (REVERT-TRACE-01): a known revert produces a trace that
+    /// names the contract ADDRESS, the PC of the REVERT (4 — two PUSH1 pairs
+    /// precede it) and the OPCODE (0xfd, the Solidity revert instruction).
+    /// The revert stops being anonymous: `Reverted` carries `Some(frame)`
+    /// marked `fatal` (it IS the top-level outcome).
+    #[test]
+    fn revert_frame_names_address_pc_opcode() {
+        let lazy = lazy_offline();
+        let caller = Address::from([0xa7; 20]);
+        let reverts = Address::from([0xb7; 20]);
+        seed_eoa(&lazy, caller, 1_000_000);
+        seed_eoa(&lazy, Address::ZERO, 0);
+        seed_contract(&lazy, reverts, BARE_REVERT_CODE.to_vec());
+
+        let mut ctx = SequenceContext::new(lazy, 1, 100);
+        let outcome = ctx
+            .call(SequenceCall {
+                from: caller,
+                to: reverts,
+                calldata: vec![],
+                value_wei: 0,
+                gas_price_wei: 1,
+                gas_limit: 100_000,
+                label: "revert_frame_probe",
+            })
+            .unwrap();
+
+        let CallOutcome::Reverted {
+            frame: Some(frame), ..
+        } = outcome
+        else {
+            panic!("expected Reverted with a frame, got {outcome:?}");
+        };
+        assert_eq!(frame.address, format!("{reverts:?}"));
+        assert_eq!(frame.pc, 4, "REVERT sits at pc=4 after two PUSH1 pairs");
+        assert_eq!(frame.opcode, 0xfd, "REVERT opcode is 0xfd (Solidity docs)");
+        assert_eq!(frame.kind, RevertKind::Empty, "REVERT(0,0) returns no data");
+        assert_eq!(frame.data_hex(), "0x");
+        assert!(
+            frame.fatal,
+            "the top-level outcome reverted: origin is fatal"
+        );
+        assert_eq!(
+            frame.depth, 0,
+            "top-level frame is depth 0 (call hook depth minus one)"
+        );
+        // No handled-revert leakage into the ledger from a fatal revert.
+        assert!(ctx.handled_revert_frames().is_empty());
+    }
+
+    /// A REAL EVM-executed `Panic(uint256)` payload: hand-assembled bytecode
+    /// stores the 36-byte `Panic(0x11)` payload in memory and reverts with
+    /// it. The frame must classify `Panic { code: 0x11, named }` (vector T2)
+    /// with the REVERT at pc=76, and the annotation must carry the named
+    /// classification.
+    #[test]
+    fn revert_frame_classifies_real_panic_payload_from_evm() {
+        // word1 = 4e487b71 + 28 zero bytes; word2's FIRST four bytes are the
+        // tail of the 36-byte payload — REVERT(0, 36) returns memory[0..36],
+        // so the panic code byte must land at payload offset 35 (index 3 of
+        // word2), NOT at word2's own last byte.
+        let mut word1 = [0u8; 32];
+        word1[0..4].copy_from_slice(&[0x4e, 0x48, 0x7b, 0x71]);
+        let mut word2 = [0u8; 32];
+        word2[3] = 0x11;
+        let mut code: Vec<u8> = Vec::with_capacity(77);
+        code.push(0x7f); // PUSH32 word1        (pc 0)
+        code.extend_from_slice(&word1);
+        code.extend_from_slice(&[0x60, 0x00]); // PUSH1 0     (pc 33)
+        code.push(0x52); // MSTORE              (pc 35)
+        code.push(0x7f); // PUSH32 word2        (pc 36)
+        code.extend_from_slice(&word2);
+        code.extend_from_slice(&[0x60, 0x20]); // PUSH1 32    (pc 69)
+        code.push(0x52); // MSTORE              (pc 71)
+        code.extend_from_slice(&[0x60, 0x24]); // PUSH1 36    (pc 72)
+        code.extend_from_slice(&[0x60, 0x00]); // PUSH1 0     (pc 74)
+        code.push(0xfd); // REVERT(0, 36)       (pc 76)
+
+        let lazy = lazy_offline();
+        let caller = Address::from([0xa8; 20]);
+        let panics = Address::from([0xb8; 20]);
+        seed_eoa(&lazy, caller, 1_000_000);
+        seed_eoa(&lazy, Address::ZERO, 0);
+        seed_contract(&lazy, panics, code);
+
+        let mut ctx = SequenceContext::new(lazy, 1, 100);
+        let outcome = ctx
+            .call(SequenceCall {
+                from: caller,
+                to: panics,
+                calldata: vec![],
+                value_wei: 0,
+                gas_price_wei: 1,
+                gas_limit: 100_000,
+                label: "panic_payload_probe",
+            })
+            .unwrap();
+
+        let CallOutcome::Reverted {
+            frame: Some(frame), ..
+        } = outcome
+        else {
+            panic!("expected Reverted with a frame, got {outcome:?}");
+        };
+        assert_eq!(frame.address, format!("{panics:?}"));
+        assert_eq!(
+            frame.pc, 76,
+            "REVERT(0,36) at pc=76 in the hand-assembled code"
+        );
+        assert_eq!(frame.opcode, 0xfd);
+        assert_eq!(frame.data.len(), 36, "selector + one ABI word");
+        assert_eq!(
+            frame.kind,
+            RevertKind::Panic {
+                code: 0x11,
+                named: Some("arithmetic underflow/overflow"),
+            },
+            "vector T2: Panic(0x11) with its canonical name"
+        );
+        let annotation = frame.annotation();
+        assert!(
+            annotation.contains("Panic(0x11): arithmetic underflow/overflow"),
+            "annotation names the panic: {annotation}"
+        );
+        assert!(
+            annotation.contains(&format!("@{panics:?}")),
+            "annotation names the address: {annotation}"
+        );
+        assert!(
+            annotation.contains("pc=0x4c") && annotation.contains("op=0xfd"),
+            "annotation names pc (0x4c=76) and opcode: {annotation}"
+        );
+    }
+
+    /// Handled vs fatal (ficha §3 rule 2, checklist P5): a subcall that
+    /// reverts while the PARENT handles it (CALL pushes 0, parent POPs and
+    /// STOPs) must NOT fail the sequence — the frame is recorded with
+    /// `fatal=false` in the handled ledger, never carried by an outcome.
+    #[test]
+    fn handled_subcall_revert_is_not_fatal() {
+        let lazy = lazy_offline();
+        let caller = Address::from([0xa9; 20]);
+        let child = Address::from([0xb9; 20]);
+        let parent = Address::from([0xc9; 20]);
+        seed_eoa(&lazy, caller, 1_000_000);
+        seed_eoa(&lazy, Address::ZERO, 0);
+        seed_contract(&lazy, child, BARE_REVERT_CODE.to_vec());
+
+        // Parent: CALL(child) with zero value/args/ret, POP the status word,
+        // STOP — the child's revert is HANDLED, the tx SUCCEEDS.
+        let mut parent_code: Vec<u8> = Vec::new();
+        parent_code.extend_from_slice(&[0x60, 0x00]); // PUSH1 0   retSize     (pc 0)
+        parent_code.extend_from_slice(&[0x60, 0x00]); // PUSH1 0   retOffset   (pc 2)
+        parent_code.extend_from_slice(&[0x60, 0x00]); // PUSH1 0   argsSize    (pc 4)
+        parent_code.extend_from_slice(&[0x60, 0x00]); // PUSH1 0   argsOffset  (pc 6)
+        parent_code.extend_from_slice(&[0x60, 0x00]); // PUSH1 0   value       (pc 8)
+        parent_code.push(0x73); // PUSH20 child                                  (pc 10)
+        parent_code.extend_from_slice(child.as_slice());
+        parent_code.extend_from_slice(&[0x61, 0x75, 0x30]); // PUSH2 30000 gas (pc 31)
+        parent_code.push(0xf1); // CALL                                          (pc 34)
+        parent_code.push(0x50); // POP                                           (pc 35)
+        parent_code.push(0x00); // STOP                                          (pc 36)
+        seed_contract(&lazy, parent, parent_code);
+
+        let mut ctx = SequenceContext::new(lazy, 1, 100);
+        let outcome = ctx
+            .call(SequenceCall {
+                from: caller,
+                to: parent,
+                calldata: vec![],
+                value_wei: 0,
+                gas_price_wei: 1,
+                gas_limit: 200_000,
+                label: "handled_subcall_probe",
+            })
+            .unwrap();
+        assert!(
+            outcome.is_success(),
+            "parent handled the child revert: the tx must succeed, got {outcome:?}"
+        );
+
+        let handled = ctx.handled_revert_frames();
+        assert_eq!(
+            handled.len(),
+            1,
+            "the child's revert is recorded, not silent"
+        );
+        let frame = &handled[0];
+        assert!(!frame.fatal, "a handled subcall revert is never fatal");
+        assert_eq!(
+            frame.address,
+            format!("{child:?}"),
+            "attributed to the child"
+        );
+        assert_eq!(frame.pc, 4);
+        assert_eq!(frame.opcode, 0xfd);
+        assert_eq!(frame.kind, RevertKind::Empty);
+        assert_eq!(frame.depth, 1, "one frame below the top level");
+
+        // Same context, DIRECT call to the child: now the revert IS fatal
+        // and rides the outcome — and the handled ledger did not leak.
+        ctx.take_handled_revert_frames();
+        let outcome = ctx
+            .call(SequenceCall {
+                from: caller,
+                to: child,
+                calldata: vec![],
+                value_wei: 0,
+                gas_price_wei: 1,
+                gas_limit: 100_000,
+                label: "fatal_revert_probe",
+            })
+            .unwrap();
+        let CallOutcome::Reverted {
+            frame: Some(frame), ..
+        } = outcome
+        else {
+            panic!("expected Reverted with a frame, got {outcome:?}");
+        };
+        assert!(frame.fatal);
+        assert_eq!(frame.address, format!("{child:?}"));
+        assert!(ctx.handled_revert_frames().is_empty());
+    }
+
+    /// A reverting `deploy()` (init code that reverts) carries the create
+    /// frame: `"<create>"` address, the REVERT pc/opcode, `Empty` kind.
+    /// The deterministic CREATE address is seeded too: revm's EIP-684
+    /// collision check loads the target account, which on an offline
+    /// `LazyDb` would otherwise hit the never-RPC and fail the transact
+    /// with `TransactInfra` instead of reaching the reverting init code.
+    #[test]
+    fn deploy_revert_carries_create_frame() {
+        let lazy = lazy_offline();
+        let caller = Address::from([0xaa; 20]);
+        seed_eoa(&lazy, caller, 1_000_000);
+        seed_eoa(&lazy, Address::ZERO, 0);
+        let created_ethers = ethers::utils::get_contract_address(
+            ethers::types::H160::from_slice(caller.as_slice()),
+            0u64,
+        );
+        seed_eoa(&lazy, Address::from_slice(created_ethers.as_bytes()), 0);
+
+        let mut ctx = SequenceContext::new(lazy, 1, 100);
+        let outcome = ctx
+            .deploy(SequenceDeploy {
+                from: caller,
+                init_code: BARE_REVERT_CODE.to_vec(),
+                gas_price_wei: 1,
+                gas_limit: 100_000,
+                label: "reverting_deploy",
+            })
+            .unwrap();
+        let DeployOutcome::Reverted {
+            frame: Some(frame), ..
+        } = outcome
+        else {
+            panic!("expected Reverted deploy with a frame, got {outcome:?}");
+        };
+        assert_eq!(frame.address, "<create>");
+        assert_eq!(frame.pc, 4);
+        assert_eq!(frame.opcode, 0xfd);
+        assert_eq!(frame.kind, RevertKind::Empty);
+        assert!(frame.fatal);
+    }
+
+    /// Derived REA-trace vectors T1–T5c, byte-literal (the dispatch of ficha
+    /// §2; model: docs/rea/verifica_vectores_rea_trace.py, 22/22 OK). The
+    /// DISPLAY contract of `decode_revert_reason` is UNCHANGED (T5b asserts
+    /// both sides agree on `0xdeadbeef`).
+    #[test]
+    fn revert_kind_dispatch_vectors_t1_t5() {
+        // T1 — Error(string) "insufficient_balance" (same payload as the
+        // baseline test `decode_revert_reason_parses_error_string`).
+        let msg = b"insufficient_balance";
+        let mut t1 = Vec::new();
+        t1.extend_from_slice(&[0x08, 0xc3, 0x79, 0xa0]);
+        let mut offset = [0u8; 32];
+        offset[31] = 32;
+        t1.extend_from_slice(&offset);
+        let mut len = [0u8; 32];
+        len[28..32].copy_from_slice(&(msg.len() as u32).to_be_bytes());
+        t1.extend_from_slice(&len);
+        t1.extend_from_slice(msg);
+        assert_eq!(
+            RevertKind::classify(&t1),
+            RevertKind::ErrorString("insufficient_balance".to_string())
+        );
+        assert_eq!(
+            RevertKind::classify(&t1).display(&t1),
+            "Error(string): insufficient_balance"
+        );
+
+        // T2 — Panic(0x11), 36 exact bytes.
+        let mut t2 = vec![0x4e, 0x48, 0x7b, 0x71];
+        let mut code_word = [0u8; 32];
+        code_word[31] = 0x11;
+        t2.extend_from_slice(&code_word);
+        assert_eq!(
+            RevertKind::classify(&t2),
+            RevertKind::Panic {
+                code: 0x11,
+                named: Some("arithmetic underflow/overflow"),
+            }
+        );
+        assert_eq!(
+            RevertKind::classify(&t2).display(&t2),
+            "Panic(0x11): arithmetic underflow/overflow"
+        );
+
+        // T3 — all ten canonical codes name; 0x99 stays unknown.
+        for code in [
+            0x00u64, 0x01, 0x11, 0x12, 0x21, 0x22, 0x31, 0x32, 0x41, 0x51,
+        ] {
+            let mut payload = vec![0x4e, 0x48, 0x7b, 0x71];
+            let mut word = [0u8; 32];
+            word[31] = code as u8;
+            payload.extend_from_slice(&word);
+            let kind = RevertKind::classify(&payload);
+            let display = kind.display(&payload);
+            assert!(
+                display.starts_with(&format!("Panic(0x{code:02x}): ")),
+                "canonical code 0x{code:02x} must be named: {display}"
+            );
+            assert_eq!(
+                kind,
+                RevertKind::Panic {
+                    code,
+                    named: RevertKind::panic_code_name(code),
+                }
+            );
+        }
+        let mut unknown = vec![0x4e, 0x48, 0x7b, 0x71];
+        let mut word = [0u8; 32];
+        word[31] = 0x99;
+        unknown.extend_from_slice(&word);
+        assert_eq!(
+            RevertKind::classify(&unknown).display(&unknown),
+            "Panic(0x99): unknown code"
+        );
+
+        // T4 — custom selector without ABI: kind Selector, display hex.
+        let t4 = vec![0x2a, 0xc1, 0x16, 0x21];
+        assert_eq!(
+            RevertKind::classify(&t4),
+            RevertKind::Selector([0x2a, 0xc1, 0x16, 0x21])
+        );
+        assert_eq!(RevertKind::classify(&t4).display(&t4), "0x2ac11621");
+
+        // T5a — empty: Empty kind, "empty" display.
+        assert_eq!(RevertKind::classify(&[]), RevertKind::Empty);
+        assert_eq!(RevertKind::classify(&[]).display(&[]), "empty");
+
+        // T5b — `deadbeef`: the destination's own compatibility case. The
+        // kind is Selector; BOTH displays stay the invariant hex fallback.
+        let t5b = vec![0xde, 0xad, 0xbe, 0xef];
+        assert_eq!(
+            RevertKind::classify(&t5b),
+            RevertKind::Selector([0xde, 0xad, 0xbe, 0xef])
+        );
+        assert_eq!(RevertKind::classify(&t5b).display(&t5b), "0xdeadbeef");
+        assert_eq!(
+            decode_revert_reason(&Bytes::from(t5b.clone())),
+            "0xdeadbeef"
+        );
+
+        // T5c — shorter than a selector: Raw.
+        let t5c = vec![0xde, 0xad, 0xbe];
+        assert_eq!(RevertKind::classify(&t5c), RevertKind::Raw);
+        assert_eq!(RevertKind::classify(&t5c).display(&t5c), "0xdeadbe");
+
+        // T6 — the opcode fact: REVERT is 0xfd (Solidity docs). Asserted
+        // byte-literal in the EVM-execution tests above via frame.opcode.
+        assert_eq!(0xfd, 253u8);
+    }
+
+    /// The annotation is the exact string that reaches the persisted
+    /// `fail_reason` — pin its format once, byte-exact.
+    #[test]
+    fn revert_frame_annotation_format_is_pinned() {
+        let mut data = vec![0x4e, 0x48, 0x7b, 0x71];
+        let mut word = [0u8; 32];
+        word[31] = 0x11;
+        data.extend_from_slice(&word);
+        let frame = RevertFrame {
+            address: "0x00000000000000000000000000000000000000b7".to_string(),
+            depth: 0,
+            pc: 76,
+            opcode: 0xfd,
+            kind: RevertKind::classify(&data),
+            data: data.clone(),
+            fatal: true,
+        };
+        assert_eq!(
+            frame.annotation(),
+            "@0x00000000000000000000000000000000000000b7 pc=0x4c op=0xfd \
+             Panic(0x11): arithmetic underflow/overflow"
+        );
+    }
+
     /// Error reason_tag stability.
     #[test]
     fn error_reason_tags_are_stable() {
@@ -1591,6 +2487,7 @@ mod tests {
         let r = CallOutcome::Reverted {
             gas_used: 0,
             reason: "x".into(),
+            frame: None,
         };
         assert!(!r.is_success());
         let h = CallOutcome::Halted {
