@@ -1,5 +1,5 @@
 {
-  "iteration": 1,
+  "iteration": 2,
   "unit_in_progress": null,
   "units": {
     "REA-01-TWO-LEG": {"estado": "IN_PROGRESS", "commit": "d975eb30", "deploy_sha": null, "gate": "PR #1015 CI verde; merge pendiente de GATE1"},
@@ -7,15 +7,16 @@
     "REA-05-ATOMIC-CAUSE": {"estado": "IN_PROGRESS", "commit": "72aca3d5", "deploy_sha": null, "gate": "PR #1014 CI verde; merge pendiente de GATE1"},
     "REA-06-POBLACION": {"estado": "IN_PROGRESS", "commit": "78ab15ee", "deploy_sha": null, "gate": "PR #1013 CI verde; merge pendiente de GATE1"},
     "REA-07-REVERT-TRACE": {"estado": "IN_PROGRESS", "commit": "098d1c3a", "deploy_sha": null, "gate": "PR #1016 CI verde; merge pendiente de GATE1"},
-    "REA-03-V3-MATH": {"estado": "IN_PROGRESS", "commit": "710639ae", "deploy_sha": null, "gate": "PASS 6/6 (cargo test -p searcher-rs --lib rea_03, exit 0)", "pr": "https://github.com/hefarica/arbitragex-v2/pull/1019", "nota": "matemática aterrizada; cableado = REA-03-WIRE"}
+    "REA-03-V3-MATH": {"estado": "IN_PROGRESS", "commit": "710639ae", "deploy_sha": null, "gate": "PASS 6/6", "pr": "https://github.com/hefarica/arbitragex-v2/pull/1019", "nota": "matemática aterrizada; cableado = REA-03-WIRE"},
+    "REA-04-NEG-CYCLE": {"estado": "BLOCKED", "commit": "docs: REA-04-NEG-CYCLE.md", "deploy_sha": null, "gate": "PASO 0 FALLA: artemis@4bb1580 no tiene cycle_enumerator; destino YA tiene BF (enable_bfm=true) con grafo hardcoded (well_known_token_pairs:579) y sin tests de ciclo inyectado", "tipo": "INSPIRACION", "nota": "cierre real = REA-04-CLOSE (datos pool->token + tests del gate)"}
   },
   "followups": [
-    "REA-03-WIRE: el gate del backlog (ledger V3 contiguo en reledger_at) requiere plomería: RouteLeg (prioritization-spine/src/route_plan.rs:27) no trae sqrt_price_x96/liquidity; ReservesCache (triangular_engine.rs:84) es V2-only; reledger_at (size_optimizer.rs:1398) sin Redis/chain_id. Necesita slot0 cache en StateProjector + campos V3 en RouteLeg + emisores.",
-    "REA-04-NEG-CYCLE: Bellman-Ford sobre grafo de pools (math-engine/src/route_math.rs:25 ya tiene rate_to_bellman_ford_weight; falta el ciclo completo y el gate de ciclo negativo inyectado).",
-    "REA-18-V3-SIM: consumir v3_get_sqrt_ratio_at_tick/v3_get_amount*_delta en simulator-v2 para simulación V3 exacta."
+    "REA-03-WIRE: ledger V3 contiguo — slot0 en RouteLeg/StateProjector (RouteLeg no trae sqrt_price_x96/liquidity; ReservesCache V2-only; reledger_at sin Redis/chain_id).",
+    "REA-04-CLOSE: grafo BF desde el universo real (pool->token0/token1 en cache) + tests de ciclo inyectado contra bellman_ford_cycles (spanning_tree_engine.rs:291).",
+    "REA-18-V3-SIM: consumir v3_get_sqrt_ratio_at_tick/v3_get_amount*_delta en simulator-v2."
   ],
-  "next_unit": "REA-04-NEG-CYCLE",
+  "next_unit": "REA-08-PROTECTIONS",
   "death_criterion_fired": false,
   "mode": "loop",
-  "notes": "Iteracion 1 cerrada 2026-10-21: REA-03-V3-MATH en PR #1019 (gate 6/6 verde). 5 PRs P0 previos en cola de GATE1 (equipo). Iteracion 2 autorizada por OK del operador."
+  "notes": "Iteracion 2 cerrada 2026-10-21: REA-04 BLOCKED por PASO 0 (fuente inexistente) + premisa del backlog medida y corregida (BF ya existe y esta on). Sin cambios de codigo. Siguiente: REA-08-PROTECTIONS (freqtrade, GPL-3 -> portar matematica)."
 }
