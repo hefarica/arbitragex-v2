@@ -764,8 +764,15 @@ contract FlashLoanInvariantTest is Test {
 
         bytes memory params = "";
 
-        // Debe revertir porque el arbitrage falla
-        vm.expectRevert(FL_ArbitrageExecutionFailed.selector);
+        // Debe revertir porque el arbitrage falla.
+        // ATOMIC-CAUSE-01: the executor's Error(string) returndata now rides INSIDE
+        // FL_ArbitrageExecutionFailed (previously discarded).
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                FL_ArbitrageExecutionFailed.selector,
+                abi.encodeWithSelector(bytes4(0x08c379a0), "MockArbitrageExecutor: INTENTIONAL FAILURE")
+            )
+        );
         vm.prank(execRole);
         flashExec.requestFlashLoan(address(token), amount, params);
     }
