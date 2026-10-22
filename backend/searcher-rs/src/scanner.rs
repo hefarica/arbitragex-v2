@@ -24,8 +24,13 @@ use crate::counters::{chain_counters, counters};
 use crate::reserves;
 use crate::{
     calldata,
+    // TWO-LEG-01: crossed-market pair classification + upstream rating port
+    // (REA: flashbots/simple-arbitrage@03cf1058 src/Arbitrage.ts:31-67,107-114).
+    crossed_market,
     dedup::{Dedup, OppDedup},
-    patterns, persistence, publisher,
+    patterns,
+    persistence,
+    publisher,
 };
 use ethers::types::{Address, H256};
 use futures_util::StreamExt;
@@ -2107,6 +2112,13 @@ async fn decode_and_score_tx<'a>(
     // path (base token or stablecoin). See scanner.rs:process_pending.
     let mut gross_profit_f64: Option<f64> = None;
 
+    // TWO-LEG-01 (2026-10-23): the crossed pair behind the hi/lo spread, when
+    // the enrichment identifies one. REA: flashbots/simple-arbitrage@03cf1058
+    // src/Arbitrage.ts:107-114 (crossing rule) — the pair is what the row
+    // persists as BOTH legs (dex_b + pool_addresses[1]); `None` keeps the
+    // legacy single-leg row verbatim.
+    let mut crossed_pair: Option<crossed_market::CrossedPair> = None;
+
     if let (Some(m_in), Some(m_out)) = (&meta_in, &meta_out) {
         // Read both V2 and V3 pool indexes for this pair. The two indexes are
         // independent (V2: just addresses; V3: address + fee_bps tuple) and
@@ -2135,7 +2147,14 @@ async fn decode_and_score_tx<'a>(
                 v3 = pools_v3.len()
             );
         } else {
-            let mut outs: Vec<ethers::types::U256> = Vec::with_capacity(total_pools);
+            // TWO-LEG-01: quotes keep POOL IDENTITY (address, protocol family,
+            // fee tier, and — when the reserves entry pinned token0 — the
+            // directly-oriented reserves), so the crossed pair the hi/lo
+            // spread already measures can be PERSISTED as a pair instead of
+            // collapsing to two bare amounts (pre-change shape:
+            // pool_addresses [""] + dex_b NULL on 493/493 live rows, 6h window
+            // measured 2026-10-23).
+            let mut quotes: Vec<crossed_market::PoolQuote> = Vec::with_capacity(total_pools);
 
             // ── V2 path ────────────────────────────────────────────────────
             // Structural fix (closes scanner.rs:350 TODO): when the cached
@@ -2163,7 +2182,13 @@ async fn decode_and_score_tx<'a>(
                 let r1 = ethers::types::U256::from_dec_str(&entry.r1)
                     .unwrap_or_else(|_| ethers::types::U256::zero());
 
-                let out = if let Some(t0) = entry.token0_addr.as_deref() {
+                // TWO-LEG-01: (out, oriented reserves) — the direct branch
+                // pins token0 (deployment fact), so its reserves ARE rating
+                // truth; the heuristic branch attaches none (R8).
+                let (out, oriented): (
+                    ethers::types::U256,
+                    Option<crossed_market::OrientedReserves>,
+                ) = if let Some(t0) = entry.token0_addr.as_deref() {
                     // Direct orientation — t0 is canonical token0 of the pool.
                     // If the candidate's token_in matches t0, then r0 is
                     // reserve_in and r1 is reserve_out. Otherwise swap.
@@ -2177,7 +2202,13 @@ async fn decode_and_score_tx<'a>(
                     if direct.is_zero() {
                         continue;
                     }
-                    direct
+                    (
+                        direct,
+                        Some(crossed_market::OrientedReserves {
+                            reserve_in,
+                            reserve_out,
+                        }),
+                    )
                 } else {
                     // Legacy fallback: dual-orientation magnitude heuristic.
                     // 1e6 threshold accounts for legit decimal-asymmetric
@@ -2188,21 +2219,29 @@ async fn decode_and_score_tx<'a>(
                     if out_a.is_zero() && out_b.is_zero() {
                         continue;
                     } else if out_a.is_zero() {
-                        out_b
+                        (out_b, None)
                     } else if out_b.is_zero() {
-                        out_a
+                        (out_a, None)
                     } else {
                         let bigger = std::cmp::max(out_a, out_b);
                         let smaller = std::cmp::min(out_a, out_b);
                         let ratio_threshold = ethers::types::U256::from(1_000_000u64);
                         if bigger > smaller.saturating_mul(ratio_threshold) {
-                            smaller // wrong-orientation saturation
+                            (smaller, None) // wrong-orientation saturation
                         } else {
-                            bigger // both plausible; best price wins
+                            (bigger, None) // both plausible; best price wins
                         }
                     }
                 };
-                outs.push(out);
+                // V2-family fee 30 bps (0.30% doctrine — the same fee the
+                // quote above used; amm_math.rs header).
+                quotes.push(crossed_market::PoolQuote {
+                    pool_address: pool_addr.clone(),
+                    family: crate::route_intent::ProtocolType::V2,
+                    fee_bps: Some(30),
+                    amount_out: out,
+                    oriented_reserves: oriented,
+                });
             }
 
             // ── V3 path ────────────────────────────────────────────────────
@@ -2216,8 +2255,10 @@ async fn decode_and_score_tx<'a>(
             if !pools_v3.is_empty() && !amount_in_wei_u256.is_zero() {
                 let amount_in_dec = amount_in_wei_u256.to_string();
 
-                // Resolve quotes from cache first.
-                let mut cached_outs: Vec<ethers::types::U256> = Vec::new();
+                // Resolve quotes from cache first. TWO-LEG-01: cached V3
+                // quotes carry pool identity (address + fee tier) so they can
+                // join the crossed-pair classification.
+                let mut cached_outs: Vec<crossed_market::PoolQuote> = Vec::new();
                 let mut to_quote: Vec<amm_math::V3QuoteRequest> = Vec::new();
 
                 for info in &pools_v3 {
@@ -2240,7 +2281,13 @@ async fn decode_and_score_tx<'a>(
                     {
                         let val = ethers::types::U256::from_dec_str(&cached)
                             .unwrap_or_else(|_| ethers::types::U256::zero());
-                        cached_outs.push(val);
+                        cached_outs.push(crossed_market::PoolQuote {
+                            pool_address: info.pool_addr.clone(),
+                            family: crate::route_intent::ProtocolType::V3,
+                            fee_bps: Some(info.fee_bps),
+                            amount_out: val,
+                            oriented_reserves: None, // V3: no local reserves — R8
+                        });
                         continue;
                     }
                     // Build a Quoter request for cache-miss pools.
@@ -2265,10 +2312,10 @@ async fn decode_and_score_tx<'a>(
                     });
                 }
 
-                // Add cache hits to outs.
+                // Add cache hits to quotes (non-zero only, as before).
                 for v in &cached_outs {
-                    if !v.is_zero() {
-                        outs.push(*v);
+                    if !v.amount_out.is_zero() {
+                        quotes.push(v.clone());
                         v3_used += 1;
                     }
                 }
@@ -2281,7 +2328,7 @@ async fn decode_and_score_tx<'a>(
                         // OMEGA-8/M4 Fase 1: resolve once-parsed Lazy statics.
                         // On constant typo (unreachable in production) we log
                         // and skip the V3 RPC dispatch instead of panicking —
-                        // the V2 branch already populated `outs` so the chain
+                        // the V2 branch already populated `quotes` so the chain
                         // stays operational in degraded but honest mode.
                         let v3_addrs = match (
                             V3_QUOTER_V2_ADDRESS.as_ref(),
@@ -2338,7 +2385,13 @@ async fn decode_and_score_tx<'a>(
                                                 V3_QUOTE_CACHE_TTL_SECS,
                                             )
                                             .await;
-                                            outs.push(r.amount_out);
+                                            quotes.push(crossed_market::PoolQuote {
+                                                pool_address: pool_lower,
+                                                family: crate::route_intent::ProtocolType::V3,
+                                                fee_bps: Some(req.fee_bps),
+                                                amount_out: r.amount_out,
+                                                oriented_reserves: None, // V3 — R8
+                                            });
                                             v3_used += 1;
                                         }
                                     }
@@ -2360,10 +2413,10 @@ async fn decode_and_score_tx<'a>(
                 }
             }
 
-            if outs.len() >= 2 {
-                outs.sort();
-                let lo = outs[0];
-                let hi = outs[outs.len() - 1];
+            if quotes.len() >= 2 {
+                quotes.sort_by(|a, b| a.amount_out.cmp(&b.amount_out));
+                let lo = quotes[0].amount_out;
+                let hi = quotes[quotes.len() - 1].amount_out;
                 let gross_profit_token_out = hi.saturating_sub(lo);
                 let decimals_out = m_out.decimals as i32;
                 let scale = 10f64.powi(decimals_out);
@@ -2422,6 +2475,37 @@ async fn decode_and_score_tx<'a>(
                       hi = %hi, lo = %lo,
                       spread_token_out = %gross_profit_token_out,
                       gross_profit_usd = ?gross_profit_f64);
+
+                // TWO-LEG-01 (2026-10-23): NAME the pair behind hi/lo.
+                // REA: flashbots/simple-arbitrage@03cf1058
+                // src/Arbitrage.ts:107-114 — strict crossing on two DISTINCT
+                // pools: buy where token_out is cheap (argmax quote = the hi
+                // pool), sell where it is expensive (argmin = the lo pool).
+                // The Opportunity's flat columns switch from the observed
+                // ROUTER to the PAIR's venue labels (destination convention,
+                // dex_engine.rs:1306-1307) so the row persists BOTH legs:
+                // dex_a = buy pool venue, dex_b = sell pool venue (the
+                // acceptance: dex_b non-null). The observed tx stays
+                // traceable via route_plan.route_id (carries the tx hash)
+                // and strategy_kind (protocol of the observed swap).
+                crossed_pair = crossed_market::classify_crossed_pair(&quotes);
+                if let Some(pair) = crossed_pair.as_ref() {
+                    let (dex_a, dex_b) = crossed_market::crossed_pair_dex_labels(pair);
+                    info!(
+                        event = "scanner.crossed_pair_identified",
+                        hash = %hash,
+                        pair = format!("{}-{}", m_in.symbol, m_out.symbol),
+                        buy_pool = %pair.buy.pool_address,
+                        buy_family = ?pair.buy.family,
+                        sell_pool = %pair.sell.pool_address,
+                        sell_family = ?pair.sell.family,
+                        dex_a = %dex_a,
+                        dex_b = ?dex_b,
+                        "crossed pair persisted as both legs (TWO-LEG-01)"
+                    );
+                    opportunity.dex_a = dex_a;
+                    opportunity.dex_b = dex_b;
+                }
             }
         }
     } else {
@@ -2456,14 +2540,44 @@ async fn decode_and_score_tx<'a>(
         .map(|m| m.symbol.clone())
         .unwrap_or_else(|| opportunity.token_out.clone());
 
-    let candidate = OpportunityCandidate {
-        route_fingerprint: format!(
-            "{}_{}_{}",
-            opportunity.dex_a, opportunity.token_in, opportunity.token_out
+    // TWO-LEG-01: when the crossed pair was identified, the candidate carries
+    // BOTH pools and BOTH venue labels, and the fingerprint names the POOL
+    // PAIR (not just the venue family) so two distinct pairs on the same
+    // family never collide in dedup. Without a pair, the legacy shape is
+    // preserved verbatim.
+    let (pair_pools, pair_adapters, route_fingerprint) = match &crossed_pair {
+        Some(pair) => (
+            vec![
+                pair.buy.pool_address.clone(),
+                pair.sell.pool_address.clone(),
+            ],
+            vec![
+                crate::engines::dex_engine::protocol_type_to_str(pair.buy.family),
+                crate::engines::dex_engine::protocol_type_to_str(pair.sell.family),
+            ],
+            format!(
+                "{}_{}_{}__{}_{}",
+                opportunity.dex_a,
+                opportunity.token_in,
+                opportunity.token_out,
+                pair.buy.pool_address,
+                pair.sell.pool_address
+            ),
         ),
-        pool_addresses: vec![],
+        None => (
+            vec![],
+            vec![opportunity.dex_a.clone()],
+            format!(
+                "{}_{}_{}",
+                opportunity.dex_a, opportunity.token_in, opportunity.token_out
+            ),
+        ),
+    };
+    let candidate = OpportunityCandidate {
+        route_fingerprint,
+        pool_addresses: pair_pools,
         token_addresses: vec![token_in_lower.clone(), token_out_lower.clone()],
-        dex_adapters: vec![opportunity.dex_a.clone()],
+        dex_adapters: pair_adapters,
         amount_in: amount_in_f64,
         expected_amount_out: expected_amount_out_f64,
         // unwrap_or(0.0): candidate.gross_profit is f64 (spine type). The spine
@@ -2636,12 +2750,32 @@ async fn decode_and_score_tx<'a>(
         volume_24h_usd: None,
         pool_is_active: true,
     };
+    // TWO-LEG-01 (2026-10-23): a crossed pair emits a TWO-LEG closed-cycle
+    // plan — leg 0 buys token_in→token_out on the CHEAP pool (the hi quote),
+    // leg 1 sells token_out→token_in on the EXPENSIVE pool (the lo quote) and
+    // closes the cycle. REA: flashbots/simple-arbitrage@03cf1058
+    // src/Arbitrage.ts:34-39 (crossed[0]=sellTo, crossed[1]=buyFrom; the
+    // destination emits legs in TRADE order, buy first) and the destination
+    // convention dex_engine.rs:1302-1348 (dex_a/dex_b = the two pools'
+    // venue labels, pool_addresses carries both, token path closes
+    // [in, out, in]). Without a pair, the legacy single-leg plan above is
+    // preserved verbatim.
+    let legs = match &crossed_pair {
+        Some(pair) => crossed_market::crossed_pair_legs(
+            pair,
+            &opportunity.token_in.to_ascii_lowercase(),
+            &opportunity.token_out.to_ascii_lowercase(),
+            amount_in_f64,
+            expected_amount_out_f64,
+        ),
+        None => vec![route_leg],
+    };
     let route_plan = RoutePlan {
         route_id: Some(format!("{}-{}", opportunity.dex_a, hash)),
         strategy_kind: strategy_kind.to_string(),
         chain_id: client.chain_id,
-        legs: vec![route_leg],
-        atomic: true, // single-leg observed swaps are atomic by definition
+        legs,
+        atomic: true, // both shapes are atomic by definition (observed swap / closed pair)
         estimated_slippage_pct: None,
         price_impact_pct: None,
     };
@@ -2651,7 +2785,31 @@ async fn decode_and_score_tx<'a>(
     // OpportunityCandidate without a second divergent encoder. Decimals are
     // EMPTY here (resolved separately); the A1 path fails honest until a
     // follow-up threads them in. See build_route_metadata_from_plan doc.
-    let route_metadata = persistence::build_route_metadata_from_plan(&route_plan);
+    let mut route_metadata = persistence::build_route_metadata_from_plan(&route_plan);
+
+    // TWO-LEG-01: when BOTH legs are V2-family pools with directly-oriented
+    // reserves (pinned token0), attach the ported rating's per-leg ledger at
+    // the LADDER-OPTIMAL size (all-or-nothing, HOPS-LEDGER-04). The ficha's
+    // invariant (FICHA_REA1 §7): the candidate is reported with its profit at
+    // the optimal size, not the first size — leg1_out − leg0_in IS the
+    // rating's profit and it rides the row. R8: V3 legs / heuristic-oriented
+    // V2 legs attach nothing ("not computed", never a guessed figure).
+    if let Some(pair) = &crossed_pair {
+        if let Some(rating) = crossed_market::rate_crossed_pair_v2(pair) {
+            let attached = route_metadata.attach_leg_ledger(
+                &[rating.volume.to_string(), rating.mid.to_string()],
+                &[rating.mid.to_string(), rating.proceeds.to_string()],
+            );
+            debug!(
+                event = "scanner.crossed_pair_rating_attached",
+                hash = %hash,
+                attached,
+                volume_wei = %rating.volume,
+                profit_wei = ?rating.profit,
+                "crossed pair rated at the ladder-optimal size (REA simple-arbitrage)"
+            );
+        }
+    }
 
     let gate_outcome = evaluator.evaluate_with_route_plan(
         &candidate,
