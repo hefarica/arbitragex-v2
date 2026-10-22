@@ -117,6 +117,222 @@ pub fn v2_amount_out(amount_in: U256, reserve_in: U256, reserve_out: U256, fee_b
     numerator / denominator
 }
 
+/// V2 constant-product market maker input amount for a desired output
+/// (inverse of [`v2_amount_out`]), post-fee, with the CEILING convention.
+///
+/// Formula (UniswapV2Library.getAmountOut's exact inverse — order of
+/// operations from the upstream port, FICHA REA-2 §1.1):
+///
+/// ```text
+/// numerator   = reserve_in * amount_out * 10_000
+/// denominator = (reserve_out - amount_out) * (10_000 - fee_bps)
+/// amount_in   = floor(numerator / denominator) + 1
+/// ```
+///
+/// The `+ 1` is the ceiling: it covers the division remainder so the
+/// round-trip in→out→in recovers the original output plus at most one wei
+/// (vector A3: getAmountOut(getAmountIn(x)) == x + 1).
+///
+/// REA: jacksonConrad/better-simple-arbitrage@f8b96f3
+/// (src/UniswappyV2EthPair.ts:293-297 — values verified by its own tests,
+/// docs/rea/FICHA_REA2_OPTIMAL_SIZE.md §V-A). The upstream has NO domain
+/// guard (Solidity 0.8 would Panic(0x11) on the `reserve_out - amount_out`
+/// underflow — the anonymous-panic family FICHA REA-4 §2.1 documents); the
+/// destination fails CLOSED instead: `U256::zero()` on degenerate inputs
+/// (zero amount_out/reserves, `amount_out >= reserve_out` outside the
+/// domain, or `fee_bps > 10_000`), mirroring [`v2_amount_out`].
+pub fn v2_amount_in(amount_out: U256, reserve_in: U256, reserve_out: U256, fee_bps: u32) -> U256 {
+    if amount_out.is_zero() || reserve_in.is_zero() || reserve_out.is_zero() {
+        return U256::zero();
+    }
+    if fee_bps > 10_000 {
+        return U256::zero();
+    }
+    if amount_out >= reserve_out {
+        return U256::zero();
+    }
+    let fee_factor = U256::from(10_000u32 - fee_bps);
+    let numerator = reserve_in
+        .saturating_mul(amount_out)
+        .saturating_mul(U256::from(10_000u32));
+    let denominator = (reserve_out - amount_out).saturating_mul(fee_factor);
+    if denominator.is_zero() {
+        return U256::zero();
+    }
+    // floor + 1 UNCONDITIONALLY — the upstream's ceiling convention, NOT
+    // `div_ceil`: on an exact division div_ceil returns the quotient itself,
+    // while the upstream always adds the safety wei (FICHA REA-2 §1.1; the
+    // lint does not fire for U256, this note is intent documentation).
+    numerator / denominator + U256::one()
+}
+
+/// Exact integer square root `⌊√n⌋` for `U256` (Newton–Babylonian with an
+/// above-seed, monotonically decreasing iterate — the classic integer-sqrt
+/// convergence — plus an overflow-safe downward fixup).
+///
+/// Overflow-safe by construction: the iterate never exceeds `2^128`, and the
+/// fixup compares `x·x` through `checked_mul`, where an overflow itself
+/// proves `x·x > n` for every `n < 2^256`.
+pub fn isqrt_u256(n: U256) -> U256 {
+    if n.is_zero() {
+        return U256::zero();
+    }
+    // Seed 2^⌈bits/2⌉ ≥ √n; the iterate (x + n/x)/2 then only decreases.
+    let bits = n.bits();
+    let mut x = U256::one() << bits.div_ceil(2);
+    loop {
+        let y = (x + n / x) >> 1;
+        if y >= x {
+            break;
+        }
+        x = y;
+    }
+    // Newton converges to isqrt from above; the fixup is belt-and-braces
+    // (an overflow in the checked square means x² > 2^256 > n).
+    while x.checked_mul(x).is_none_or(|p| p > n) {
+        x -= U256::one();
+    }
+    x
+}
+
+/// Named failure causes of [`v2_closed_form_optimal_input_2leg`]. Every
+/// variant is a CHECKED, PRE-SUBTRACTION verdict — never a wrap, never a
+/// silent saturation (the Rust analogue of the named-revert requirement in
+/// FICHA REA-4 §2.1: the upstream's `(isqrt(presqrt) - 1000)` underflows to
+/// an ANONYMOUS Panic(0x11) when the market is not crossed).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClosedForm2LegError {
+    /// The market is not crossed: `γ²·t1·w2 ≤ t2·w1` (marginal price ratio
+    /// at zero size ≤ γ⁻² = 1.0060271…). π is strictly concave with
+    /// `π(0) = 0`, so `π(x) ≤ 0` for every size — there is no arb at any
+    /// size. Checked BEFORE the numerator subtraction (the Panic(0x11) edge).
+    MarketNotCrossed,
+    /// The closed-form optimum floors to `0` wei: a sub-wei edge is not a
+    /// tradable size.
+    SubWeiOptimum,
+    /// A checked product overflowed U256 (adversarial/degenerate reserve
+    /// magnitudes — real-pool products `fee·t·w ≈ 1e40` fit comfortably).
+    CheckedMathOverflow,
+    /// Zero reserves or `fee_bps > 10_000` on either leg.
+    DegenerateInputs,
+}
+
+/// OPTIMAL-SIZE-01: the UNIQUE optimal input of a 2-leg V2/V2 CPMM round
+/// trip, in CLOSED FORM (integer-exact, O(1), two integer square roots —
+/// no bracket search, no dust-end argmax).
+///
+/// Route: swap `x` of token X in pool A (`w1 = reserve_in_a`, `t1 =
+/// reserve_out_a`), get `dy`; swap `dy` in pool B (`t2 = reserve_in_b`,
+/// `w2 = reserve_out_b`), get `dz`; profit `π(x) = dz − x`. With each leg's
+/// fee applied ON THE INPUT (`γa = (10_000 − fee_a)/10_000`, same
+/// convention as [`v2_amount_out`]), `π` is strictly concave and its unique
+/// maximizer is
+///
+/// ```text
+/// dx* = ( √(γa·γb·t1·t2·w1·w2) − t2·w1 ) / ( γa·(t2 + γb·t1) )
+/// ```
+///
+/// evaluated here in exact integers as
+///
+/// ```text
+/// s1 = isqrt(γa_num·t1·w1),  s2 = isqrt(γb_num·t2·w2)
+/// dx* = floor( 10⁴·(s1·s2 − 10⁴·t2·w1) / (γa_num·(10⁴·t2 + γb_num·t1)) )
+/// ```
+///
+/// with `γa_num = 10_000 − fee_a` in ten-thousandths (fee 30 bps ⇒ 9970,
+/// exactly the upstream's 997/1000 scaled ×10). The SINGLE rounding point
+/// is the final floor division; no floats anywhere.
+///
+/// Profitability precondition (checked before any subtraction): the
+/// numerator root must EXCEED `10⁴·t2·w1`, i.e. the zero-size marginal
+/// price ratio `(t1·w2)/(t2·w1) > γ⁻²` — the exact-analogue of the
+/// upstream's `isqrt(presqrt) > 1000` gate; on failure this returns
+/// [`ClosedForm2LegError::MarketNotCrossed`] instead of the upstream's
+/// anonymous Panic(0x11).
+///
+/// REA provenance (docs/rea/FICHA_REA2_OPTIMAL_SIZE.md — re-implementation
+/// in destination conventions; the upstream has NO license at the cited
+/// sha, so zero verbatim lines travel, only the numbers and the invariant):
+/// - Closed form (floats) + direction guard: jacksonConrad/
+///   better-simple-arbitrage@f8b96f3, src/Arbitrage.ts:79-94 (fork of
+///   flashbots/simple-arbitrage).
+/// - Golden-rule vector values (integer ladder + profit): flashbots/
+///   simple-arbitrage@03cf1058 (test inherited by the fork's
+///   test/Arbitrage.test.ts) — pinned by the kernel's tests.
+/// - Integer swap math (fee-on-input order, floor/ceil rounding): §1.1 of
+///   the ficha, verified byte-exact against the fork's own tests (V-A).
+/// - Independent cross-witness of the same closed form: flashbots/
+///   simple-blind-arbitrage@73c6c270 (BlindBackrunLogic.sol:116-206) —
+///   pinned by the kernel's tests (FICHA REA-4 §2.1/§5.2).
+pub fn v2_closed_form_optimal_input_2leg(
+    reserve_in_a: U256,
+    reserve_out_a: U256,
+    reserve_in_b: U256,
+    reserve_out_b: U256,
+    fee_bps_a: u32,
+    fee_bps_b: u32,
+) -> Result<U256, ClosedForm2LegError> {
+    if fee_bps_a > 10_000 || fee_bps_b > 10_000 {
+        return Err(ClosedForm2LegError::DegenerateInputs);
+    }
+    if reserve_in_a.is_zero()
+        || reserve_out_a.is_zero()
+        || reserve_in_b.is_zero()
+        || reserve_out_b.is_zero()
+    {
+        return Err(ClosedForm2LegError::DegenerateInputs);
+    }
+    let gamma_a = U256::from(10_000u32 - fee_bps_a);
+    let gamma_b = U256::from(10_000u32 - fee_bps_b);
+
+    // k_i = γ_num·t·w — real pools land at ~1e36–1e40, comfortably inside
+    // U256; adversarial magnitudes overflow → the named checked error.
+    let k1 = gamma_a
+        .checked_mul(reserve_out_a)
+        .and_then(|v| v.checked_mul(reserve_in_a))
+        .ok_or(ClosedForm2LegError::CheckedMathOverflow)?;
+    let k2 = gamma_b
+        .checked_mul(reserve_in_b)
+        .and_then(|v| v.checked_mul(reserve_out_b))
+        .ok_or(ClosedForm2LegError::CheckedMathOverflow)?;
+    let root = isqrt_u256(k1)
+        .checked_mul(isqrt_u256(k2))
+        .ok_or(ClosedForm2LegError::CheckedMathOverflow)?;
+
+    // The Panic(0x11) edge, defused: compare BEFORE subtracting. root ≤
+    // threshold ⇔ the market is not crossed ⇔ π(x) ≤ 0 at every size.
+    let threshold = reserve_in_b
+        .checked_mul(reserve_in_a)
+        .and_then(|v| v.checked_mul(U256::from(10_000u32)))
+        .ok_or(ClosedForm2LegError::CheckedMathOverflow)?;
+    if root <= threshold {
+        return Err(ClosedForm2LegError::MarketNotCrossed);
+    }
+
+    // dx* = floor(10⁴·(root − threshold) / (γa·(10⁴·t2 + γb·t1))) — the one
+    // and only rounding point (upstream floor convention).
+    let numerator = (root - threshold)
+        .checked_mul(U256::from(10_000u32))
+        .ok_or(ClosedForm2LegError::CheckedMathOverflow)?;
+    let denominator = gamma_b
+        .checked_mul(reserve_out_a)
+        .and_then(|t1_term| {
+            reserve_in_b
+                .checked_mul(U256::from(10_000u32))
+                .and_then(|t2_term| t2_term.checked_add(t1_term))
+        })
+        .and_then(|inner| gamma_a.checked_mul(inner))
+        .ok_or(ClosedForm2LegError::CheckedMathOverflow)?;
+    if denominator.is_zero() {
+        return Err(ClosedForm2LegError::DegenerateInputs);
+    }
+    let dx = numerator / denominator;
+    if dx.is_zero() {
+        return Err(ClosedForm2LegError::SubWeiOptimum);
+    }
+    Ok(dx)
+}
+
 /// Full-precision `a * b / denom` with no intermediate overflow.
 ///
 /// V3 single-tick math multiplies `liquidity` (uint128) by `sqrtPriceX96`
@@ -1878,6 +2094,144 @@ mod v3_single_tick_tests {
         assert!(
             deep < amt,
             "still bounded by input (zero-fee, positive slippage)"
+        );
+    }
+
+    // ── OPTIMAL-SIZE-01 (REA) — golden-rule vectors V-A + closed-form edges
+    // ─────────────────────────────────────────────────────────────────────
+    //
+    // REA: jacksonConrad/better-simple-arbitrage@f8b96f3 (NO license at that
+    // sha — ZERO verbatim lines; the upstream's NUMBERS are cited facts per
+    // FUSILE binding rule 3). Provenance: docs/rea/FICHA_REA2_OPTIMAL_SIZE.md
+    // §3 (V-A), independently re-verified byte-exact by
+    // docs/rea/verifica_vectores_rea2.py (integer simulation, exit 0).
+
+    /// V-A: the upstream's own swap-math tests, pool [TOKEN = 1e18, WETH =
+    /// 2e18], fee 0.30 % — four byte-exact literals.
+    #[test]
+    fn rea2_va_upstream_swap_math_vectors_byte_exact() {
+        let e18 = U256::from(10u128).pow(18.into());
+        let tok = e18;
+        let weth = e18 * U256::from(2u32);
+        let out_1e17 = e18 / U256::from(10u32);
+
+        // A1 — amountIn(TOK→WETH) for amountOut = 1e17.
+        // Upstream: test/UniswappyV2EthPair.test.ts (test 2) at f8b96f3.
+        assert_eq!(
+            v2_amount_in(out_1e17, tok, weth, 30),
+            U256::from_dec_str("52789948793749671").unwrap()
+        );
+        // A2 — amountIn(WETH→TOK) for amountOut = 1e17.
+        assert_eq!(
+            v2_amount_in(out_1e17, weth, tok, 30),
+            U256::from_dec_str("222890894906943052").unwrap()
+        );
+        // A3 — round-trip: amountOut(A1) recovers the target PLUS one wei
+        // (the +1 ceiling of the inverse).
+        assert_eq!(
+            v2_amount_out(
+                U256::from_dec_str("52789948793749671").unwrap(),
+                tok,
+                weth,
+                30
+            ),
+            out_1e17 + U256::one()
+        );
+        // A4 — round-trip the other way recovers the target exactly.
+        assert_eq!(
+            v2_amount_out(
+                U256::from_dec_str("222890894906943052").unwrap(),
+                weth,
+                tok,
+                30
+            ),
+            out_1e17
+        );
+    }
+
+    /// isqrt_u256 exactness on perfect squares, non-squares and the full
+    /// U256 top edge (an off-by-one there would poison every closed form).
+    #[test]
+    fn isqrt_u256_is_exact_floor() {
+        assert_eq!(isqrt_u256(U256::zero()), U256::zero());
+        assert_eq!(isqrt_u256(U256::one()), U256::one());
+        assert_eq!(isqrt_u256(U256::from(24u32)), U256::from(4u32));
+        assert_eq!(isqrt_u256(U256::from(25u32)), U256::from(5u32));
+        assert_eq!(isqrt_u256(U256::from(26u32)), U256::from(5u32));
+        let e18 = U256::from(10u128).pow(18.into());
+        let big = e18 * e18; // (1e18)^2 — 72-digit square
+        assert_eq!(isqrt_u256(big), e18);
+        assert_eq!(isqrt_u256(big - U256::one()), e18 - U256::one());
+        // Top edge: n = U256::MAX yields isqrt = 2^128 − 1 exactly (its
+        // square fits; the successor's square is 2^256, which OVERFLOWS the
+        // plain `*` — compare through checked_mul, like the fixup does).
+        let max = U256::MAX;
+        let r = isqrt_u256(max);
+        assert_eq!(r, (U256::one() << 128u32) - U256::one());
+        assert!(r * r <= max);
+        assert!(r
+            .checked_add(U256::one())
+            .and_then(|s| s.checked_mul(s))
+            .is_none_or(|p| p > max));
+    }
+
+    /// OPTIMAL-SIZE-01 edges (FICHA REA-2 §2.2 + the REA-4 Panic(0x11)
+    /// warning): the not-crossed verdict is NAMED and checked BEFORE the
+    /// numerator subtraction; the γ⁻² threshold separates 1.0060 (reject)
+    /// from 1.0070 (accept); fee-zero symmetry lands on ⌊(√2−1)/2·10¹⁸⌋.
+    #[test]
+    fn rea2_closed_form_edges_named_and_checked_before_subtraction() {
+        let e18 = U256::from(10u128).pow(18.into());
+
+        // Identical pools: γ²·t·w < t·w — the upstream's `isqrt(presqrt) ≤
+        // 1000` case, where its Solidity underflows into an anonymous
+        // Panic(0x11). Here: the named verdict, no panic, no wrap.
+        assert_eq!(
+            v2_closed_form_optimal_input_2leg(e18, e18, e18, e18, 30, 30),
+            Err(ClosedForm2LegError::MarketNotCrossed)
+        );
+
+        // Marginal price ratio 1.0060 < γ⁻² = 1.0060271084064…  → rejected.
+        let w2_at_10060 = U256::from_dec_str("1006000000000000000").unwrap();
+        assert_eq!(
+            v2_closed_form_optimal_input_2leg(e18, e18, e18, w2_at_10060, 30, 30),
+            Err(ClosedForm2LegError::MarketNotCrossed)
+        );
+
+        // Ratio 1.0070 > γ⁻² → a size exists.
+        let w2_at_10070 = U256::from_dec_str("1007000000000000000").unwrap();
+        assert!(v2_closed_form_optimal_input_2leg(e18, e18, e18, w2_at_10070, 30, 30).is_ok());
+
+        // Degenerate guards: zero reserves / fee > 10_000 bps.
+        assert_eq!(
+            v2_closed_form_optimal_input_2leg(U256::zero(), e18, e18, e18, 30, 30),
+            Err(ClosedForm2LegError::DegenerateInputs)
+        );
+        assert_eq!(
+            v2_closed_form_optimal_input_2leg(e18, e18, e18, e18, 10_001, 30),
+            Err(ClosedForm2LegError::DegenerateInputs)
+        );
+
+        // Sub-wei optimum: crossed market at 1-wei reserves floors to zero —
+        // a named verdict, not a Some(0) "size".
+        assert_eq!(
+            v2_closed_form_optimal_input_2leg(
+                U256::one(),
+                U256::one(),
+                U256::one(),
+                U256::from(2u32),
+                30,
+                30
+            ),
+            Err(ClosedForm2LegError::SubWeiOptimum)
+        );
+
+        // Adversarial magnitudes (reserves ~2^200): the checked products
+        // overflow U256 → the named checked error, never a wrap.
+        let huge = U256::one() << 200u32;
+        assert_eq!(
+            v2_closed_form_optimal_input_2leg(huge, huge, huge, huge * U256::from(2u32), 30, 30),
+            Err(ClosedForm2LegError::CheckedMathOverflow)
         );
     }
 }

@@ -392,8 +392,9 @@ contract ArbitrageExecutorCrossDexReproTest is Test {
 
         // finalOut (950) < amountIn (1000): balanceAfter <= balanceBefore -> ZeroGrossProfit,
         // the whole tx reverts atomically (no silent loss, no partial state).
+        // ATOMIC-CAUSE-01: both balances ride the revert (finalOut vs. amountIn).
         vm.prank(executorRole);
-        vm.expectRevert(ZeroGrossProfit.selector);
+        vm.expectRevert(abi.encodeWithSelector(ZeroGrossProfit.selector, finalOut, amountIn));
         executor.executeArbitrage(bytes32(0), address(tokenIn), address(tokenOut), amountIn, 0, routers, payloads);
     }
 
@@ -447,8 +448,11 @@ contract ArbitrageExecutorCrossDexReproTest is Test {
 
         // Leg-1's outbound surcharge would drain `fee` of B_out; the post-leg1 guard catches
         // the executor's tokenOut balance falling below its pre-route snapshot and reverts.
+        // ATOMIC-CAUSE-01: the drained balance rides the revert: after leg 0 pushed
+        // `intermediate` and leg 1 pulled `intermediate + intermediate/100` (1% surcharge),
+        // the executor holds B_out - intermediate/100 vs. its pre-route snapshot B_out.
         vm.prank(executorRole);
-        vm.expectRevert(TokenOutRetentionViolation.selector);
+        vm.expectRevert(abi.encodeWithSelector(TokenOutRetentionViolation.selector, B_out - intermediate / 100, B_out));
         executor.executeArbitrage(bytes32(0), address(tokenIn), address(tokenOut), amountIn, 0, routers, payloads);
 
         // Atomic revert: B_out retained EXACTLY - no silent leak of pre-existing tokenOut.

@@ -104,6 +104,10 @@ pub mod pair_alpha_runtime;
 pub mod pair_index;
 pub mod patterns;
 pub mod persistence;
+// TWO-LEG-01 (2026-10-23): crossed-market pair classification + the ported
+// upstream rating (REA: flashbots/simple-arbitrage@03cf1058 src/Arbitrage.ts:
+// 19-29,31-67,107-114). Dual-tree declaration (bin root declares it too).
+pub mod crossed_market;
 pub mod pool_candidate;
 pub mod pool_discovery;
 pub mod pool_sources;

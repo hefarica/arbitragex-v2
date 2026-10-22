@@ -132,7 +132,8 @@ contract ArbitrageExecutorFuzzTest is Test {
         bytes[] memory payloads = new bytes[](1);
         payloads[0] = hex"12345678";
 
-        vm.expectRevert(InsufficientProfit.selector);
+        // ATOMIC-CAUSE-01: realised profit (grossProfit) vs. operator floor (minProfit).
+        vm.expectRevert(abi.encodeWithSelector(InsufficientProfit.selector, grossProfit, minProfit));
         vm.prank(execRole);
         executor.executeArbitrage(bytes32(0), address(token), address(token), amountIn, minProfit, routers, payloads);
     }
@@ -159,7 +160,8 @@ contract ArbitrageExecutorFuzzTest is Test {
         bytes[] memory payloads = new bytes[](1);
         payloads[0] = hex"12345678";
 
-        vm.expectRevert(InsufficientBalance.selector);
+        // ATOMIC-CAUSE-01: observed balance vs. required amountIn.
+        vm.expectRevert(abi.encodeWithSelector(InsufficientBalance.selector, balance, amountIn));
         vm.prank(execRole);
         executor.executeArbitrage(bytes32(0), address(token), address(token), amountIn, 0, routers, payloads);
     }

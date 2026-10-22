@@ -91,6 +91,10 @@ mod beta_priors; // Deuda 4 (2026-09-20): Beta side writer+reader (bayesian_prio
 mod metrics;
 mod patterns;
 mod persistence;
+// TWO-LEG-01 (2026-10-23): crossed-market pair classification + the ported
+// upstream rating (REA: flashbots/simple-arbitrage@03cf1058). Declared in the
+// dual-tree like patterns/persistence — scanner.rs (bin crate) consumes it.
+mod crossed_market;
 mod priors_cache; // BR-05 (2026-09-07): Stage 2c §IV read side (WO-07 port-back).
 mod publisher;
 mod reserves;

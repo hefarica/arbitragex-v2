@@ -39,7 +39,14 @@ error FL_UnauthorizedCaller();
 /// @dev Thrown when executeOperation is called with an initiator that is not this contract.
 error FL_InvalidInitiator();
 /// @dev Thrown when the call to ArbitrageExecutor inside executeOperation returns success=false.
-error FL_ArbitrageExecutionFailed();
+///      ATOMIC-CAUSE-01 (2026-10-23): the low-level call previously DISCARDED the
+///      ArbitrageExecutor's returndata (`(bool success,) = arbitrageExecutor.call(...)`) —
+///      the executor's NAMED revert cause (SwapFailed / InsufficientProfit / Panic...)
+///      died inside this wrapper. The error now carries the raw revert data so the
+///      off-chain sim/bindings can decode the ORIGINAL cause.
+///      REA: flashbots/simple-blind-arbitrage sha 73c6c270b27059e6dc0469a6c08e0f7739e5d531
+///      src/BlindBackrunLogic.sol:266-268 (same anonymous pattern upstream).
+error FL_ArbitrageExecutionFailed(bytes revertData);
 /// @dev Thrown when setFlashLoanProvider is called with address(0).
 error FL_ZeroProvider();
 /// @dev Thrown when requestFlashLoan is called but no provider is configured.
@@ -51,7 +58,14 @@ error FL_BalancerVaultNotSet();
 ///      contract does not hold enough of the asset to repay principal + premium.
 ///      Surfaces a clear, named, fail-closed error instead of an opaque transfer/pull
 ///      failure from the provider. Repayment was never attempted when this reverts.
-error FL_RepaymentShortfall();
+///      ATOMIC-CAUSE-01 (2026-10-23): now carries the observed balance vs. the owed
+///      amount (principal + premium) so the shortfall magnitude is named.
+///      REA: aave/aave-v3-core sha 782f51917056a53a2c228701058a6c3fb233684a
+///      contracts/flashloan/base/FlashLoanSimpleReceiverBase.sol + FlashLoanLogic.sol:248-252
+///      (repayment is PULL `safeTransferFrom(amount + premium)`; when the receiver
+///      cannot cover it the whole tx reverts — here the shortfall is named, keeping
+///      the repay-or-revert invariant INTACT).
+error FL_RepaymentShortfall(uint256 available, uint256 owed);
 /// @dev FIX A (F25): thrown when a callback does not correspond to a request this
 ///      contract initiated (no request in flight, or the digest does not match).
 error FL_RequestMismatch();
@@ -388,9 +402,11 @@ contract FlashLoanExecutor is Initializable, AccessControlUpgradeable, UUPSUpgra
         // 1. Approve funds to ArbitrageExecutor
         asset.forceApprove(arbitrageExecutor, amount);
 
-        // 2. Call ArbitrageExecutor with the encoded payload
-        (bool success,) = arbitrageExecutor.call(userData);
-        if (!success) revert FL_ArbitrageExecutionFailed();
+        // 2. Call ArbitrageExecutor with the encoded payload.
+        //    ATOMIC-CAUSE-01: capture the executor's revert data — its named cause
+        //    (SwapFailed / InsufficientProfit / ...) must survive this wrapper.
+        (bool success, bytes memory revertData) = arbitrageExecutor.call(userData);
+        if (!success) revert FL_ArbitrageExecutionFailed(revertData);
 
         // 2b. Hygiene (defense-in-depth): clear any residual executor allowance the
         // arbitrage call did not consume (e.g. a route that pulled less than `amount`).
@@ -400,7 +416,9 @@ contract FlashLoanExecutor is Initializable, AccessControlUpgradeable, UUPSUpgra
         // 3. Repay Balancer Vault (amount + fee = amount + 0 = amount). Fail-closed with a
         // clear named error if the round trip did not leave enough to repay.
         uint256 amountOwed = amount + premium;
-        if (asset.balanceOf(address(this)) < amountOwed) revert FL_RepaymentShortfall();
+        if (asset.balanceOf(address(this)) < amountOwed) {
+            revert FL_RepaymentShortfall(asset.balanceOf(address(this)), amountOwed);
+        }
         asset.safeTransfer(msg.sender, amountOwed);
 
         emit FlashLoanExecuted(address(asset), amount, premium, true);
@@ -415,9 +433,11 @@ contract FlashLoanExecutor is Initializable, AccessControlUpgradeable, UUPSUpgra
         // 1. Approve funds to ArbitrageExecutor
         IERC20(asset).forceApprove(arbitrageExecutor, amount);
 
-        // 2. Call ArbitrageExecutor (the payload is encoded in `params`)
-        (bool success,) = arbitrageExecutor.call(params);
-        if (!success) revert FL_ArbitrageExecutionFailed();
+        // 2. Call ArbitrageExecutor (the payload is encoded in `params`).
+        //    ATOMIC-CAUSE-01: capture the executor's revert data — its named cause
+        //    (SwapFailed / InsufficientProfit / ...) must survive this wrapper.
+        (bool success, bytes memory revertData) = arbitrageExecutor.call(params);
+        if (!success) revert FL_ArbitrageExecutionFailed(revertData);
 
         // 2b. Hygiene (defense-in-depth): clear any residual executor allowance the
         // arbitrage call did not consume. No standing allowance should outlive the callback.
@@ -426,7 +446,9 @@ contract FlashLoanExecutor is Initializable, AccessControlUpgradeable, UUPSUpgra
         // 3. Repay Aave (amount + premium). Fail-closed with a clear named error if the
         // round trip did not leave enough, instead of an opaque transferFrom failure.
         uint256 amountToOwe = amount + premium;
-        if (IERC20(asset).balanceOf(address(this)) < amountToOwe) revert FL_RepaymentShortfall();
+        if (IERC20(asset).balanceOf(address(this)) < amountToOwe) {
+            revert FL_RepaymentShortfall(IERC20(asset).balanceOf(address(this)), amountToOwe);
+        }
         IERC20(asset).forceApprove(address(aavePool), amountToOwe);
 
         // SC-06: signal successful completion to off-chain monitors

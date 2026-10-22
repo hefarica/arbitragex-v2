@@ -10,14 +10,32 @@
 -- edited, imputed or synthesized:
 --   * chain 1 (the harness runs the mainnet wrapped-flash path);
 --   * 2-leg routes only (the A.3.a encoder supports 2-leg round trips);
---   * legs restricted to the adapters the A.3.a encoder can actually encode
---     (UniswapV2 / SushiSwap — the exact set of
---     `adapter_to_semantic()` in variance_benchmark.rs). V3/PancakeSwap legs
---     are honestly UNSUPPORTED by that encoder, so exporting them only
---     inflated the `unsupported_adapter` skip counter with rows the harness
---     can never label. Scope filter, not a value filter: the V3 population
---     stays fully visible in `opportunities` and is measured separately by the
---     driver (see docs/operations/SIMULATOR_V2_READINESS.md);
+--   * POBLACION-FILTER-01 (2026-10-23): token path of exactly 3 entries
+--     (round-trip shape [token_in, intermediate, token_in]). The harness's own
+--     per-row gate (backend/sim-core/tests/variance_benchmark.rs, `bad_shape`
+--     skip) requires dex_adapters.len() == 2 AND token_addresses.len() == 3,
+--     but this export only checked the first half, so rows with a malformed
+--     token path were exported and then skipped by the harness (or, when the
+--     token_addresses key was missing entirely, the JSONL line carried
+--     `"token_addresses": null` and the harness PANICKED on deserialization —
+--     one bad row killed the whole benchmark run). The export IS the labelable
+--     population of the window: a row the sim itself cannot process must not
+--     occupy a slot of it (nor of the LIMIT 500 / DISTINCT budget);
+--   * legs restricted to the adapters the A.3.a encoder can actually encode,
+--     compared as the EXACT set of `adapter_to_semantic()` in
+--     variance_benchmark.rs: trim + case-sensitive match against the six
+--     spellings UniswapV2 | uniswap-v2 | uniswapv2 | SushiSwap | sushi |
+--     sushiswap. The pre-POBLACION-FILTER-01 mirror compared lower(leg) IN
+--     (four lowercase tokens), a case-insensitive SUPERSET: spellings like
+--     'UNISWAP-V2' passed the export and were then skipped by the harness as
+--     unsupported_adapter — the same population-contract violation this PR
+--     fixes for the token path. The six spellings keep ADAPTER-CASE-01's
+--     lesson intact (kebab, CamelCase AND plain lowercase all pass; V3 and
+--     PancakeSwap legs stay honestly UNSUPPORTED by that encoder, so exporting
+--     them only inflated the `unsupported_adapter` skip counter with rows the
+--     harness can never label — the V3 population stays fully visible in
+--     `opportunities` and is measured separately by the driver, see
+--     docs/operations/SIMULATOR_V2_READINESS.md);
 --   * last 2 hours — the freshness window the harness can pin: it resolves
 --     block B by timestamp bisection inside `tip − 1100` blocks (≈3.7h) and
 --     counts anything older as `stale_timestamp`. Widening this window does
@@ -60,6 +78,14 @@ WHERE o.chain_id = 1
   AND o.route_metadata::text NOT IN ('', '{}')
   AND o.route_metadata ? 'dex_adapters'
   AND jsonb_array_length(o.route_metadata->'dex_adapters') = 2
+  -- POBLACION-FILTER-01 (2026-10-23): the harness's own shape gate is
+  --   dex_adapters.len() == 2 AND token_addresses.len() == 3
+  -- (variance_benchmark.rs `bad_shape` skip). This export previously mirrored
+  -- only the first half, so malformed token paths were exported and then
+  -- skipped by the sim (or panicked the harness when the key was missing —
+  -- jsonb_array_length(NULL) is NULL, so this predicate also excludes rows
+  -- whose route_metadata has NO token_addresses key at all).
+  AND jsonb_array_length(o.route_metadata->'token_addresses') = 3
   -- A.3.a encoder-supported legs only (mirror of adapter_to_semantic()).
   -- ADAPTER-CASE-01 (2026-10-20): the previous filter was
   --   (route_metadata->'dex_adapters') <@ '["UniswapV2","SushiSwap"]'::jsonb
@@ -68,11 +94,15 @@ WHERE o.chain_id = 1
   -- 2-leg UniswapV2 route was therefore dropped here and the evidence row kept
   -- saying "0 distinct topologies" — an instrument lying, not an empty market.
   -- adapter_to_semantic() accepts UniswapV2 | uniswap-v2 | uniswapv2 and
-  -- SushiSwap | sushi | sushiswap; those spellings all lowercase to exactly the
-  -- four tokens compared below, so this is the same SET, compared without
-  -- depending on casing.
+  -- SushiSwap | sushi | sushiswap (trim + case-sensitive match), so the EXACT
+  -- mirror is those six spellings, compared as written. The pre-2026-10-23
+  -- mirror (lower(leg) IN four lowercase tokens) accepted every casing that
+  -- lowercases to those tokens — a superset that exported rows the harness
+  -- itself skips as unsupported_adapter; same population-contract violation
+  -- as the token-path half fixed above.
   AND (
-    SELECT bool_and(lower(leg) IN ('uniswapv2', 'uniswap-v2', 'sushi', 'sushiswap'))
+    SELECT bool_and(trim(leg) IN ('UniswapV2', 'uniswap-v2', 'uniswapv2',
+                                 'SushiSwap', 'sushi', 'sushiswap'))
     FROM jsonb_array_elements_text(o.route_metadata->'dex_adapters') AS legs(leg)
   )
   AND o.amount_in_wei IS NOT NULL

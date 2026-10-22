@@ -628,9 +628,13 @@ pub fn execute_multistep_revm(
         }
     };
     let pinned_block = lazy.pinned_block_number();
-    // SIM-REVERT-TRACE-01: with the `revert-trace` feature the SAME production
-    // context is built with a tracer attached; the default keeps the zero-size
-    // `NoopInspector`. One context, one execution path — never a fork.
+    // SIM-REVERT-TRACE-01 → REVERT-TRACE-01 (2026-10-23): the production
+    // context itself now carries the `RevertFrameInspector` — every reverted
+    // step names its failing frame (address + pc + opcode + structured
+    // kind) in the persisted fail_reason, on the SAME single execution path.
+    // The `revert-trace` feature remains a VERBOSE diagnostic overlay (it
+    // prints per-frame VARIANCE_BENCH_REVERT_FRAME= lines); the default no
+    // longer needs it to see the frame.
     #[cfg(feature = "revert-trace")]
     let mut sctx =
         SequenceContext::<simulator_v2::sequence_runner::RevertTracer>::new_with_revert_tracer(
@@ -831,9 +835,10 @@ pub fn execute_multistep_revm(
                 };
                 match outcome {
                     CallOutcome::Success { .. } => continue,
-                    CallOutcome::Reverted { reason, .. } => {
-                        return SimulationOutcome::failed(format!(
-                            "multistep_call_revert:{reason}"
+                    CallOutcome::Reverted { reason, frame, .. } => {
+                        return SimulationOutcome::failed(revert_fail_reason(
+                            &reason,
+                            frame.as_ref(),
                         ));
                     }
                     CallOutcome::Halted { reason, .. } => {
@@ -943,6 +948,25 @@ fn failed_with(e: MultiStepError) -> SimulationOutcome {
     SimulationOutcome::failed(format!("{}:{}", e.reason_tag(), e))
 }
 
+/// REVERT-TRACE-01: annotate the persisted `fail_reason` with the failing
+/// frame's coordinates (`@<address> pc=0x.. op=0x.. <kind>`). The
+/// `multistep_call_revert:` PREFIX is UNCHANGED on purpose:
+/// `is_sim_capability_gap` (sim-ctl/src/persistence.rs) classifies by
+/// prefix and keeps `multistep_call_revert:*` as a QUALITY rejection —
+/// no new fail_reason family is introduced here, so the classifier needs
+/// no change (a new family would have to be classified there or it would
+/// become a silent rejection, F-01).
+#[cfg(feature = "v2-simulator")]
+fn revert_fail_reason(
+    reason: &str,
+    frame: Option<&simulator_v2::sequence_runner::RevertFrame>,
+) -> String {
+    match frame {
+        Some(f) => format!("multistep_call_revert:{reason} {}", f.annotation()),
+        None => format!("multistep_call_revert:{reason}"),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -1014,6 +1038,49 @@ mod tests {
     }
 
     // ── Config validation ─────────────────────────────────────────────────
+
+    /// REVERT-TRACE-01: the persisted fail_reason keeps the
+    /// `multistep_call_revert:` prefix (classifier contract) and appends the
+    /// failing frame's coordinates when one exists. `None` = not computed
+    /// (R8) — the reason travels alone, never a fabricated frame.
+    #[cfg(feature = "v2-simulator")]
+    #[test]
+    fn revert_fail_reason_appends_frame_and_keeps_prefix() {
+        use simulator_v2::sequence_runner::{RevertFrame, RevertKind};
+
+        // Without a frame: byte-identical to the pre-REVERT-TRACE-01 string.
+        assert_eq!(
+            super::revert_fail_reason("0x08c379a0deadbeef", None),
+            "multistep_call_revert:0x08c379a0deadbeef"
+        );
+
+        // With a Panic(0x11) frame at pc=76: prefix + annotation.
+        let mut data = vec![0x4e, 0x48, 0x7b, 0x71];
+        let mut word = [0u8; 32];
+        word[31] = 0x11;
+        data.extend_from_slice(&word);
+        let frame = RevertFrame {
+            address: "0x00000000000000000000000000000000000000b8".to_string(),
+            depth: 0,
+            pc: 76,
+            opcode: 0xfd,
+            kind: RevertKind::classify(&data),
+            data: data.clone(),
+            fatal: true,
+        };
+        let reason = super::revert_fail_reason("0x4e487b71", Some(&frame));
+        assert_eq!(
+            reason,
+            "multistep_call_revert:0x4e487b71 \
+             @0x00000000000000000000000000000000000000b8 pc=0x4c op=0xfd \
+             Panic(0x11): arithmetic underflow/overflow"
+        );
+        // The classifier's family prefix survives byte-intact: this is the
+        // exact string `is_sim_capability_gap` sees (stays a quality
+        // rejection, `starts_with("multistep_call_revert")` unaffected by
+        // the appended annotation).
+        assert!(reason.starts_with("multistep_call_revert:"));
+    }
 
     #[test]
     fn config_paper_mode_required() {

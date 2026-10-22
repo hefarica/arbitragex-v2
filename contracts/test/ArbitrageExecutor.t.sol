@@ -297,8 +297,10 @@ contract ArbitrageExecutorTest is Test {
         // A5: payload must carry the whitelisted selector.
         payloads[0] = abi.encodePacked(MOCK_SELECTOR);
 
-        // SC-3: custom error replaces string "Slippage / Min profit guard failed"
-        vm.expectRevert(InsufficientProfit.selector);
+        // SC-3: custom error replaces string "Slippage / Min profit guard failed".
+        // ATOMIC-CAUSE-01: the realised profit (tinyProfit) and the operator floor
+        // (minProfit) ride the revert.
+        vm.expectRevert(abi.encodeWithSelector(InsufficientProfit.selector, tinyProfit, minProfit));
 
         vm.prank(executorRole);
         executor.executeArbitrage(bytes32(0), address(token), address(token), amountIn, minProfit, routers, payloads);
@@ -405,10 +407,16 @@ contract ArbitrageExecutorTest is Test {
 
         token.mint(address(executor), amountIn);
 
-        // The re-entrant inner call is blocked by ReentrancyGuard (ReentrancyGuardReentrantCall).
-        // That revert propagates through the low-level router.call() and is caught by SwapFailed.
-        // SC-3: SwapFailed custom error replaces string "Swap failed in route"
-        vm.expectRevert(SwapFailed.selector);
+        // The re-entrant inner call is blocked by onlyExecutor (the router holds no
+        // EXECUTOR_ROLE): it reverts NotExecutor. That revert propagates through the
+        // low-level router.call() and is caught by SwapFailed.
+        // ATOMIC-CAUSE-01: the callee's returndata now rides INSIDE SwapFailed — the
+        // expected error asserts leg 0, the router and the bubbled NotExecutor data.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                SwapFailed.selector, 0, address(malicious), abi.encodeWithSelector(NotExecutor.selector)
+            )
+        );
 
         vm.prank(executorRole);
         executor.executeArbitrage(
@@ -825,8 +833,22 @@ contract ArbitrageExecutorTest is Test {
 
         // transferFrom(amountIn + 1) exceeds the granted allowance -> router reverts ->
         // low-level call returns false -> SwapFailed; the whole tx reverts.
+        // ATOMIC-CAUSE-01: the bubbled returndata is the OZ5 ERC20InsufficientAllowance
+        // revert of the over-pull (spender=router, allowance=amountIn, needed=amountIn+1).
         vm.prank(executorRole);
-        vm.expectRevert(SwapFailed.selector);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                SwapFailed.selector,
+                0,
+                address(router),
+                abi.encodeWithSelector(
+                    bytes4(keccak256("ERC20InsufficientAllowance(address,uint256,uint256)")),
+                    address(router),
+                    amountIn,
+                    amountIn + 1
+                )
+            )
+        );
         executor.executeArbitrage(bytes32(0), address(token), address(token), amountIn, 0, routers, payloads);
 
         // The executor's balance is fully intact and no allowance lingers.
@@ -938,7 +960,9 @@ contract ArbitrageExecutorTest is Test {
 
         vm.startPrank(funder);
         token.approve(address(executor), amountIn);
-        vm.expectRevert(ZeroGrossProfit.selector);
+        // ATOMIC-CAUSE-01: zero-profit round trip ends balanceAfter == balanceBefore ==
+        // amountIn (the pulled principal): both values ride the revert.
+        vm.expectRevert(abi.encodeWithSelector(ZeroGrossProfit.selector, amountIn, amountIn));
         executor.executeArbitrageFlashFunded(bytes32(0), address(token), address(token), amountIn, 0, routers, payloads);
         vm.stopPrank();
 
@@ -1008,7 +1032,16 @@ contract ArbitrageExecutorTest is Test {
 
         vm.startPrank(funder);
         token.approve(address(executor), amountIn);
-        vm.expectRevert(SwapFailed.selector); // re-entrant call reverts -> router.call returns false -> SwapFailed
+        // re-entrant call reverts ReentrancyGuardReentrantCall -> router.call returns
+        // false -> SwapFailed now bubbles that exact returndata (ATOMIC-CAUSE-01).
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                SwapFailed.selector,
+                0,
+                address(router),
+                abi.encodeWithSelector(bytes4(keccak256("ReentrancyGuardReentrantCall()")))
+            )
+        );
         executor.executeArbitrageFlashFunded(bytes32(0), address(token), address(token), amountIn, 0, routers, payloads);
         vm.stopPrank();
 
@@ -1035,7 +1068,9 @@ contract ArbitrageExecutorTest is Test {
 
         vm.startPrank(funder);
         feeToken.approve(address(executor), amountIn);
-        vm.expectRevert(FlashFundedPullMismatch.selector);
+        // ATOMIC-CAUSE-01: 1% fee-on-transfer skims amountIn/100 on the pull, so the
+        // observed credit is amountIn - fee vs. the expected amountIn.
+        vm.expectRevert(abi.encodeWithSelector(FlashFundedPullMismatch.selector, amountIn - amountIn / 100, amountIn));
         executor.executeArbitrageFlashFunded(
             bytes32(0), address(feeToken), address(feeToken), amountIn, 0, routers, payloads
         );
@@ -1086,7 +1121,11 @@ contract ArbitrageExecutorTest is Test {
 
         vm.startPrank(funder);
         outFee.approve(address(executor), amountIn);
-        vm.expectRevert(FlashFundedCapitalRetentionViolation.selector);
+        // ATOMIC-CAUSE-01: after returning principal+profit the outbound-surcharge
+        // token left the executor at B + (amountIn+profit) - (amountIn+profit) - fee
+        // (1% on the outbound return) — below B. Both values ride the revert.
+        uint256 returned = amountIn + profit;
+        vm.expectRevert(abi.encodeWithSelector(FlashFundedCapitalRetentionViolation.selector, B - returned / 100, B));
         executor.executeArbitrageFlashFunded(
             bytes32(0), address(outFee), address(outFee), amountIn, 10e18, routers, payloads
         );
