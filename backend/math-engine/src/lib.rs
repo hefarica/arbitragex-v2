@@ -16,6 +16,7 @@ pub mod api;
 
 // Legacy modules preserved for backward compatibility
 pub mod amm_math;
+pub mod mev_reducer;
 pub mod risk_engine;
 pub mod roi_engine;
 pub mod route_math;
