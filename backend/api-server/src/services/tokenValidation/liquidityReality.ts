@@ -80,6 +80,13 @@ export interface LiquidityRealityResult {
   primary_dex: string | null;
   /** Address of the deepest pool. */
   primary_pair_address: string | null;
+  /**
+   * When the DEX Screener snapshot was CAPTURED (ISO-8601, UTC), i.e. the
+   * moment this response was parsed — not when the row is written. NULL when
+   * no snapshot was reached. This is what `token_validations.volume_as_of`
+   * stores (migration 127); `validated_at` is a different fact.
+   */
+  captured_at: string | null;
 }
 
 const DEXSCREENER_BASE = "https://api.dexscreener.com/latest/dex/tokens";
@@ -147,6 +154,7 @@ export async function validateLiquidityReality(
     price_usd: null,
     primary_dex: null,
     primary_pair_address: null,
+    captured_at: null,
   } as LiquidityRealityResult;
 
   const slug = chainSlug(chain_id);
@@ -160,6 +168,7 @@ export async function validateLiquidityReality(
   }
 
   let raw: unknown;
+  let capturedAt: string | null = null;
   try {
     const ctrl = new AbortController();
     const timeoutId = setTimeout(() => ctrl.abort(), HTTP_TIMEOUT_MS);
@@ -176,6 +185,9 @@ export async function validateLiquidityReality(
       return { ...base, error: true, error_message: `HTTP ${res.status}` };
     }
     raw = await res.json();
+    // Capture the snapshot instant as soon as the payload is in hand. Any
+    // later timestamp (queue, INSERT) would overstate freshness.
+    capturedAt = new Date().toISOString();
   } catch (err) {
     return {
       ...base,
@@ -250,5 +262,6 @@ export async function validateLiquidityReality(
     price_usd,
     primary_dex: primaryPair.dexId ?? null,
     primary_pair_address: primaryPair.pairAddress ?? null,
+    captured_at: capturedAt,
   };
 }

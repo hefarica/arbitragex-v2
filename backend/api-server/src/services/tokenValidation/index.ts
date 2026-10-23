@@ -54,6 +54,9 @@ export interface TokenValidationRow {
   volume_24h_usd: number | null;
   volume_1h_usd: number | null;
   volume_5m_usd: number | null;
+  /** Capture time of the DEX Screener snapshot behind volume_24h_usd
+   *  (migration 127). NULL = unknown age; never substitute validated_at. */
+  volume_as_of: string | null;
   price_usd: number | null;
   primary_dex: string | null;
   primary_pair_address: string | null;
@@ -114,6 +117,7 @@ INSERT INTO token_validations (
   exists_onchain, is_contract, bytecode_size,
   standard, onchain_name, onchain_symbol, onchain_decimals, total_supply_str,
   pair_count, liquidity_usd, volume_24h_usd, volume_1h_usd, volume_5m_usd,
+  volume_as_of,
   price_usd, primary_dex, primary_pair_address,
   registry_verified, registry_source, registry_symbol, registry_name,
   final_status, score, score_reasons,
@@ -124,11 +128,12 @@ INSERT INTO token_validations (
   $3, $4, $5,
   $6, $7, $8, $9, $10,
   $11, $12, $13, $14, $15,
-  $16, $17, $18,
-  $19, $20, $21, $22,
-  $23, $24, $25,
-  $26, $27,
-  $28, $29
+  $16,
+  $17, $18, $19,
+  $20, $21, $22, $23,
+  $24, $25, $26,
+  $27, $28,
+  $29, $30
 )
 ON CONFLICT (chain_id, address) DO UPDATE SET
   exists_onchain       = EXCLUDED.exists_onchain,
@@ -144,6 +149,7 @@ ON CONFLICT (chain_id, address) DO UPDATE SET
   volume_24h_usd       = EXCLUDED.volume_24h_usd,
   volume_1h_usd        = EXCLUDED.volume_1h_usd,
   volume_5m_usd        = EXCLUDED.volume_5m_usd,
+  volume_as_of         = EXCLUDED.volume_as_of,
   price_usd            = EXCLUDED.price_usd,
   primary_dex          = EXCLUDED.primary_dex,
   primary_pair_address = EXCLUDED.primary_pair_address,
@@ -187,6 +193,9 @@ async function readFromPg(
       volume_24h_usd:    row["volume_24h_usd"] as number | null,
       volume_1h_usd:     row["volume_1h_usd"] as number | null,
       volume_5m_usd:     row["volume_5m_usd"] as number | null,
+      volume_as_of:      row["volume_as_of"] instanceof Date
+                            ? (row["volume_as_of"] as Date).toISOString()
+                            : (row["volume_as_of"] as string | null),
       price_usd:         row["price_usd"] as number | null,
       primary_dex:       row["primary_dex"] as string | null,
       primary_pair_address: row["primary_pair_address"] as string | null,
@@ -218,6 +227,7 @@ async function writeToPg(pool: Pool, row: TokenValidationRow): Promise<void> {
       row.exists_onchain, row.is_contract, row.bytecode_size,
       row.standard, row.onchain_name, row.onchain_symbol, row.onchain_decimals, row.total_supply_str,
       row.pair_count, row.liquidity_usd, row.volume_24h_usd, row.volume_1h_usd, row.volume_5m_usd,
+      row.volume_as_of,
       row.price_usd, row.primary_dex, row.primary_pair_address,
       row.registry_verified, row.registry_source, row.registry_symbol, row.registry_name,
       row.final_status, row.score, JSON.stringify(row.score_reasons),
@@ -305,6 +315,9 @@ async function runValidators(
     volume_24h_usd:    liquidity.volume_24h_usd,
     volume_1h_usd:     liquidity.volume_1h_usd,
     volume_5m_usd:     liquidity.volume_5m_usd,
+    // The snapshot instant travels with the volume it belongs to: a volume with
+    // no age is not orderable (contract §2). No snapshot => NULL, not `now`.
+    volume_as_of:      liquidity.volume_24h_usd === null ? null : liquidity.captured_at,
     price_usd:         liquidity.price_usd,
     primary_dex:       liquidity.primary_dex,
     primary_pair_address: liquidity.primary_pair_address,
@@ -405,6 +418,7 @@ export async function readTokenValidation(
     volume_24h_usd: null,
     volume_1h_usd: null,
     volume_5m_usd: null,
+    volume_as_of: null,
     price_usd: null,
     primary_dex: null,
     primary_pair_address: null,
