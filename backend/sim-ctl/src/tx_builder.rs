@@ -87,13 +87,29 @@ pub fn build_probe(opp: &Opportunity, signer_from: Address) -> Result<ProbeTx, B
 }
 
 /// SIM4-CYCLIC-01: `path` is `route_metadata.token_addresses` — the FULL token
-/// traversal (first = token_in, last = token_out, length = hops + 1). Pass an
-/// empty slice when the caller has no route.
+/// traversal (first = ENTRY token, length = hops + 1). Pass an empty slice when
+/// the caller has no route.
 ///
-/// A closed route (`token_in == token_out`) is representable IFF `path.len() >= 3`
-/// (i.e. >= 2 legs) and the path genuinely starts on `token_in` and ends on
-/// `token_out`. Absent/inconsistent path ⇒ `CyclicRouteMissingPath`, its own
-/// typed reason — never the old "not representable" label.
+/// F1-SIM-BUILDER (2026-10-23) — the CLOSURE of a route is decided by the PATH,
+/// not by `token_in == token_out`. TWO-LEG-01 (#1015, merge `b5809f08`) persists
+/// a closed 2-leg plan as `token_addresses = [A, X, A]` while `token_in = A` and
+/// `token_out = X`: the pair's COUNTER-token, kept for display/ledger purposes,
+/// NOT the token the cycle closes on. The pre-existing rule required
+/// `path[last] == token_out` for any row not closed by tokens, so it rejected
+/// **100 %** of that population — measured on the VPS PG (t13): 143/143 rows of
+/// W1 with `path >= 3` died as `route_path_not_representable:dex_arb`
+/// (`sim_engine.rs:104-110`) before ever reaching the fork.
+///
+/// Contract this builder honours now (one decision point, no fabrication):
+///   * **CLOSED**: `path.len() >= 3 && path[0] == path[last]` (a real cycle) and
+///     `path[0] == token_in` (the entry is never invented). `token_out` is NOT
+///     required to equal `path[last]`: the cycle closes on `token_in`, so
+///     `path[last] == token_in` by construction.
+///   * **OPEN with path**: `path.len() >= 2 && path[0] == token_in &&
+///     path[last] == token_out` (unchanged; hops are never dropped).
+///   * **OPEN without path**: single-leg probe on `dex_a` (pre-N1 behaviour).
+///   * **closed-by-tokens (`token_in == token_out`) WITHOUT a usable cycle**
+///     ⇒ `CyclicRouteMissingPath`, its own data-availability reason.
 pub fn build_probe_with_path(
     opp: &Opportunity,
     signer_from: Address,
@@ -124,18 +140,33 @@ pub fn build_probe_with_path(
     // simula una ruta que NO existe, y un `passed=true` así contamina la métrica
     // que este despliegue existe para producir.
     //
-    // Tres casos, y ninguno fabrica nada:
-    //   * CERRADA (`token_in == token_out`): exige >= 2 patas y cierre; si no,
-    //     `CyclicRouteMissingPath` (familia ya reconocida por el clasificador).
-    //   * NO cerrada SIN path: comportamiento PREVIO intacto (una pata por dex_a).
-    //   * NO cerrada CON path incoherente: `PathNotRepresentable`, tipado.
-    let path_tokens: Option<Vec<Address>> = if token_in == token_out {
-        if path.len() < 3 || path[0] != token_in || path[path.len() - 1] != token_out {
-            return Err(BuildError::CyclicRouteMissingPath(
-                opp.strategy_kind.clone(),
-            ));
+    // F1-SIM-BUILDER (2026-10-23): el cierre lo decide el PATH, no la igualdad
+    // `token_in == token_out`. TWO-LEG-01 persiste el plan cerrado como
+    // `token_addresses = [A, X, A]` con `token_in = A` y `token_out = X` (el
+    // contra-token del par, no el token de cierre). Exigir `path[-1] == token_out`
+    // rechazaba el 100 % de esa población — medido en la PG del VPS: 143/143 filas
+    // de W1 con `path >= 3` morían como `route_path_not_representable:dex_arb`
+    // (ver `sim_engine.rs:104-110`) antes de llegar al fork.
+    //
+    // Cuatro casos, y ninguno fabrica nada:
+    //   * CICLO (`len >= 3 && path[0] == path[-1]`): ruta CERRADA. Exige empezar
+    //     en `token_in` y se encoda el path COMPLETO; `token_out` puede ser el
+    //     contra-token porque el ciclo cierra sobre `token_in`.
+    //   * `token_in == token_out` SIN ciclo en el path: `CyclicRouteMissingPath`
+    //     (gap de disponibilidad de datos; motivo propio, no se inventa la pata).
+    //   * ABIERTA SIN path: comportamiento PREVIO intacto (una pata por `dex_a`).
+    //   * ABIERTA CON path: debe empezar en `token_in` y terminar en `token_out`;
+    //     si no, `PathNotRepresentable` (tipado, nunca una pata inventada).
+    let path_is_cycle = path.len() >= 3 && path[0] == path[path.len() - 1];
+    let path_tokens: Option<Vec<Address>> = if path_is_cycle {
+        if path[0] != token_in {
+            return Err(BuildError::PathNotRepresentable(opp.strategy_kind.clone()));
         }
         Some(path.to_vec())
+    } else if token_in == token_out {
+        return Err(BuildError::CyclicRouteMissingPath(
+            opp.strategy_kind.clone(),
+        ));
     } else if path.is_empty() {
         None
     } else {
@@ -657,6 +688,142 @@ mod tests {
         assert!(matches!(
             build_probe_with_path(&o, signer, &[a, x, z]),
             Err(BuildError::PathNotRepresentable(_))
+        ));
+    }
+
+    // ── F1-SIM-BUILDER (2026-10-23): el plan CERRADO 2-pata de TWO-LEG-01 ────
+    //
+    // CONTRACT TEST cruzado contra una fila REAL de producción (t13, PG del VPS,
+    // 2026-10-23; `docs/rea/A1_SIM_CAP.md` §4): oportunidad
+    // f55914d3-826e-4d97-800f-eef333a8ab88, detector `patterns`, WETH/UNI,
+    // uniswap-v2 ↔ uniswap-v2, `route_metadata.token_addresses = [WETH, UNI,
+    // WETH]`, `token_in = WETH`, `token_out = UNI`. Antes de F1 el builder
+    // devolvía `PathNotRepresentable` para 143/143 filas de ESTA forma
+    // (fail_reason `route_path_not_representable:dex_arb`, TODAS post-deploy,
+    // 0 simuladas y 0 passed).
+    const TWO_LEG_WETH: &str = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
+    const TWO_LEG_UNI: &str = "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984";
+
+    /// The exact row shape TWO-LEG-01 persists: `token_in` = base, `token_out` =
+    /// the pair's COUNTER-token (never the closing token), plan in the path.
+    fn two_leg_01_row(dex_a: &str) -> Opportunity {
+        let mut o = opp(StrategyKind::dex_arb(), 1, dex_a);
+        o.token_in = TWO_LEG_WETH.into();
+        o.token_out = TWO_LEG_UNI.into();
+        o.amount_in_wei = "5000000000000000".into();
+        o
+    }
+
+    #[test]
+    fn two_leg_01_closed_path_with_counter_token_out_builds() {
+        let signer: Address = [0x11; 20].into();
+        let o = two_leg_01_row("uniswap-v2");
+        assert_ne!(
+            o.token_out.as_str(),
+            TWO_LEG_WETH,
+            "fixture must keep token_out as the counter-token (the shape that used to be refused)"
+        );
+        let weth: Address = TWO_LEG_WETH.parse().expect("weth");
+        let uni: Address = TWO_LEG_UNI.parse().expect("uni");
+
+        let tx = build_probe_with_path(&o, signer, &[weth, uni, weth])
+            .expect("TWO-LEG-01 closed plan must be representable");
+
+        // UniV2 swapExactTokensForTokens carrying the WHOLE cycle path.
+        assert_eq!(tx.data.as_ref()[0..4], [0x38, 0xed, 0x17, 0x39]);
+        assert_eq!(tx.from, signer);
+        let univ2 = Address::from(
+            find_router_by_name(1, "uniswap-v2")
+                .expect("univ2 router")
+                .address,
+        );
+        assert_eq!(tx.to, univ2, "the probe targets dex_a's router");
+        let d = tx.data.as_ref();
+        let (ww, wu) = (word(weth), word(uni));
+        let first_w = d
+            .windows(32)
+            .position(|w| w == ww.as_slice())
+            .expect("WETH must be in the path");
+        let u = d
+            .windows(32)
+            .position(|w| w == wu.as_slice())
+            .expect("UNI must be in the path");
+        let last_w = d
+            .windows(32)
+            .rposition(|w| w == ww.as_slice())
+            .expect("WETH must close the path");
+        assert!(
+            first_w < u && u < last_w,
+            "path must encode WETH -> UNI -> WETH"
+        );
+        assert_eq!(
+            d.windows(32).filter(|w| *w == ww.as_slice()).count(),
+            2,
+            "the cycle closes on token_in (WETH appears twice)"
+        );
+    }
+
+    #[test]
+    fn two_leg_01_closed_path_builds_on_v3_too() {
+        let signer: Address = [0x22; 20].into();
+        let o = two_leg_01_row("uniswap-v3");
+        let weth: Address = TWO_LEG_WETH.parse().expect("weth");
+        let uni: Address = TWO_LEG_UNI.parse().expect("uni");
+        let tx = build_probe_with_path(&o, signer, &[weth, uni, weth])
+            .expect("V3 closed plan must build");
+        // UniV3 exactInput selector — the same shape the closed-by-tokens V3
+        // test locks, reached now from the counter-token row shape.
+        assert_eq!(tx.data.as_ref()[0..4], [0xc0, 0x4b, 0x8d, 0x59]);
+    }
+
+    #[test]
+    fn cycle_path_not_starting_on_token_in_is_typed_not_invented() {
+        // A cycle whose entry is NOT the row's token_in is a data defect: typed
+        // refusal, never an invented leg.
+        let signer: Address = [0x33; 20].into();
+        let o = two_leg_01_row("uniswap-v2");
+        let other: Address = [0x77; 20].into();
+        assert!(matches!(
+            build_probe_with_path(&o, signer, &[other, other, other]),
+            Err(BuildError::PathNotRepresentable(_))
+        ));
+        // A cycle of exactly two tokens is NOT a route (no swap to make).
+        let weth: Address = TWO_LEG_WETH.parse().expect("weth");
+        assert!(matches!(
+            build_probe_with_path(&o, signer, &[weth, weth]),
+            Err(BuildError::PathNotRepresentable(_))
+        ));
+    }
+
+    #[test]
+    fn closed_by_tokens_routes_keep_their_previous_behaviour() {
+        // Regression guard for the population that was ALREADY representable
+        // before F1 (`token_in == token_out`, the triangular/flashloan shape):
+        // a cycle path still builds the same full-path calldata, and a row with
+        // no usable cycle keeps its own typed reason.
+        let signer: Address = [0x44; 20].into();
+        let b: Address = [0xbb; 20].into();
+        let o = opp_cyclic(StrategyKind::triangular(), 1, "uniswap-v2");
+        let a: Address = o.token_in.parse().expect("token_in parses");
+
+        let tx = build_probe_with_path(&o, signer, &[a, b, a]).expect("cyclic still builds");
+        assert_eq!(tx.data.as_ref()[0..4], [0x38, 0xed, 0x17, 0x39]);
+        let d = tx.data.as_ref();
+        assert_eq!(
+            d.windows(32).filter(|w| *w == word(a).as_slice()).count(),
+            2,
+            "token_in appears twice (closed route)"
+        );
+        assert_eq!(
+            d.windows(32).filter(|w| *w == word(b).as_slice()).count(),
+            1,
+            "the intermediate token appears once"
+        );
+
+        // No usable cycle ⇒ unchanged data-availability reason.
+        assert!(matches!(
+            build_probe(&o, signer),
+            Err(BuildError::CyclicRouteMissingPath(_))
         ));
     }
 
