@@ -2415,7 +2415,7 @@ pub fn v3_mul_div_rounding_up(a: U256, b: U256, denom: U256) -> Option<U256> {
     let d = U512::from_big_endian(&db);
     let mut q = prod / d;
     if prod % d != U512::zero() {
-        q = q + U512::one();
+        q += U512::one();
     }
     let mut qb = [0u8; 64];
     q.to_big_endian(&mut qb);
