@@ -10,10 +10,13 @@ from wait_deploy_gates import api, assess, fetch_runs
 
 
 def select_run(runs, sha, repository):
-    _, _, latest = assess(runs, sha, repository, [])
+    # The invariant is `run.head_sha == deploy.sha` — NOT `event == "push"`.
+    # Filtering by event is a proxy that silently drops a valid dispatch run on
+    # the exact SHA (see wait_deploy_gates.assess docstring).
+    _, _, latest = assess(runs, sha, repository, [], event=None)
     run = latest.get("sim-evidence-unit-tests.yml")
     if run is None:
-        return None  # Path-filtered workflow did not run for this commit.
+        return None  # No evidence workflow ran for this commit.
     if run.get("status") != "completed" or run.get("conclusion") != "success":
         raise ValueError("Simulator evidence run is not successful")
     return run["id"]
@@ -74,7 +77,7 @@ def main():
         with open(os.environ["GITHUB_OUTPUT"], "a") as output:
             output.write("run_id=\n")
         return
-    run_id = select_run(fetch_runs(repository, sha), sha, repository)
+    run_id = select_run(fetch_runs(repository, sha, event=None), sha, repository)
     if args.validate_dir is None:
         with open(os.environ["GITHUB_OUTPUT"], "a") as output:
             output.write(f"run_id={run_id or ''}\n")
