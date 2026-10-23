@@ -67,6 +67,20 @@ jobs:
           fi
           echo "RUSTSEC_IGNORES allowlist valid until ${ALLOWLIST_EXPIRES} (today ${today})"
 
+      - name: Enforce per-entry allowlist expiry (A1 · audit gate)
+        # The global ALLOWLIST_EXPIRES above is ONE date for every entry: an
+        # ignore added today is free until that date and no single entry can
+        # ever fail on its own (2026-10-21: 27 cargo ignores under one
+        # 2030-12-31 date). Entries listed in scripts/ci/audit-entry-expiry.json
+        # carry their own owner, reason and expiry and DO fail once the date
+        # passes; ignores absent from the manifest are published as backlog
+        # (count + ids), never hidden. Tests run first: a gate that cannot fail
+        # is not a gate.
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s scripts/ci -p test_audit_entry_expiry.py -v
+          python3 scripts/ci/audit_entry_expiry.py --side cargo
+
       - name: TLS dependency regression (offline, blocking)
         run: |
           set -euo pipefail
