@@ -43,6 +43,12 @@ pub trait SimulatorBackend: Send + Sync {
     /// token_in, last = token_out, length = hops + 1); empty when the caller has
     /// no route.
     ///
+    /// F2-SIM-DECIMALS (2026-10-23): `decimals` carries the REAL token decimals
+    /// the consumer resolved (`route_lookup::CandidateInputs::resolved_decimals`,
+    /// `tokens` table + the row's own claim). Passing it lets a backend compute
+    /// an honest slippage verdict; without it the honest answer is
+    /// `slippage_not_computable:decimals_unknown:<token>`, NEVER an invented 18.
+    ///
     /// Defaulted ON PURPOSE: a backend that cannot use a traversal path keeps
     /// its exact previous behaviour by inheriting this body, so adding the route
     /// never silently changes a backend that was not adapted for it. The
@@ -51,6 +57,7 @@ pub trait SimulatorBackend: Send + Sync {
         &self,
         opp: &Opportunity,
         _route_path: &[ethers::types::Address],
+        _decimals: &shared_rs::candidates::DecimalsMap,
     ) -> Result<SimulationResult, SimulationError> {
         self.simulate(opp).await
     }

@@ -904,23 +904,35 @@ impl Consumer {
                 // como antes, y una CERRADA falla con su motivo TIPADO
                 // (`cyclic_route_missing_route_metadata:<kind>`), jamás con un
                 // `passed` silencioso.
-                let route_path: Vec<ethers::types::Address> =
-                    match route_lookup::fetch_candidate_inputs(&self.pool, opportunity.id).await {
-                        Ok(Some(inputs)) => inputs
+                // F2-SIM-DECIMALS (2026-10-23): el lector YA resolvía los
+                // decimales reales (`CandidateInputs::resolved_decimals`: tabla
+                // `tokens` + el claim de la fila) y el consumidor los TIRABA,
+                // dejando que `sim_engine` midiera el slippage con un (18,18)
+                // inventado. Ahora viajan al motor: un par 6↔18 ya no produce un
+                // 0 %/≈99.7 % de escala (PASS/FAIL falsos) sino un veredicto NO
+                // COMPUTADO con su motivo.
+                let (route_path, route_decimals): (
+                    Vec<ethers::types::Address>,
+                    shared_rs::candidates::DecimalsMap,
+                ) = match route_lookup::fetch_candidate_inputs(&self.pool, opportunity.id).await {
+                    Ok(Some(inputs)) => {
+                        let path = inputs
                             .route_metadata
                             .token_addresses
                             .iter()
                             .filter_map(|s| s.parse::<ethers::types::Address>().ok())
-                            .collect(),
-                        Ok(None) => Vec::new(),
-                        Err(e) => {
-                            warn!(event = "sim_consumer.route_metadata_read_err", id = %id, error = %e);
-                            Vec::new()
-                        }
-                    };
+                            .collect();
+                        (path, inputs.resolved_decimals)
+                    }
+                    Ok(None) => (Vec::new(), shared_rs::candidates::DecimalsMap::new()),
+                    Err(e) => {
+                        warn!(event = "sim_consumer.route_metadata_read_err", id = %id, error = %e);
+                        (Vec::new(), shared_rs::candidates::DecimalsMap::new())
+                    }
+                };
                 let sim = match self
                     .backend
-                    .simulate_with_route(&opportunity, &route_path)
+                    .simulate_with_route(&opportunity, &route_path, &route_decimals)
                     .await
                 {
                     Ok(s) => s,
