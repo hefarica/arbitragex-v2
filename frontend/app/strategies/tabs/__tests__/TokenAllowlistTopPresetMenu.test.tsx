@@ -39,24 +39,32 @@ const RESULT: TokenTopResponse = {
     {
       symbol: "WETH", address: "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
       tvl_usd: "1000000.00", tvl_24h_ago_usd: "900000.00", pool_count: 5,
-      safety_score: 80, validation_score: 75, final_status: "VERIFIED",
+      cache_score: 80, validation_score: 75, final_status: "VERIFIED",
       liquidity_usd: "500000.00", volume_24h_usd: "100000.00", vol_liq_ratio: 0.2,
       registry_verified: true, oldest_pool_age_hours: 5000, risk_level: "LOW",
       is_stablecoin: false, memecoin_heuristic: false,
-      failed_rules: [], unverified_rules: [],
+      failed_rules: [], unverified_rules: [], not_measured_rules: [],
     },
     {
       symbol: null, address: "0xdead",
       tvl_usd: "500.00", tvl_24h_ago_usd: null, pool_count: 1,
-      safety_score: null, validation_score: null, final_status: null,
+      cache_score: null, validation_score: null, final_status: null,
       liquidity_usd: null, volume_24h_usd: null, vol_liq_ratio: null,
       registry_verified: null, oldest_pool_age_hours: 1, risk_level: null,
       is_stablecoin: false, memecoin_heuristic: true,
-      failed_rules: [], unverified_rules: ["min_safety_score"],
+      failed_rules: [], unverified_rules: ["min_safety_score"], not_measured_rules: [],
     },
   ],
   excluded: { no_price: 3, "rug:multi_pool": 2 },
   price_coverage: { symbols_priced: 40, symbols_total: 43 },
+  selection_state: "MEASURED",
+  selection_reason: null,
+  volume_orderable: 12,
+  volume_freshness: { state: "measured", p50_age_s: 900, max_age_s: 3600, reason: null },
+  save_gate: { allowed: true, reasons: [] },
+  rule_population: {
+    min_safety_score: { evaluated: 2, unverified: 1, diagnostic: false },
+  },
   window_note: "reservas de hace ≤24h valorizadas a precios ACTUALES (flujo de capital, no market cap histórico)",
   rules_applied: ["multi_pool"],
   rule_catalog: RUG_RULE_CATALOG.map((r) => ({ id: r.id, label: r.label })),
@@ -89,5 +97,23 @@ describe("TopPresetMenu — PC-07 steady states", () => {
   it("shows the error verbatim (RULE 00 — no fabricated preview)", () => {
     const html = renderMenu({ error: "query_failed" });
     expect(html).toContain("query_failed");
+  });
+});
+
+describe("TopPresetMenu — base del ranking (D5, 2026-10-21)", () => {
+  it("offers both bases and names the active one in the header", () => {
+    const vol = renderMenu({ topRankBy: "volume_24h" });
+    expect(vol).toContain("Volumen 24h");
+    expect(vol).toContain("TVL on-chain");
+    expect(vol).toContain("ranking = volumen 24h (traded)");
+
+    const tvl = renderMenu({ topRankBy: "tvl" });
+    expect(tvl).toContain("ranking = valor on-chain en pools");
+  });
+
+  it("renders the measured 24h volume column and keeps R8 dashes for NULL", () => {
+    const html = renderMenu({ topRankBy: "volume_24h", result: RESULT });
+    expect(html).toContain("Vol 24h USD");
+    expect(html).toContain("100,000");
   });
 });
