@@ -56,6 +56,19 @@ pub enum BuildError {
     UnsupportedChain(u64),
     #[error("router not in catalog for chain={chain} dex={dex}")]
     UnknownRouter { chain: u64, dex: String },
+    // F3-LABEL-FIX (2026-10-23): the encoder's `_` arm used to return
+    // `UnknownRouter`, so a router that IS in the catalog but has no S4 encoder
+    // (today: UniversalRouter, whose `execute(bytes,bytes[])` command
+    // dispatcher is not built yet) was published as "router not in catalog".
+    // Measured 1/20 sims with `build_error: router not in catalog for chain=1
+    // dex=universal-router` while `shared-rs/src/chains.rs` lists
+    // `universal-router-v2/-v2-1-1/-v1-2`. That label asserted a FALSE fact
+    // (the catalog has it); this variant names what is actually missing: the
+    // encoder. The refusal itself is unchanged — the probe is still not built.
+    #[error(
+        "router found in catalog but the S4 probe has no encoder for its kind: dex={dex} kind={kind}"
+    )]
+    RouterEncodingUnsupported { dex: String, kind: String },
     #[error("token address invalid: {0}")]
     InvalidAddress(String),
     #[error("amount invalid: {0}")]
@@ -215,10 +228,13 @@ pub fn build_probe_with_path(
             )
         }
         _ => {
-            return Err(BuildError::UnknownRouter {
-                chain: opp.chain_id,
+            // F3-LABEL-FIX: the router WAS found (line ~184) — what is missing
+            // is the encoder for its kind. Publishing `UnknownRouter` here
+            // asserted a false fact about the catalog.
+            return Err(BuildError::RouterEncodingUnsupported {
                 dex: opp.dex_a.clone(),
-            })
+                kind: format!("{:?}", router_entry.kind),
+            });
         }
     };
 
@@ -506,6 +522,37 @@ mod tests {
         // Fail-closed preserved: garbage names must NOT fuzzy-match a router.
         assert!(find_router_by_name(1, "notarealdeck").is_none());
         assert!(find_router_by_name(1, "").is_none());
+    }
+
+    /// F3-LABEL-FIX (2026-10-23): the catalog HAS the UniversalRouter
+    /// (`shared-rs/src/chains.rs` ROUTERS_MAINNET lists universal-router-v2,
+    /// -v2-1-1 and -v1-2), but the S4 encoder does not implement its
+    /// `execute(bytes,bytes[])` dispatcher. Before this fix the encoder's `_`
+    /// arm returned `UnknownRouter`, and the row was published as
+    /// `build_error: router not in catalog for chain=1 dex=universal-router`
+    /// (measured 1/20 sims on the deployed stack) — a FALSE fact about the
+    /// catalog. The refusal is unchanged; only the label now names the real
+    /// gap (the encoder).
+    #[test]
+    fn universal_router_in_catalog_but_encoder_gap_is_named() {
+        let entry = find_router_by_name(1, "universal-router")
+            .expect("catalog MUST resolve universal-router");
+        assert_eq!(format!("{:?}", entry.kind), "UniversalRouter");
+
+        let signer: Address = [0xab; 20].into();
+        let o = opp(StrategyKind::dex_arb(), 1, "universal-router");
+        let err = build_probe(&o, signer)
+            .err()
+            .expect("no S4 encoder for UniversalRouter yet");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("router found in catalog") && msg.contains("UniversalRouter"),
+            "label must name the encoder gap, got: {msg}"
+        );
+        assert!(
+            !msg.contains("not in catalog"),
+            "F3: the false 'not in catalog' label came back: {msg}"
+        );
     }
 
     #[test]

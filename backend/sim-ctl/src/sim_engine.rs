@@ -6,6 +6,7 @@
 //! those just carry `passed = false` and a documented `fail_reason`.
 
 use crate::fork_manager::ForkManager;
+use crate::revert_cause;
 use crate::tx_builder::{build_probe_with_path, BuildError};
 use chrono::Utc;
 use ethers::abi::{decode as abi_decode, ParamType};
@@ -178,6 +179,27 @@ impl SimEngine {
 
         let result = timeout(self.timeout, call_fut).await;
 
+        // F5-SIM-FORK-REVERT (2026-10-23): when the probe reverted, ask the fork
+        // WHY while the snapshot is still open. The trace MUST run with the
+        // funding injection applied — after `release()` the signer balance is
+        // gone and the trace would re-fail one frame earlier for an unrelated
+        // reason, publishing a cause we did not measure.
+        let traced_cause = match &result {
+            Ok(Err(e)) => Some(
+                revert_cause_from_fork(
+                    fork.provider.clone(),
+                    probe.from,
+                    probe.to,
+                    probe.value,
+                    probe.data.clone(),
+                    probe.gas_cap,
+                    e,
+                )
+                .await,
+            ),
+            _ => None,
+        };
+
         let release_res = handle.release().await;
         if let Err(e) = release_res {
             warn!(event = "sim.revert_failed", error = %e);
@@ -186,8 +208,16 @@ impl SimEngine {
         let (output, gas_used) = match result {
             Ok(Ok((o, g))) => (o, g),
             Ok(Err(e)) => {
-                // ProviderError can be a revert. Extract reason when possible.
-                let fail_reason = extract_revert_reason(&e);
+                // ProviderError can be a revert. F5-SIM-FORK-REVERT: name the
+                // cause — selector + reverting address + pc/opcode when the
+                // node/trace exposed them — instead of the old anonymous
+                // `rpc_error: execution reverted, data 0x`. A NON-revert RPC
+                // failure (transport, timeout at the node) keeps the EXACT
+                // pre-fix label: only the naming of a real revert changed.
+                let fail_reason = match traced_cause {
+                    Some(cause) => cause.fail_reason(),
+                    None => extract_revert_reason(&e),
+                };
                 return Self::failed(id, trace_id, &fail_reason);
             }
             Err(_) => return Self::failed(id, trace_id, "sim_timeout"),
@@ -410,6 +440,142 @@ fn compute_slippage(
 /// multibyte UTF-8 codepoints at the byte-200 boundary.
 fn truncate_chars(s: &str, max: usize) -> String {
     s.chars().take(max).collect()
+}
+
+/// Bounded geth JS tracer: records ONLY the last executed step (pc + opcode).
+///
+/// Anvil supports it — verified LIVE against the VPS anvil (172.18.0.9:8545)
+/// on 2026-10-23 with a garbage call to the UniswapV2 router:
+///   request  debug_traceCall [{from,to,data:"0xdeadbeef"}, "latest", {tracer: JS}]
+///   response {"failed":true,"lastStep":{"pc":473,"op":"REVERT","depth":1},
+///             "error":"execution reverted"}
+/// The `callTracer` does NOT expose pc/opcode, hence the second (also bounded)
+/// probe. Both probes are optional: a failing trace removes information, it
+/// never fabricates it (R8).
+const JS_LAST_STEP_TRACER: &str = "{ step: function(log) { this.last = { pc: log.getPC(), op: log.op.toString() }; }, fault: function(log, db) {}, result: function(ctx) { return { lastStep: this.last || null }; } }";
+
+/// F5-SIM-FORK-REVERT: build a NAMED cause for an anvil probe revert.
+///
+/// Three independent probes, merged without overwriting what the node already
+/// said:
+///   1. the revert payload inside the `ProviderError` (`error.data` or an
+///      inline `data 0x…` in the message) → selector / `Error(string)` /
+///      `Panic(uint256)`;
+///   2. `debug_traceCall` + geth `callTracer` → the ADDRESS of the deepest
+///      failing frame (plus its `output` bytes / `revertReason`);
+///   3. `debug_traceCall` + the bounded JS tracer above → `pc` + `opcode`.
+///
+/// Returns a cause even when every probe fails (`revert_unattributed`), so the
+/// row is never labelled by the anonymous `rpc_error` family again.
+#[allow(clippy::too_many_arguments)]
+async fn revert_cause_from_fork(
+    provider: std::sync::Arc<Provider<Http>>,
+    from: Address,
+    to: Address,
+    value: U256,
+    data: Bytes,
+    gas_cap: u64,
+    err: &ethers::providers::ProviderError,
+) -> revert_cause::RevertCause {
+    // (1) What the node itself exposed.
+    let from_error = revert_cause::revert_data_from_provider_error(err)
+        .and_then(|d| revert_cause::cause_from_revert_data(&d));
+
+    // (2) Which frame reverted (address) + revert bytes of that frame.
+    let call = trace_call_object(from, to, value, &data, gas_cap);
+    let frame = trace_debug_call(
+        provider.clone(),
+        &call,
+        serde_json::json!({ "tracer": "callTracer" }),
+    )
+    .await;
+    let frame_cause = frame.as_ref().and_then(revert_cause::cause_from_call_trace);
+
+    // Merge: prefer the frame's ADDRESS; take the selector/name from whichever
+    // source actually named something (the frame's `revert_no_data` is the
+    // weakest name, so an error-payload selector wins over it).
+    let mut cause = match (&from_error, &frame_cause) {
+        (Some(d), Some(f)) => {
+            let mut c = f.clone();
+            if matches!(c.name.as_str(), "revert_no_data" | "revert_string") {
+                c.name = d.name.clone();
+            }
+            c.merge_missing(d);
+            c
+        }
+        (Some(d), None) => d.clone(),
+        (None, Some(f)) => f.clone(),
+        (None, None) => revert_cause::cause_from_error_message(&err.to_string())
+            .unwrap_or_else(|| revert_cause::RevertCause::new("revert_unattributed")),
+    };
+
+    // (3) pc + opcode of the failing instruction (callTracer does not carry them).
+    let step = trace_debug_call(
+        provider,
+        &call,
+        serde_json::json!({ "tracer": JS_LAST_STEP_TRACER }),
+    )
+    .await;
+    if let Some((pc, op)) = step
+        .as_ref()
+        .and_then(revert_cause::cause_step_from_js_trace)
+    {
+        cause.pc = Some(pc);
+        cause.opcode = Some(op);
+    }
+
+    debug!(
+        event = "sim.fork_revert_named",
+        cause = %cause.name,
+        selector = ?cause.selector,
+        address = ?cause.address,
+        pc = ?cause.pc,
+        opcode = ?cause.opcode,
+    );
+    cause
+}
+
+/// Minimal JSON shape geth/erigon/anvil accept for `debug_traceCall`'s tx.
+fn trace_call_object(
+    from: Address,
+    to: Address,
+    value: U256,
+    data: &Bytes,
+    gas_cap: u64,
+) -> serde_json::Value {
+    serde_json::json!({
+        "from": format!("{from:?}"),
+        "to": format!("{to:?}"),
+        "value": format!("0x{:x}", value),
+        "data": format!("0x{}", hex::encode(data)),
+        "gas": format!("0x{gas_cap:x}"),
+    })
+}
+
+/// One bounded `debug_traceCall` probe. 5 s cap: a trace is diagnostic, the
+/// simulation verdict must not hang on it.
+async fn trace_debug_call(
+    provider: std::sync::Arc<Provider<Http>>,
+    call: &serde_json::Value,
+    opts: serde_json::Value,
+) -> Option<serde_json::Value> {
+    let params = serde_json::json!([call, "latest", opts]);
+    match timeout(
+        Duration::from_secs(5),
+        provider.request::<_, serde_json::Value>("debug_traceCall", params),
+    )
+    .await
+    {
+        Ok(Ok(v)) => Some(v),
+        Ok(Err(e)) => {
+            debug!(event = "sim.trace_call_failed", error = %e);
+            None
+        }
+        Err(_) => {
+            warn!(event = "sim.trace_call_timeout");
+            None
+        }
+    }
 }
 
 fn extract_revert_reason(e: &ethers::providers::ProviderError) -> String {

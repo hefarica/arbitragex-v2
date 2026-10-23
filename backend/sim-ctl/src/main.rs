@@ -18,6 +18,7 @@ mod canonical_plan_consumer;
 mod consumer;
 mod fork_manager;
 mod persistence;
+mod revert_cause;
 mod revm_backend;
 mod route_lookup;
 mod sim_engine;

@@ -266,6 +266,31 @@ mod simwire02_classifier_tests {
         }
     }
 
+    /// F5-SIM-FORK-REVERT (2026-10-23): naming the revert cause must NOT change
+    /// reject semantics. A named fork revert is a MARKET VERDICT (the probe
+    /// reverted on the forked state), so it must classify exactly like the
+    /// anonymous `rpc_error: execution reverted, data 0x` it replaces — NOT as
+    /// a capability gap. This test is the guard for the classifier's
+    /// no-catch-all rule: if someone adds `fork_revert` to the gap list (or a
+    /// catch-all), a real revert silently stops rejecting opportunities.
+    #[test]
+    fn f5_named_fork_reverts_stay_verdicts_not_gaps() {
+        for reason in [
+            "fork_revert:transfer_from_failed selector=0xedf429db \
+             address=0xdac17f958d2ee523a2206206994597c13d831ec7 pc=473 op=REVERT",
+            "fork_revert:revert_no_data",
+            "fork_revert:revert_selector_0x1b2c3d4e",
+            "fork_revert:panic_0x11",
+            // The family this naming REPLACES must keep its (verdict) meaning.
+            "rpc_error: execution reverted, data 0x",
+        ] {
+            assert!(
+                !is_sim_capability_gap(reason),
+                "{reason} must stay a market verdict (rejecting), not a gap"
+            );
+        }
+    }
+
     /// BR-00 (2026-09-07): the two new structural-gap families plus the
     /// undecodable-output harness gap must classify as gaps (opportunity NOT
     /// rejected) -- the simulator shape limits are not market verdicts.
