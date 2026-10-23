@@ -2955,11 +2955,14 @@ mod tests {
             Some(0.0),
             "no flash wrapper at engine altitude ⇒ own capital ⇒ zero fee (computed)"
         );
-        assert_eq!(e.bribe_usd, Some(0.0), "no bid path ⇒ computed zero");
+        // C-06: the relay bribe is a REAL mainnet cost (5 % of gross, $0.50
+        // floor) and lives in the kernel's BuilderTip column — not a 0.0
+        // placeholder only the dashboard simulator knew about.
+        assert_eq!(e.bribe_usd, Some(0.5), "mainnet relay floor is a cost");
         let total = e.total_cost_usd.expect("total_cost must be present");
         assert!(total.is_finite() && total > 0.0, "total={total}");
         assert!(
-            (total - (gas + 0.25)).abs() < 1e-9,
+            (total - (gas + 0.25 + 0.5)).abs() < 1e-9,
             "total must be the sum of the present components, got {total}"
         );
 
@@ -3109,8 +3112,9 @@ mod tests {
             (g3 - 3.0 * g1).abs() < 1e-9,
             "gas must scale with the config oracle: {g1} → {g3}"
         );
-        assert!((total1 - (g1 + 0.25)).abs() < 1e-9, "total1={total1}");
-        assert!((total3 - (g3 + 0.25)).abs() < 1e-9, "total3={total3}");
+        // + the mainnet relay floor (C-06), a size-independent cost.
+        assert!((total1 - (g1 + 0.25 + 0.5)).abs() < 1e-9, "total1={total1}");
+        assert!((total3 - (g3 + 0.25 + 0.5)).abs() < 1e-9, "total3={total3}");
         assert!(
             net3 < net1 && net3 < 0.0,
             "a 3× gas price must worsen the closed loss: {net1} → {net3}"

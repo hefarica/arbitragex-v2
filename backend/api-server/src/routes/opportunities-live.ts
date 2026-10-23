@@ -137,6 +137,7 @@ import {
   inverseSize,
   resolveTarget,
   type InverseSizingResult,
+  type KernelEconomics,
   type SimulatedCostBreakdown,
   type SimulationResult,
   type SimulatorRow,
@@ -1379,6 +1380,10 @@ export function mountOpportunitiesLive(
           token_in: r.token_in,
           token_in_symbol: r.token_in_symbol,
           token_in_decimals: r.token_in_decimals,
+          // C-06: the kernel's closed object is the ONE cost truth. The route
+          // already selects and hardens it; passing it here is what stops the
+          // simulator from building a second ladder for the same trade.
+          economics: r.economics as KernelEconomics | null,
         };
         const forward = forwardSimulate(simRow, snapshot);
         const target = resolveTarget(snapshot, r.strategy_kind);
