@@ -116,13 +116,32 @@ groups:
       # sim_signer_funding_slot_unresolved and NO simulation executes at
       # all — the pre-fix state (TRANSFER_FROM_FAILED/STF) at least ran.
       # >5 unresolved tokens in 30m on mainstream tokens = page.
+      # ALERT-OUTCOMES-01 (2026-10-08, t104): #850 (t102) added three MORE
+      # outcome series to THIS metric to diagnose the funding path —
+      # write_rejected, verify_mismatch, balance_unreadable — and this alert
+      # enumerated only slot_unresolved, so it was BLIND to exactly the series
+      # that exist to diagnose the cause. A diagnostic capability that the
+      # alerting layer cannot see is a capability nobody is going to look at.
+      #
+      # The matcher below is an ANCHORED alternation of COMPLETE values ON
+      # PURPOSE: PromQL `=~` is fully anchored (RE2), so it matches those four
+      # values and nothing else. A lax `funding_.*` would swallow
+      # funding_edge_negative / funding_differential_within_band /
+      # funding_direction_unfavorable, which are REAL cartridge verdicts of
+      # searcher-rs: that would turn a legitimate market rejection into silence,
+      # the OPPOSITE failure of the one this change closes.
+      # `> 5` stays PER SERIES (vector comparison), so the alert still says WHICH
+      # outcome is rising, through {{ $labels.outcome }}.
+      # Deliberately NOT included: `rpc_err`, which already exists on this metric
+      # and was already outside this alert before today. Widening beyond the order
+      # is the operator's call — declared in docs/sre/ALERT-OUTCOMES-01.md.
       - alert: SIM_FUNDER_SLOT_UNRESOLVED
-        expr: increase(arbx_sim_funding_total{outcome="slot_unresolved"}[30m]) > 5
+        expr: increase(arbx_sim_funding_total{outcome=~"slot_unresolved|write_rejected|verify_mismatch|balance_unreadable"}[30m]) > 5
         for: 5m
         labels: { severity: warning, service: sim-ctl, platform: arbitragex }
         annotations:
-          summary: "Signer funding slot discovery failing on the sim fork (>5/30m)"
-          description: "arbx_sim_funding_total{outcome=slot_unresolved} rising — the sentinel-verified ERC20 balance-slot probe cannot resolve the token layout (exotic proxy or non-standard ERC20). Sims on those tokens are fail-closed (sim_signer_funding_slot_unresolved) instead of reverting TRANSFER_FROM_FAILED. Inspect docker logs sim-ctl | grep sim.funding_failed and extend CANDIDATE_SLOTS or handle the proxy layout. Runbook: audits/real-cycles-audit-20260916/00-SYNTHESIS.md (SIM-FUND-01)."
+          summary: "Signer funding failing on the sim fork: outcome={{ $labels.outcome }} (>5/30m)"
+          description: "increase(arbx_sim_funding_total{outcome=~\"slot_unresolved|write_rejected|verify_mismatch|balance_unreadable\"}[30m]) is rising for outcome={{ $labels.outcome }}. Causes: slot_unresolved = the sentinel-verified ERC20 balance-slot probe cannot resolve the token layout (exotic proxy or non-standard ERC20); write_rejected / verify_mismatch / balance_unreadable = the funding write was rejected, the follow-up verification disagreed, or the balance could not be read (#850). Sims on those tokens are fail-closed (sim_signer_funding_slot_unresolved) instead of reverting TRANSFER_FROM_FAILED. Inspect docker logs sim-ctl | grep sim.funding_failed and extend CANDIDATE_SLOTS or handle the proxy layout. Runbook: audits/real-cycles-audit-20260916/00-SYNTHESIS.md (SIM-FUND-01)."
 
       - alert: RpcAllProvidersUnhealthy
         expr: count(arbx_rpc_provider_state == 0) == 0 and count(arbx_rpc_provider_state) > 0
