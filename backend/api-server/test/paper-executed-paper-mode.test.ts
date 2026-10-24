@@ -86,9 +86,18 @@ describe.skipIf(!DATABASE_URL)("A3 paper_executed (PG real)", () => {
   });
 
   it("(b) el escritor paper mueve la fila a paper_executed con evidencia y executed sigue en 0", async () => {
-    const before = await pool.query<{ n: string }>(
-      `SELECT count(*)::text AS n FROM opportunities WHERE status = 'executed'`
-    );
+    // `executed` ajeno al fixture (el fixture (d) inserta UNA fila `executed` a
+    // propósito, así que se excluye por id para medir el efecto del escritor).
+    const countForeignExecuted = async (): Promise<number> => {
+      const r = await pool.query<{ n: string }>(
+        `SELECT count(*)::text AS n FROM opportunities
+          WHERE status = 'executed' AND id <> $1`,
+        [executedOppId]
+      );
+      return Number(r.rows[0]!.n);
+    };
+
+    const before = await countForeignExecuted();
 
     const res = await pool.query(MARK_PAPER_EXECUTED_SQL, [oppId]);
     expect(res.rowCount).toBe(1);
@@ -99,12 +108,18 @@ describe.skipIf(!DATABASE_URL)("A3 paper_executed (PG real)", () => {
     );
     expect(row.rows[0]!.status).toBe("paper_executed");
 
-    const after = await pool.query<{ n: string }>(
-      `SELECT count(*)::text AS n FROM opportunities WHERE status = 'executed'`
+    // El escritor paper NO creó ninguna fila `executed`: el conteo ajeno no cambia
+    // y en una base limpia es 0.
+    const after = await countForeignExecuted();
+    expect(after).toBe(before);
+    expect(after).toBe(0);
+
+    // Y la fila movida no es `executed` (estados distintos por diseño).
+    const anyExecuted = await pool.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM opportunities WHERE id = $1 AND status = 'executed'`,
+      [oppId]
     );
-    // El conteo de `executed` no cambia: el escritor paper no crea ejecuciones on-chain.
-    expect(after.rows[0]!.n).toBe(before.rows[0]!.n);
-    expect(Number(after.rows[0]!.n)).toBe(0);
+    expect(Number(anyExecuted.rows[0]!.n)).toBe(0);
   });
 
   it("(c) la migración es idempotente (re-ejecutarla no rompe ni duplica)", async () => {
