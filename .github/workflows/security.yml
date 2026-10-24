@@ -59,13 +59,42 @@ jobs:
         # those 12 entries.
         env:
           ALLOWLIST_EXPIRES: "2030-12-31"
+          # PER-ID EXPIRY (2026-10-24, OPERATOR SIGNATURE "CONFIRMED: O1"): a
+          # single global date cannot express "this bridge expires EARLIER than
+          # the rest of the allowlist". Space-separated id=date map; past its
+          # date the gate re-fails naming ONLY that id (the rest keeps
+          # ALLOWLIST_EXPIRES). Machined on purpose: the repo already paid for
+          # a comment-only expiry (false green 2026-07-01..03), so the bridge
+          # date is ENFORCED, not documented. Every id listed here MUST also
+          # appear as a --ignore in RUSTSEC_IGNORES (stale-entry check below
+          # greps this same file).
+          PER_ID_EXPIRY: "RUSTSEC-2026-0387=2026-11-07 RUSTSEC-2024-0449=2026-11-07"
         run: |
+          set -euo pipefail
           today="$(date -u +%F)"
+          rc=0
           if [[ "$today" > "$ALLOWLIST_EXPIRES" ]]; then
             echo "::error::RUSTSEC_IGNORES allowlist expired ${ALLOWLIST_EXPIRES} (today ${today}) — re-justify or remediate each --ignore in security.yml"
-            exit 1
+            rc=1
           fi
-          echo "RUSTSEC_IGNORES allowlist valid until ${ALLOWLIST_EXPIRES} (today ${today})"
+          for pair in ${PER_ID_EXPIRY:-}; do
+            id="${pair%%=*}"
+            exp="${pair#*=}"
+            if [[ "$today" > "$exp" ]]; then
+              echo "::error::${id} bridge expired ${exp} (today ${today}) — remediate (t24 ALLOY2 / revm bump) or re-sign a new dated bridge"
+              rc=1
+            else
+              echo "${id} bridge valid until ${exp} (today ${today})"
+            fi
+            if ! grep -q -- "--ignore ${id}" "${GITHUB_WORKSPACE:-.}/.github/workflows/security.yml"; then
+              echo "::error::PER_ID_EXPIRY names ${id} but it is not in RUSTSEC_IGNORES — stale entry, remove it"
+              rc=1
+            fi
+          done
+          if [[ "$rc" -eq 0 ]]; then
+            echo "RUSTSEC_IGNORES allowlist valid until ${ALLOWLIST_EXPIRES} (today ${today}); per-id bridges checked above"
+          fi
+          exit "$rc"
 
       - name: TLS dependency regression (offline, blocking)
         run: |
@@ -283,6 +312,55 @@ jobs:
           #      tls_dependency_guard.py still passes on this lockfile.
           # Expiry unchanged (2030-12-31, enforced by the fail-honest step above);
           # these entries were added/re-justified 2026-10-18.
+          #
+          # ── 2026-10-24 (advisory refresh, not a merge) ────────────────────
+          #      `cargo audit` went red on a FRESH advisory-db fetch while no
+          #      code changed (same class of event as 2026-10-21): the deploy
+          #      of every SHA died at 'Run cargo audit' -> 'Failed gates:
+          #      security.yml'. RUSTSEC-2026-0387 hits crypto-bigint 0.5.5,
+          #      reachable as crypto-bigint <- elliptic-curve 0.13.8 <-
+          #      primeorder 0.13.6 <- p256 0.13.2 <- revm-precompile 42.0.1.
+          #      Upstream solution is crypto-bigint >=0.7.6; elliptic-curve
+          #      0.13.8 requires ^0.5, so remediation is the revm /
+          #      elliptic-curve chain bump, NOT a lockfile bump. Exit plan:
+          #      retire with the revm bump sprint. The fail-honest expiry
+          #      step above (2030-12-31) still governs this entry.
+          #      NOTE: comments MUST stay outside this block scalar — anything
+          #      indented under `>-` becomes literal text in the env value
+          #      (measured: `error: unrecognized subcommand '#'`).
+          #
+          # ── BRIDGE FIRMADO 2026-10-24 · expiry PER-ID 2026-11-07 ──────────
+          # (la fecha la enforça PER_ID_EXPIRY en el step de arriba, NO la
+          #  global 2030-12-31: pasado 2026-11-07 el gate re-falla nombrando
+          #  SOLO estas dos ids)
+          # Firma del operador, literal:
+          #   "CONFIRMED: O1 — ignore RUSTSEC-2026-0387 y RUSTSEC-2024-0449
+          #    con expiry por id 2026-11-07, sin live"
+          # RUSTSEC-2026-0387 crypto-bigint 0.5.5 — timing variability en ops
+          #   intended-to-be-constant-time (resta, zero counting, división,
+          #   Montgomery mul, UintRef eq, BoxedMontyForm::invert).
+          #   patched = [">= 0.7.6"]; sin fix en semver: `cargo update -p
+          #   crypto-bigint --precise 0.7.6` → requirement `^0.5` de
+          #   elliptic-curve 0.13.8. Rutas medidas: (a) alloy-signer 1.8.3 ←
+          #   alloy 1.8.3 (el código propio NO construye signers de alloy),
+          #   (b) ethers-signers 2.0.14 ← relays-client (signer.rs /
+          #   relay_flashbots.rs), (c) revm-precompile 42.0.1 ← p256 0.13.2 ←
+          #   primeorder ← elliptic-curve 0.13.8 (cadena de simulación).
+          #   Exposición: la firma de broadcast está detrás de
+          #   LiveExecPolicy::assert_broadcast_allowed (default-deny +
+          #   paper_mode ⇒ no corre); el staging probe usa
+          #   EPHEMERAL_STAGING_KEY (efímera y pública). Advisory de canal
+          #   lateral temporal (requiere observador co-localizado midiendo
+          #   tiempos). Plan: t24 ALLOY2 (alloy 2 + migrar la firma de
+          #   relays-client de ethers-rs a alloy 2 signers) + bump revm que
+          #   retire la cadena de simulación.
+          # RUSTSEC-2024-0449 unsafe-libyaml 0.2.11 — unmaintained;
+          #   patched = [] (sin fix). Ruta: unsafe-libyaml ← serde_yaml
+          #   0.9.34+deprecated ← searcher-rs. Reemplazo por parser mantenido
+          #   (serde-saphyr / saphyr) va en t24. `informational =
+          #   "unmaintained"`: NO es vulnerabilidad y no produce exit-1 por sí
+          #   sola; se firma igual para dejar la deuda explícita y fechada.
+          # Evidencia completa: docs/security/RUSTSEC_IGNORE_EVIDENCE_2026-10.md
           RUSTSEC_IGNORES: >-
             --ignore RUSTSEC-2026-0002
             --ignore RUSTSEC-2024-0388
@@ -310,6 +388,8 @@ jobs:
             --ignore RUSTSEC-2026-0381
             --ignore RUSTSEC-2026-0382
             --ignore RUSTSEC-2026-0383
+            --ignore RUSTSEC-2026-0387
+            --ignore RUSTSEC-2024-0449
 
   gitleaks:
     name: gitleaks (secrets scan)
