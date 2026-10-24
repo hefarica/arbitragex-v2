@@ -198,6 +198,14 @@ fn is_sim_capability_gap(fail_reason: &str) -> bool {
         // BR-00 (2026-09-07): the anvil harness could not decode its OWN
         // probe output -- absence of measurement, never a market verdict (R8).
         || fail_reason == "output_undecodable"
+        // F2-SIM-DECIMALS (2026-10-23): el veredicto de slippage no se pudo
+        // PRODUCIR — falta el decimal de uno de los tokens comparados, o los dos
+        // tienen decimales distintos (su cociente en unidades crudas difiere por
+        // 10^(a-b) con independencia de la ejecución). Es una ausencia de
+        // medición, no un juicio de mercado: si esta familia quedara fuera del
+        // clasificador se repetiría el modo de fallo F-01 (gap de capacidad
+        // persistido como rechazo silencioso), que es lo que SIMWIRE-02 prohíbe.
+        || fail_reason.starts_with("slippage_not_computable")
         // SIM-FUND-02b (2026-10-08): la familia de FONDEO del fork.
         //
         // #850 instrumento `signer_funding.rs` para separar las dos causas
@@ -255,6 +263,31 @@ mod simwire02_classifier_tests {
             "strategy_not_supported_in_s4",
         ] {
             assert!(is_sim_capability_gap(reason), "{reason} must stay a gap");
+        }
+    }
+
+    /// F5-SIM-FORK-REVERT (2026-10-23): naming the revert cause must NOT change
+    /// reject semantics. A named fork revert is a MARKET VERDICT (the probe
+    /// reverted on the forked state), so it must classify exactly like the
+    /// anonymous `rpc_error: execution reverted, data 0x` it replaces — NOT as
+    /// a capability gap. This test is the guard for the classifier's
+    /// no-catch-all rule: if someone adds `fork_revert` to the gap list (or a
+    /// catch-all), a real revert silently stops rejecting opportunities.
+    #[test]
+    fn f5_named_fork_reverts_stay_verdicts_not_gaps() {
+        for reason in [
+            "fork_revert:transfer_from_failed selector=0xedf429db \
+             address=0xdac17f958d2ee523a2206206994597c13d831ec7 pc=473 op=REVERT",
+            "fork_revert:revert_no_data",
+            "fork_revert:revert_selector_0x1b2c3d4e",
+            "fork_revert:panic_0x11",
+            // The family this naming REPLACES must keep its (verdict) meaning.
+            "rpc_error: execution reverted, data 0x",
+        ] {
+            assert!(
+                !is_sim_capability_gap(reason),
+                "{reason} must stay a market verdict (rejecting), not a gap"
+            );
         }
     }
 
@@ -341,6 +374,10 @@ mod simwire02_classifier_tests {
             "candidate_incomplete:missing_decimals_[\"0xabc\"]",
             "candidate_incomplete:amount_in_wei_unparseable",
             "b2c_encode_failed:router_not_in_catalog",
+            // F2-SIM-DECIMALS: ausencia de medición de slippage, no veredicto.
+            "slippage_not_computable:decimals_unknown:0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+            "slippage_not_computable:cross_decimals_6_18",
+            "slippage_not_computable:amount_in_unparseable",
         ] {
             assert!(
                 is_sim_capability_gap(reason),
@@ -360,6 +397,10 @@ mod simwire02_classifier_tests {
             "stf",
             "gas_floor_breach",
             "net_zero_after_gas",
+            // F2-SIM-DECIMALS: un veredicto de slippage MEDIDO y por encima del
+            // umbral SÍ es un juicio de mercado — el clasificador no debe
+            // tragárselo como gap (el umbral no se toca en esta unidad).
+            "slippage_too_high",
         ] {
             assert!(
                 !is_sim_capability_gap(reason),

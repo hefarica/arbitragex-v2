@@ -33,12 +33,21 @@ impl SimulatorBackend for AnvilBackend {
     /// (`token_in == token_out`) reaches `build_probe_with_path` instead of the
     /// by-name refusal. With an empty path the behaviour is byte-identical to
     /// `simulate` above.
+    ///
+    /// F2-SIM-DECIMALS (2026-10-23): forwards the REAL decimals map so the
+    /// slippage verdict uses measured token decimals instead of the old
+    /// hardcoded `(18, 18)` (which turned a 6↔18 pair into a 0%/99.7% scale
+    /// artifact and a false `passed`).
     async fn simulate_with_route(
         &self,
         opp: &Opportunity,
         route_path: &[ethers::types::Address],
+        decimals: &shared_rs::candidates::DecimalsMap,
     ) -> Result<SimulationResult, SimulationError> {
-        Ok(self.engine.simulate_with_route(opp, route_path).await)
+        Ok(self
+            .engine
+            .simulate_with_route(opp, route_path, decimals)
+            .await)
     }
 
     fn name(&self) -> &str {

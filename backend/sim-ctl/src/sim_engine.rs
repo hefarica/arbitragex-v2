@@ -6,11 +6,13 @@
 //! those just carry `passed = false` and a documented `fail_reason`.
 
 use crate::fork_manager::ForkManager;
+use crate::revert_cause;
 use crate::tx_builder::{build_probe_with_path, BuildError};
 use chrono::Utc;
 use ethers::abi::{decode as abi_decode, ParamType};
 use ethers::core::types::transaction::eip2718::TypedTransaction;
 use ethers::prelude::*;
+use shared_rs::candidates::DecimalsMap;
 use shared_rs::contracts::{Opportunity, SimulationResult, SimulatorKind};
 use sim_ctl::signer_funding::SignerFunder;
 use std::time::Duration;
@@ -32,8 +34,15 @@ pub struct SimEngine {
 impl SimEngine {
     /// Route-less entry point: byte-identical to the pre-SIM4-CYCLIC-02
     /// behaviour (delegates with an empty path).
+    ///
+    /// F2-SIM-DECIMALS (2026-10-23): this entry has NO decimals source, so it
+    /// passes an EMPTY map and the slippage verdict becomes
+    /// `slippage_not_computable:decimals_unknown:<token>` instead of the old
+    /// invented `(18, 18)`. The route-aware consumer path (`simulate_with_route`)
+    /// is the one that carries the resolved map.
     pub async fn simulate(&self, opp: &Opportunity) -> SimulationResult {
-        self.simulate_with_route(opp, &[]).await
+        self.simulate_with_route(opp, &[], &DecimalsMap::new())
+            .await
     }
 
     /// SIM4-CYCLIC-02: `route_path` is `route_metadata.token_addresses` — the
@@ -41,10 +50,17 @@ impl SimEngine {
     /// hops + 1). Empty means "no route available": a closed route then fails
     /// with its OWN typed reason (`cyclic_route_missing_route_metadata:<kind>`),
     /// never a fabricated probe and never a silent pass.
+    ///
+    /// F2-SIM-DECIMALS (2026-10-23): `decimals` is the REAL map the consumer
+    /// already resolved (`route_lookup::CandidateInputs::resolved_decimals`:
+    /// `tokens` table + the row's own claim). Before this parameter existed the
+    /// builder assumed `(18, 18)`, so a 6↔18 pair produced a slippage that was
+    /// pure scale (0 % / ≈99.7 %) and `passed` was an artifact.
     pub async fn simulate_with_route(
         &self,
         opp: &Opportunity,
         route_path: &[Address],
+        decimals: &DecimalsMap,
     ) -> SimulationResult {
         let trace_id = opp.trace_id;
         let id = opp.id;
@@ -163,6 +179,27 @@ impl SimEngine {
 
         let result = timeout(self.timeout, call_fut).await;
 
+        // F5-SIM-FORK-REVERT (2026-10-23): when the probe reverted, ask the fork
+        // WHY while the snapshot is still open. The trace MUST run with the
+        // funding injection applied — after `release()` the signer balance is
+        // gone and the trace would re-fail one frame earlier for an unrelated
+        // reason, publishing a cause we did not measure.
+        let traced_cause = match &result {
+            Ok(Err(e)) => Some(
+                revert_cause_from_fork(
+                    fork.provider.clone(),
+                    probe.from,
+                    probe.to,
+                    probe.value,
+                    probe.data.clone(),
+                    probe.gas_cap,
+                    e,
+                )
+                .await,
+            ),
+            _ => None,
+        };
+
         let release_res = handle.release().await;
         if let Err(e) = release_res {
             warn!(event = "sim.revert_failed", error = %e);
@@ -171,8 +208,16 @@ impl SimEngine {
         let (output, gas_used) = match result {
             Ok(Ok((o, g))) => (o, g),
             Ok(Err(e)) => {
-                // ProviderError can be a revert. Extract reason when possible.
-                let fail_reason = extract_revert_reason(&e);
+                // ProviderError can be a revert. F5-SIM-FORK-REVERT: name the
+                // cause — selector + reverting address + pc/opcode when the
+                // node/trace exposed them — instead of the old anonymous
+                // `rpc_error: execution reverted, data 0x`. A NON-revert RPC
+                // failure (transport, timeout at the node) keeps the EXACT
+                // pre-fix label: only the naming of a real revert changed.
+                let fail_reason = match traced_cause {
+                    Some(cause) => cause.fail_reason(),
+                    None => extract_revert_reason(&e),
+                };
                 return Self::failed(id, trace_id, &fail_reason);
             }
             Err(_) => return Self::failed(id, trace_id, "sim_timeout"),
@@ -182,10 +227,20 @@ impl SimEngine {
         // BR-00 (2026-09-07): decode by ABI shape (the probe tx shape is
         // chosen by the router, never by the strategy kind) -- every
         // structurally-built probe decodes identically.
+        //
+        // F2-SIM-DECIMALS (2026-10-23): el veredicto se decide con los decimales
+        // REALES del par comparado. Un veredicto AUSENTE se declara con su
+        // familia propia (`slippage_not_computable:*`) y NUNCA se pliega a
+        // `slippage_too_high` (que afirmaría una medición que no ocurrió).
         let actual_out = decode_amount_out(&output);
-        let slippage_pct = compute_slippage(opp, actual_out);
+        let slippage = compute_slippage(opp, actual_out, route_path, decimals);
 
-        let passed = slippage_pct.is_some_and(|s| s <= self.max_slippage_for_pass_pct);
+        let (slippage_pct, fail_reason) = match slippage {
+            Ok(s) if s <= self.max_slippage_for_pass_pct => (Some(s), None),
+            Ok(s) => (Some(s), Some("slippage_too_high".to_string())),
+            Err(gap) => (None, Some(gap.as_fail_reason())),
+        };
+        let passed = fail_reason.is_none();
 
         SimulationResult {
             opportunity_id: id,
@@ -196,17 +251,7 @@ impl SimEngine {
             revert_risk_pct: None, // SIM-09 fix (2026-09-24): was fabricated Some(0.5)/Some(50.0) — no risk model computes this
             simulated_profit_usd: None, // computed from counter-trade in S5
             simulator: SimulatorKind::Anvil,
-            fail_reason: if passed {
-                None
-            } else if slippage_pct.is_none() {
-                // BR-00 (2026-09-07): R8 fail-honest -- an undecodable probe
-                // output is NOT a slippage verdict; the old code folded it
-                // into "slippage_too_high", claiming a measurement that never
-                // happened. Classified as a capability gap in persistence.rs.
-                Some("output_undecodable".into())
-            } else {
-                Some("slippage_too_high".into())
-            },
+            fail_reason,
             simulated_at: Utc::now(),
             trace_id,
         }
@@ -272,32 +317,112 @@ fn decode_amount_out(output: &Bytes) -> Option<U256> {
     None
 }
 
-/// Rough slippage: |expected_profit_proxy - realized_out| / expected_profit_proxy * 100.
-/// In S4 we don't have an "expected_out" on the opportunity, so slippage is a
-/// relative measure. Accepts None when not decodable.
-///
-/// SIM-05 fix (2026-09-24): the previous formula crossed token units —
-/// `(amt_in_tokenIN − actual_out_tokenOUT) / amt_in` is dimensionally valid
-/// ONLY when both tokens share decimals (and even then compares different
-/// assets). On WETH→USDC it always ≈ 99.7% (FAIL on a perfect trade); on
-/// USDC→WETH it always = 0% (PASS with arbitrary slippage). Without an oracle
-/// we CANNOT compute cross-token slippage honestly → return None (R8: not
-/// computable beats a fabricated gate). Same-decimal pairs keep the legacy
-/// heuristic with the S6 follow-up note unchanged.
-fn compute_slippage(opp: &Opportunity, actual_out: Option<U256>) -> Option<f64> {
-    let actual = actual_out?;
-    let amt_in = U256::from_dec_str(&opp.amount_in_wei).ok()?;
-    if amt_in.is_zero() {
-        return Some(100.0);
+/// F2-SIM-DECIMALS (2026-10-23): por qué NO se pudo producir un veredicto de
+/// slippage. Cada variante es una AUSENCIA DE MEDICIÓN declarada, no un
+/// veredicto de mercado (`None ≠ Some(0)`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SlippageGap {
+    /// El `eth_call` no devolvió bytes decodificables como amountOut.
+    OutputUndecodable,
+    /// `amount_in_wei` no es un decimal parseable (el consumidor lo valida
+    /// antes; se declara, no se inventa).
+    AmountInUnparseable,
+    /// Falta el decimal de uno de los dos tokens comparados. NUNCA se asume 18.
+    DecimalsUnknown { token: String },
+    /// Los tokens comparados tienen decimales DISTINTOS: su cociente en
+    /// unidades crudas difiere por 10^(a−b) con independencia de la ejecución.
+    CrossDecimals { decimals_in: u8, decimals_out: u8 },
+}
+
+impl SlippageGap {
+    /// La etiqueta persistida. `slippage_not_computable:*` es una familia de
+    /// GAP DE CAPACIDAD (registrada en `persistence::is_sim_capability_gap`):
+    /// el motor no puede medir, y eso no es un juicio sobre la oportunidad.
+    pub fn as_fail_reason(&self) -> String {
+        match self {
+            SlippageGap::OutputUndecodable => "output_undecodable".to_string(),
+            SlippageGap::AmountInUnparseable => {
+                "slippage_not_computable:amount_in_unparseable".to_string()
+            }
+            SlippageGap::DecimalsUnknown { token } => {
+                format!("slippage_not_computable:decimals_unknown:{token}")
+            }
+            SlippageGap::CrossDecimals {
+                decimals_in,
+                decimals_out,
+            } => format!("slippage_not_computable:cross_decimals_{decimals_in}_{decimals_out}"),
+        }
     }
-    let (dec_in, dec_out) = token_decimals(opp);
+}
+
+/// El token en el que el probe TERMINA: `route_path.last()` cuando hay ruta
+/// (para un ciclo es `token_in` — el token de cierre que el builder encoda) y
+/// `token_out` cuando no hay ruta (sonda de una pata por `dex_a`).
+///
+/// F2-SIM-DECIMALS: comparar contra `token_out` a secas era el error que hacía
+/// que un ciclo WETH→USDC→WETH se leyera como \"cross-decimal\" (WETH 18 contra
+/// USDC 6) cuando en realidad el probe devuelve WETH, el MISMO token que entró.
+fn settled_output_token(opp: &Opportunity, route_path: &[Address]) -> String {
+    match route_path.last() {
+        Some(addr) => format!("{addr:#x}").to_lowercase(),
+        None => opp.token_out.to_lowercase(),
+    }
+}
+
+/// Slippage relativo del probe, con los decimales REALES del par comparado.
+///
+/// Reglas (F2-SIM-DECIMALS, 2026-10-23):
+///   * Sin salida decodificable ⇒ [`SlippageGap::OutputUndecodable`] (sin cambios).
+///   * Decimals REALES de `token_in` y del token de cierre; si falta alguno ⇒
+///     [`SlippageGap::DecimalsUnknown`]. **NUNCA** se asume 18.
+///   * Decimales distintos ⇒ [`SlippageGap::CrossDecimals`]: el cociente en
+///     unidades crudas difiere por 10^(a−b) y no mide ejecución. Antes esta rama
+///     era CÓDIGO MUERTO (`token_decimals()` devolvía `(18,18)` siempre), así que
+///     un par 6→18 daba **0 % de slippage ⇒ PASS FALSO** y el inverso ≈99.7 %
+///     ⇒ **FAIL FALSO** (medido en t13 sobre 0/516,460 filas).
+///   * Mismo decimal ⇒ heurística legacy `(amt_in − actual)/amt_in`, sin cambios.
+///     Para una ruta CERRADA el token de cierre ES `token_in`, así que el
+///     cociente sí mide el resultado del ciclo; para una ruta ABIERTA entre dos
+///     activos distintos sigue siendo una heurística (la cotización S6 la
+///     reemplaza — FOLLOWUP, fuera de esta unidad).
+fn compute_slippage(
+    opp: &Opportunity,
+    actual_out: Option<U256>,
+    route_path: &[Address],
+    decimals: &DecimalsMap,
+) -> Result<f64, SlippageGap> {
+    let actual = actual_out.ok_or(SlippageGap::OutputUndecodable)?;
+    let amt_in =
+        U256::from_dec_str(&opp.amount_in_wei).map_err(|_| SlippageGap::AmountInUnparseable)?;
+    if amt_in.is_zero() {
+        return Ok(100.0);
+    }
+    let token_in = opp.token_in.to_lowercase();
+    let token_out_settled = settled_output_token(opp, route_path);
+    let dec_in = decimals
+        .get(&token_in)
+        .ok_or_else(|| SlippageGap::DecimalsUnknown {
+            token: token_in.clone(),
+        })?;
+    let dec_out = decimals
+        .get(&token_out_settled)
+        .ok_or_else(|| SlippageGap::DecimalsUnknown {
+            token: token_out_settled.clone(),
+        })?;
     if dec_in != dec_out {
         // Cross-decimal pair: the raw-unit ratio is meaningless (R8).
         debug!(
             event = "sim.slippage_cross_decimals_not_computable",
-            dec_in, dec_out, "returning None (honest) — needs quote-based slippage (S6)"
+            dec_in,
+            dec_out,
+            token_in = %token_in,
+            token_out = %token_out_settled,
+            "not computable — a 10^(dec_in-dec_out) scale, not execution quality"
         );
-        return None;
+        return Err(SlippageGap::CrossDecimals {
+            decimals_in: dec_in,
+            decimals_out: dec_out,
+        });
     }
     // Same-decimals heuristic (legacy): (amt_in - actual) / amt_in * 100.
     let diff = if actual >= amt_in {
@@ -306,21 +431,8 @@ fn compute_slippage(opp: &Opportunity, actual_out: Option<U256>) -> Option<f64> 
         amt_in - actual
     };
     let pct = (diff.as_u128() as f64 / amt_in.as_u128() as f64) * 100.0;
-    debug!(event = "sim.slippage_heuristic", pct);
-    Some(pct)
-}
-
-/// Token decimals for the opportunity pair — resolved from the PG row's
-/// `route_metadata` (JSONB, migration 099) when the consumer has hydrated it
-/// (A1 enrichment); without it we CANNOT distinguish cross-decimal pairs, so
-/// we default to same-decimals (18,18) and keep the legacy heuristic. The
-/// quote-based slippage (S6) replaces this entirely.
-fn token_decimals(_opp: &Opportunity) -> (u8, u8) {
-    // The S4 Opportunity row does not carry decimals directly; the canonical
-    // DecimalsMap lives on the RouteMetadata (A1 enrichment path). When that
-    // path threads a DecimalsMap here, cross-decimal rows honestly return
-    // None from compute_slippage. Until then: (18,18) = same-decimals legacy.
-    (18, 18)
+    debug!(event = "sim.slippage_heuristic", pct, decimals = dec_in);
+    Ok(pct)
 }
 
 /// SIM-04 fix (2026-09-24): char-boundary-safe truncation (twin in
@@ -328,6 +440,142 @@ fn token_decimals(_opp: &Opportunity) -> (u8, u8) {
 /// multibyte UTF-8 codepoints at the byte-200 boundary.
 fn truncate_chars(s: &str, max: usize) -> String {
     s.chars().take(max).collect()
+}
+
+/// Bounded geth JS tracer: records ONLY the last executed step (pc + opcode).
+///
+/// Anvil supports it — verified LIVE against the VPS anvil (172.18.0.9:8545)
+/// on 2026-10-23 with a garbage call to the UniswapV2 router:
+///   request  debug_traceCall [{from,to,data:"0xdeadbeef"}, "latest", {tracer: JS}]
+///   response {"failed":true,"lastStep":{"pc":473,"op":"REVERT","depth":1},
+///             "error":"execution reverted"}
+/// The `callTracer` does NOT expose pc/opcode, hence the second (also bounded)
+/// probe. Both probes are optional: a failing trace removes information, it
+/// never fabricates it (R8).
+const JS_LAST_STEP_TRACER: &str = "{ step: function(log) { this.last = { pc: log.getPC(), op: log.op.toString() }; }, fault: function(log, db) {}, result: function(ctx) { return { lastStep: this.last || null }; } }";
+
+/// F5-SIM-FORK-REVERT: build a NAMED cause for an anvil probe revert.
+///
+/// Three independent probes, merged without overwriting what the node already
+/// said:
+///   1. the revert payload inside the `ProviderError` (`error.data` or an
+///      inline `data 0x…` in the message) → selector / `Error(string)` /
+///      `Panic(uint256)`;
+///   2. `debug_traceCall` + geth `callTracer` → the ADDRESS of the deepest
+///      failing frame (plus its `output` bytes / `revertReason`);
+///   3. `debug_traceCall` + the bounded JS tracer above → `pc` + `opcode`.
+///
+/// Returns a cause even when every probe fails (`revert_unattributed`), so the
+/// row is never labelled by the anonymous `rpc_error` family again.
+#[allow(clippy::too_many_arguments)]
+async fn revert_cause_from_fork(
+    provider: std::sync::Arc<Provider<Http>>,
+    from: Address,
+    to: Address,
+    value: U256,
+    data: Bytes,
+    gas_cap: u64,
+    err: &ethers::providers::ProviderError,
+) -> revert_cause::RevertCause {
+    // (1) What the node itself exposed.
+    let from_error = revert_cause::revert_data_from_provider_error(err)
+        .and_then(|d| revert_cause::cause_from_revert_data(&d));
+
+    // (2) Which frame reverted (address) + revert bytes of that frame.
+    let call = trace_call_object(from, to, value, &data, gas_cap);
+    let frame = trace_debug_call(
+        provider.clone(),
+        &call,
+        serde_json::json!({ "tracer": "callTracer" }),
+    )
+    .await;
+    let frame_cause = frame.as_ref().and_then(revert_cause::cause_from_call_trace);
+
+    // Merge: prefer the frame's ADDRESS; take the selector/name from whichever
+    // source actually named something (the frame's `revert_no_data` is the
+    // weakest name, so an error-payload selector wins over it).
+    let mut cause = match (&from_error, &frame_cause) {
+        (Some(d), Some(f)) => {
+            let mut c = f.clone();
+            if matches!(c.name.as_str(), "revert_no_data" | "revert_string") {
+                c.name = d.name.clone();
+            }
+            c.merge_missing(d);
+            c
+        }
+        (Some(d), None) => d.clone(),
+        (None, Some(f)) => f.clone(),
+        (None, None) => revert_cause::cause_from_error_message(&err.to_string())
+            .unwrap_or_else(|| revert_cause::RevertCause::new("revert_unattributed")),
+    };
+
+    // (3) pc + opcode of the failing instruction (callTracer does not carry them).
+    let step = trace_debug_call(
+        provider,
+        &call,
+        serde_json::json!({ "tracer": JS_LAST_STEP_TRACER }),
+    )
+    .await;
+    if let Some((pc, op)) = step
+        .as_ref()
+        .and_then(revert_cause::cause_step_from_js_trace)
+    {
+        cause.pc = Some(pc);
+        cause.opcode = Some(op);
+    }
+
+    debug!(
+        event = "sim.fork_revert_named",
+        cause = %cause.name,
+        selector = ?cause.selector,
+        address = ?cause.address,
+        pc = ?cause.pc,
+        opcode = ?cause.opcode,
+    );
+    cause
+}
+
+/// Minimal JSON shape geth/erigon/anvil accept for `debug_traceCall`'s tx.
+fn trace_call_object(
+    from: Address,
+    to: Address,
+    value: U256,
+    data: &Bytes,
+    gas_cap: u64,
+) -> serde_json::Value {
+    serde_json::json!({
+        "from": format!("{from:?}"),
+        "to": format!("{to:?}"),
+        "value": format!("0x{:x}", value),
+        "data": format!("0x{}", hex::encode(data)),
+        "gas": format!("0x{gas_cap:x}"),
+    })
+}
+
+/// One bounded `debug_traceCall` probe. 5 s cap: a trace is diagnostic, the
+/// simulation verdict must not hang on it.
+async fn trace_debug_call(
+    provider: std::sync::Arc<Provider<Http>>,
+    call: &serde_json::Value,
+    opts: serde_json::Value,
+) -> Option<serde_json::Value> {
+    let params = serde_json::json!([call, "latest", opts]);
+    match timeout(
+        Duration::from_secs(5),
+        provider.request::<_, serde_json::Value>("debug_traceCall", params),
+    )
+    .await
+    {
+        Ok(Ok(v)) => Some(v),
+        Ok(Err(e)) => {
+            debug!(event = "sim.trace_call_failed", error = %e);
+            None
+        }
+        Err(_) => {
+            warn!(event = "sim.trace_call_timeout");
+            None
+        }
+    }
 }
 
 fn extract_revert_reason(e: &ethers::providers::ProviderError) -> String {
@@ -372,5 +620,191 @@ mod br00_decode_tests {
     fn decode_garbage_returns_none() {
         assert_eq!(decode_amount_out(&Bytes::from(vec![0xde, 0xad])), None);
         assert_eq!(decode_amount_out(&Bytes::default()), None);
+    }
+}
+
+/// F2-SIM-DECIMALS (2026-10-23): el criterio de `passed` deja de ser un
+/// artefacto de escala. Estos tests fijan las CUATRO ramas del veredicto con
+/// decimales REALES (WETH 18, USDC 6, UNI 18 — los del pipeline).
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod f2_decimals_tests {
+    use super::*;
+
+    const WETH: &str = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"; // 18
+    const USDC: &str = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"; // 6
+    const UNI: &str = "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984"; // 18
+
+    fn opp(token_in: &str, token_out: &str, amount_in_wei: &str) -> Opportunity {
+        Opportunity {
+            id: uuid::Uuid::new_v4(),
+            chain_id: 1,
+            strategy_kind: shared_rs::contracts::StrategyKind::dex_arb(),
+            dex_a: "uniswap-v2".into(),
+            dex_b: None,
+            pair_symbol: "WETH/USDC".into(),
+            token_in: token_in.into(),
+            token_out: token_out.into(),
+            amount_in_wei: amount_in_wei.into(),
+            expected_profit_usd: Some(1.0),
+            net_expected_profit_usd: None,
+            roi_pct: None,
+            risk_score: None,
+            block_number: None,
+            rejection_reason: None,
+            cartridge_id: None,
+            detector_id: None,
+            pipeline_latency_ms: None,
+            detected_at: Utc::now(),
+            trace_id: uuid::Uuid::new_v4(),
+            economics: None,
+        }
+    }
+
+    fn map(pairs: &[(&str, u8)]) -> DecimalsMap {
+        let mut m = DecimalsMap::new();
+        for (addr, dec) in pairs {
+            m.insert((*addr).to_string(), *dec);
+        }
+        m
+    }
+
+    /// (a) Par 6↔18 con decimals REALES: el veredicto es NO COMPUTADO, y el
+    /// valor que producía el hardcode `(18,18)` (0.0 ⇒ PASS) ya NO se emite.
+    /// Este es el corazón de F2: antes, USDC→WETH daba slippage 0 % con
+    /// CUALQUIER salida; ahora se declara que no se puede medir.
+    #[test]
+    fn cross_decimals_6_18_is_not_computable_and_never_a_false_pass() {
+        // 1 USDC-in (6 dec) y una salida de 1e18 wei (1 WETH, 18 dec).
+        let o = opp(USDC, WETH, "1000000");
+        let actual = U256::from(10u64).pow(18.into());
+        let real = map(&[(USDC, 6), (WETH, 18)]);
+
+        let verdict = compute_slippage(&o, Some(actual), &[], &real);
+        assert_eq!(
+            verdict,
+            Err(SlippageGap::CrossDecimals {
+                decimals_in: 6,
+                decimals_out: 18
+            }),
+            "a 6↔18 pair cannot be measured by raw units"
+        );
+        let reason = verdict.unwrap_err().as_fail_reason();
+        assert_eq!(reason, "slippage_not_computable:cross_decimals_6_18");
+        assert_ne!(reason, "slippage_too_high", "not a market verdict");
+
+        // EL ARTEFACTO, medido: con el mapa inventado (18,18) el mismo probe
+        // daba 0.0 % ⇒ `passed = true` sin medir nada.
+        let invented = map(&[(USDC, 18), (WETH, 18)]);
+        let artifact = compute_slippage(&o, Some(actual), &[], &invented).expect("legacy path");
+        assert_eq!(artifact, 0.0, "the old hardcode produced a 0% false pass");
+
+        // Y el inverso (WETH→USDC) con el mapa inventado daba ≈99.7 % ⇒ FAIL falso.
+        let o_rev = opp(WETH, USDC, "1000000000000000000");
+        let artifact_rev = compute_slippage(&o_rev, Some(U256::from(1_000_000u64)), &[], &invented)
+            .expect("legacy");
+        assert!(
+            artifact_rev > 99.0,
+            "the old hardcode produced ≈99.7% on a perfect trade, got {artifact_rev}"
+        );
+        assert_eq!(
+            compute_slippage(&o_rev, Some(U256::from(1_000_000u64)), &[], &real),
+            Err(SlippageGap::CrossDecimals {
+                decimals_in: 18,
+                decimals_out: 6
+            })
+        );
+    }
+
+    /// (b) No-regresión 18↔18: la heurística legacy queda EXACTAMENTE igual.
+    #[test]
+    fn same_decimals_18_18_keeps_the_legacy_heuristic() {
+        let amt = U256::from(10u64).pow(18.into());
+        let actual = amt * U256::from(95u32) / U256::from(100u32); // 5 % menos
+        let o = opp(WETH, UNI, "1000000000000000000");
+        let pct = compute_slippage(&o, Some(actual), &[], &map(&[(WETH, 18), (UNI, 18)]))
+            .expect("18↔18 stays computable");
+        assert!((pct - 5.0).abs() < 1e-9, "expected 5.0, got {pct}");
+
+        // Profit del ciclo (salida > entrada) sigue midiendo 0 % de pérdida.
+        let better = amt + U256::from(1u32);
+        let pnl = compute_slippage(&o, Some(better), &[], &map(&[(WETH, 18), (UNI, 18)]))
+            .expect("computable");
+        assert_eq!(pnl, 0.0);
+    }
+
+    /// (c) CICLO CERRADO: el par comparado es (token_in, path[-1]) — el token de
+    /// CIERRE —, no `token_out` (el contra-token del par que persiste
+    /// TWO-LEG-01). Con `token_out=USDC(6)` y un ciclo WETH→USDC→WETH el probe
+    /// devuelve WETH(18): medible. Comparar contra `token_out` habría declarado
+    /// un falso `cross_decimals_18_6`.
+    #[test]
+    fn closed_cycle_compares_the_closing_token_not_the_counter_token() {
+        let amt = U256::from(10u64).pow(18.into());
+        let actual = amt * U256::from(98u32) / U256::from(100u32); // 2 % menos
+        let o = opp(WETH, USDC, "1000000000000000000");
+        let path = vec![
+            WETH.parse::<Address>().unwrap(),
+            USDC.parse::<Address>().unwrap(),
+            WETH.parse::<Address>().unwrap(),
+        ];
+        let pct = compute_slippage(&o, Some(actual), &path, &map(&[(WETH, 18), (USDC, 6)]))
+            .expect("a closed cycle returns token_in, so its decimals are comparable");
+        assert!((pct - 2.0).abs() < 1e-9, "expected 2.0, got {pct}");
+
+        // Sin el path (sonda de una pata) el mismo row SÍ cruza decimales: es la
+        // diferencia exacta entre medir un ciclo y medir un swap simple.
+        assert_eq!(
+            compute_slippage(&o, Some(actual), &[], &map(&[(WETH, 18), (USDC, 6)])),
+            Err(SlippageGap::CrossDecimals {
+                decimals_in: 18,
+                decimals_out: 6
+            })
+        );
+    }
+
+    /// (d) Decimales AUSENTES: se declara NO COMPUTADO con el token nombrado y
+    /// NUNCA se inventa 18 (R8).
+    #[test]
+    fn unknown_decimals_is_declared_not_invented() {
+        let o = opp(WETH, UNI, "1000000000000000000");
+        let actual = U256::from(10u64).pow(18.into());
+
+        // Falta el token de entrada.
+        assert_eq!(
+            compute_slippage(&o, Some(actual), &[], &map(&[(UNI, 18)])),
+            Err(SlippageGap::DecimalsUnknown {
+                token: WETH.to_string()
+            })
+        );
+        // Falta el token de salida.
+        assert_eq!(
+            compute_slippage(&o, Some(actual), &[], &map(&[(WETH, 18)])),
+            Err(SlippageGap::DecimalsUnknown {
+                token: UNI.to_string()
+            })
+        );
+        // Mapa completamente vacío: el motivo nombra el token, no un 18 implícito.
+        let reason = compute_slippage(&o, Some(actual), &[], &DecimalsMap::new())
+            .unwrap_err()
+            .as_fail_reason();
+        assert!(
+            reason.starts_with("slippage_not_computable:decimals_unknown:"),
+            "got {reason}"
+        );
+        assert!(
+            reason.contains(WETH),
+            "the reason must name the token: {reason}"
+        );
+    }
+
+    /// (e) Sin salida decodificable se mantiene la etiqueta previa
+    /// (`output_undecodable`), que ya está reconocida por el clasificador.
+    #[test]
+    fn no_output_keeps_the_undecodable_label() {
+        let o = opp(WETH, UNI, "1000000000000000000");
+        let gap = compute_slippage(&o, None, &[], &map(&[(WETH, 18), (UNI, 18)])).unwrap_err();
+        assert_eq!(gap, SlippageGap::OutputUndecodable);
+        assert_eq!(gap.as_fail_reason(), "output_undecodable");
     }
 }

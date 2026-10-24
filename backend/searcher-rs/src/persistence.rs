@@ -12,11 +12,19 @@ use std::str::FromStr;
 
 // CARDS-MIRROR-01 — the opportunities table `status` state-machine.
 //
-// Sourced from the schema CHECK constraint (migration 003_opportunities.sql:20):
+// Sourced from the schema CHECK constraint (migration 003_opportunities.sql:20,
+// EXTENDED by migration 127_opportunities_paper_executed_status.sql):
 //   status TEXT NOT NULL DEFAULT 'detected' CHECK (status IN (
 //     'detected','validated','simulated','scored','executing',
-//     'executed','reconciled','rejected','failed'
+//     'executed','reconciled','rejected','failed','paper_executed'
 //   ))
+//
+// A3 PAPER_EXECUTED (operador: "CONFIRMED: A3 status paper_executed separado de
+// executed (paper, sin live)"): `executed` queda reservado a inclusión on-chain
+// real (escritor único: relays-client tras `wait_for_inclusion`); el camino paper
+// publica `paper_executed` cuando la simulación pasa con neto>0 y existe la fila
+// de evidencia en `paper_trade_runs` (api-server `paper/executor.ts`). Son
+// estados DISTINTOS a propósito: un `executed` nunca se degrada a paper.
 //
 // An opportunity is VIABLE (cards-visible) when it carries NO rejection_reason —
 // its lifecycle is one of the forward states below. It is REJECTED when a gate

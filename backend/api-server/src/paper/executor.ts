@@ -257,6 +257,28 @@ export class PaperExecutor {
       let paperRunId: string | undefined;
       if (isAccepted) {
         paperRunId = await this.persistRun(sim, net_yield_wei, executionTimeMs, calculation_basis);
+        // A3 PAPER_EXECUTED (operador: "CONFIRMED: A3 status paper_executed
+        // separado de executed (paper, sin live)"). El estado se escribe SÓLO
+        // con la evidencia ya persistida (paper_run_id + net_yield_wei). No
+        // toca `executed` (escritor único: relays-client post-inclusión).
+        if (sim.opportunity_id) {
+          try {
+            await this.markPaperExecuted(sim.opportunity_id, paperRunId, net_yield_wei);
+          } catch (err) {
+            // La fila de `paper_trade_runs` YA es la evidencia; si el UPDATE del
+            // estado falla, se declara y NO se rompe el loop: nunca se fabrica un
+            // estado que no se pudo escribir (R8).
+            this.deps.logger.error(
+              {
+                event: "paper_executor.paper_executed_status_err",
+                opportunity_id: sim.opportunity_id,
+                paper_run_id: paperRunId,
+                err: (err as Error).message,
+              },
+              "paper_trade_runs persisted but opportunities.status UPDATE failed"
+            );
+          }
+        }
       }
 
       await this.emitResult({
@@ -371,6 +393,51 @@ export class PaperExecutor {
     );
     if (!result.rows[0]) throw new Error("persist_failed");
     return result.rows[0].id;
+  }
+
+  /**
+   * A3 PAPER_EXECUTED (2026-10-23) — escribe `opportunities.status = 'paper_executed'`
+   * con la evidencia YA persistida (`paper_run_id` de `paper_trade_runs` +
+   * `net_yield_wei`) y deja `executed` intacto.
+   *
+   * CRITERIO EXACTO (el que el pipeline paper ya computa, no uno inventado):
+   *   (i)   `sim.status === "passed"`  — lo decide `sim-ctl` (`sim_engine.rs` fija
+   *         `passed`; `persistence.rs` persiste la fila `simulations`);
+   *   (ii)  `net_yield_wei > 0`         — neto tras gas + decoherencia
+   *         (`calculateNetTopologicalYield`);
+   *   (iii) `persistRun` creó la fila de evidencia en `paper_trade_runs`.
+   * Quien llama garantiza (i)-(iii); esta función sólo publica el estado.
+   *
+   * La guarda `status IN ('detected','validated','simulated','scored')` impide
+   * pisar estados TERMINALES (rejected/failed/executed/reconciled): un `executed`
+   * on-chain nunca se degrada a paper. Devuelve `true` si la fila se movió.
+   */
+  private async markPaperExecuted(
+    opportunityId: string,
+    paperRunId: string,
+    netYieldWei: bigint
+  ): Promise<boolean> {
+    const res = await this.deps.pool.query(
+      `UPDATE opportunities
+          SET status = 'paper_executed',
+              updated_at = NOW()
+        WHERE id = $1
+          AND status IN ('detected','validated','simulated','scored')`,
+      [opportunityId]
+    );
+    const moved = (res.rowCount ?? 0) > 0;
+    this.deps.logger.info(
+      {
+        event: "paper_executor.paper_executed",
+        opportunity_id: opportunityId,
+        paper_run_id: paperRunId,
+        net_yield_wei: netYieldWei.toString(),
+        evidence: "paper_trade_runs.id",
+        status_moved: moved,
+      },
+      "opportunities.status -> paper_executed (paper path; `executed` untouched)"
+    );
+    return moved;
   }
 }
 
