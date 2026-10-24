@@ -213,7 +213,12 @@ class StreamingShellTests(unittest.TestCase):
         if not cls.bash:
             raise RuntimeError("Bash required: missing tests must not be reported as passed")
         cls.outer_script, cls.remote = workflow_script()
-        start = cls.remote.index("# EX-01: EOF")
+        # VPS-DEPLOY-GUARD (2026-10-24): deploy_completion_guard ahora también
+        # reapea el watchdog de disco, así que el slice extraído DEBE incluir
+        # `stop_disk_floor_watchdog()`. Si se corta en "# EX-01", el trap llama a
+        # un comando inexistente y todos los códigos de salida derivan.
+        start = min(cls.remote.index("# EX-01: EOF"),
+                    cls.remote.index("stop_disk_floor_watchdog() {"))
         end = cls.remote.index("trap deploy_completion_guard EXIT") + len("trap deploy_completion_guard EXIT")
         cls.guard = cls.remote[start:end]
         cls.tail = cls.remote[cls.remote.index('echo "hot-path trace'):]
