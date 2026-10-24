@@ -308,6 +308,24 @@ fn computed_legs(sized: &SizedCandidate) -> Vec<ComputedLeg> {
         .collect()
 }
 
+/// INSTRUMENT-GAP-01: is this measured loss LARGER than the whole principal?
+///
+/// The test that separates a market verdict from a broken measurement. A round
+/// trip can return at least nothing, so `gross >= -amount_in_usd` always holds
+/// for a real swap; a gross BELOW that bound implies a NEGATIVE output, which
+/// no swap produces. Exactly `-amount_in_usd` (the whole principal gone, output
+/// zero) is the boundary that IS possible and stays a market reading.
+///
+/// Non-finite or non-positive principals answer `false`: an unpriced principal
+/// is absence of a measurement, not evidence of an impossible one (R8 — this
+/// predicate must never reclassify a row it cannot evaluate).
+pub fn loss_exceeds_principal_usd(gross_profit_usd: f64, amount_in_usd: f64) -> bool {
+    gross_profit_usd.is_finite()
+        && amount_in_usd.is_finite()
+        && amount_in_usd > 0.0
+        && gross_profit_usd < -amount_in_usd
+}
+
 /// ALWAYS-COMPUTE-03 (2026-09-27): the CLOSED `computed` object for a REJECTED
 /// row whose gross was already MEASURED by its producer (`Some(gross)`, even a
 /// measured `0.0`) but which never reached the sizing kernel.
@@ -348,6 +366,23 @@ pub fn economics_from_measured_gross(
     cfg: &TradingConfigState,
 ) -> Option<EconomicsComputation> {
     if !amount_in_usd.is_finite() || amount_in_usd <= 0.0 || !gross_profit_usd.is_finite() {
+        return None;
+    }
+    // INSTRUMENT-GAP-01 (2026-10-24): a round trip can lose at most its whole
+    // principal — `amount_out == 0` implies `gross == -amount_in_usd`, and
+    // nothing returns LESS than nothing. A measured gross BELOW
+    // `-amount_in_usd` therefore implies a NEGATIVE cycle output, which is
+    // arithmetically impossible on a swap: it is a broken measurement of the
+    // return leg (unit/scale mismatch), never a market verdict.
+    //
+    // MEASURED DEFECT this closes: live rows carried `gross = -2367.017` on a
+    // `0.9998` USD principal (ROI -236 809 %), published as
+    // `spread_negative_round_trip` with `computation_status: "computed"` —
+    // an instrument failure read as a loss, and a 2 367x principal loss that
+    // no swap can produce. R8: an impossible figure is refused at the source,
+    // and refusing here keeps the row off the `computed` path (the caller
+    // classifies it as an instrument gap) instead of publishing it as market.
+    if loss_exceeds_principal_usd(gross_profit_usd, amount_in_usd) {
         return None;
     }
     let gas_usd = cfg.gas_cost_usd();
@@ -760,6 +795,28 @@ mod tests {
         assert!(std::env::var("ARBX_ALWAYS_COMPUTE_ECONOMICS")
             .map(|v| !disable(&v))
             .unwrap_or(true));
+    }
+
+    // ── INSTRUMENT-GAP-01: an impossible loss is not a market verdict ─────
+
+    #[test]
+    fn loss_above_the_principal_is_refused_as_impossible() {
+        // MEASURED live row (2026-10-24, opportunity 9e50980c): principal
+        // 0.99980034 USD against a gross of -2367.0172711053206 USD, ROI
+        // -236809 % — a 2367x principal loss, which no swap can produce.
+        assert!(loss_exceeds_principal_usd(
+            -2367.017_271_105_320_6,
+            0.999_800_34
+        ));
+        // Control (-): the WHOLE principal gone is the boundary a swap CAN
+        // reach (output zero) — it stays a market reading, never "impossible".
+        assert!(!loss_exceeds_principal_usd(-0.999_800_34, 0.999_800_34));
+        // Control (+): a measured loss inside the principal stays a loss.
+        assert!(!loss_exceeds_principal_usd(-0.5, 1.0));
+        // Absence of a principal is not evidence of an impossible one (R8).
+        assert!(!loss_exceeds_principal_usd(-2367.0, 0.0));
+        assert!(!loss_exceeds_principal_usd(f64::NAN, 1.0));
+        assert!(!loss_exceeds_principal_usd(-1.0, f64::NAN));
     }
 
     // ── error object: gate 2 — no fabricated numbers ───────────────────────
