@@ -280,35 +280,76 @@ function parseAllowedOrigins(): string[] {
 // A1 fix (audit 2026-05-10): WebSocket handshake authentication.
 // Without this gate, ANY client could subscribe to `subscribe:opportunities`
 // and `subscribe:telemetry`, leaking real-time MEV alpha to competitors.
-// The token can be supplied via three sources, in priority order:
+// The token can be supplied via four sources, in priority order:
 //   1. auth payload — io.connect(URL, { auth: { token: "..." } })  (preferred)
 //   2. query param  — io.connect(URL + "?token=...")               (browser fallback)
-//   3. header       — X-ArbX-Admin-Token (tooling / curl)
+//   3. header       — X-ArbX-Admin-Token (tooling / curl / edge proxy)
+//   4. cookie       — arbx_admin_session (the ONLY browser-reachable carrier)
 // Constant-time compare via safeTokenEqual from @arbx/shared.
-function extractHandshakeToken(handshake: {
+//
+// RUNTIME-ACK-AUTH (2026-10-24): the browser cannot read the httpOnly
+// `arbx_admin_session` cookie, so after V-AT-1 it connects with an EMPTY
+// auth.token — and nginx proxies /socket.io/ straight to :8080 WITHOUT injecting
+// x-arbx-admin-token (RULE 02). The edge resolver
+// (edge/*/admin-token-resolver.ts) already treats that cookie's VALUE as the
+// admin token and forwards it as x-arbx-admin-token, so reading it here is the
+// SAME trust model one carrier later: no new secret and no new comparison — a
+// forged cookie is a forged token. The value is read RAW (no decodeURIComponent)
+// to match the edge resolver exactly.
+// The source is reported because the cookie is the only BROWSER-carried
+// credential and therefore the only one exposed to cross-site WebSocket
+// hijacking: the handshake gate below origin-gates that path explicitly.
+export const SESSION_COOKIE = 'arbx_admin_session';
+
+export type HandshakeTokenSource = 'auth' | 'query' | 'header' | 'cookie' | 'none';
+
+export interface HandshakeCredential {
+    readonly token: string;
+    readonly source: HandshakeTokenSource;
+}
+
+function sessionCookieToken(cookieHeader: string): string {
+    for (const pair of cookieHeader.split(';')) {
+        const idx = pair.indexOf('=');
+        if (idx < 0) continue;
+        if (pair.slice(0, idx).trim() !== SESSION_COOKIE) continue;
+        return pair.slice(idx + 1).trim();
+    }
+    return '';
+}
+
+export function extractHandshakeToken(handshake: {
     auth?: unknown;
     query?: Record<string, string | string[] | undefined>;
     headers?: Record<string, string | string[] | undefined>;
-}): string {
+}): HandshakeCredential {
     const authObj = (handshake.auth ?? {}) as { token?: unknown };
     if (typeof authObj.token === 'string' && authObj.token.length > 0) {
-        return authObj.token;
+        return { token: authObj.token, source: 'auth' };
     }
     const queryToken = handshake.query?.['token'];
     if (typeof queryToken === 'string' && queryToken.length > 0) {
-        return queryToken;
+        return { token: queryToken, source: 'query' };
     }
     if (Array.isArray(queryToken) && queryToken.length > 0 && typeof queryToken[0] === 'string') {
-        return queryToken[0];
+        return { token: queryToken[0], source: 'query' };
     }
     const headerToken = handshake.headers?.['x-arbx-admin-token'];
     if (typeof headerToken === 'string' && headerToken.length > 0) {
-        return headerToken;
+        return { token: headerToken, source: 'header' };
     }
     if (Array.isArray(headerToken) && headerToken.length > 0 && typeof headerToken[0] === 'string') {
-        return headerToken[0];
+        return { token: headerToken[0], source: 'header' };
     }
-    return '';
+    const cookieHeader = handshake.headers?.['cookie'];
+    const rawCookie = Array.isArray(cookieHeader) ? cookieHeader[0] : cookieHeader;
+    if (typeof rawCookie === 'string' && rawCookie.length > 0) {
+        const fromCookie = sessionCookieToken(rawCookie);
+        if (fromCookie.length > 0) {
+            return { token: fromCookie, source: 'cookie' };
+        }
+    }
+    return { token: '', source: 'none' };
 }
 
 /**
@@ -396,13 +437,28 @@ export function setupWebSocketGateway(server: HttpServer, carnotStore?: CarnotSt
     // tiered model) can silently expose the runtime_ack room to anonymous
     // clients. Tested in `websocket.test.ts`.
     const expectedAdminToken = process.env['ARBX_ADMIN_TOKEN'] ?? '';
+    // RUNTIME-ACK-AUTH (security review of the cookie carrier, 2026-10-24): a
+    // CROSS-SITE browser WebSocket handshake DOES carry the victim's cookies. The
+    // socket.io CORS allowlist above governs the polling handshake; for the
+    // upgrade we do NOT rely on it alone — the cookie-sourced credential requires
+    // the Origin to be ABSENT (non-browser client: cannot carry a victim cookie)
+    // or ALLOWLISTED (same fail-closed list; "*" is never supported). The token
+    // paths (auth/query/header) are unchanged: they cannot be attached by a
+    // foreign page, so they keep their exact previous behaviour.
+    function cookieOriginAllowed(origin: string | undefined): boolean {
+        if (!origin) return true;
+        return allowed.includes(origin);
+    }
     io.use((socket, next) => {
         // The opportunities stream is PUBLIC — the dashboard shows live data
         // without requiring login. Admin-only rooms (runtime_ack) are gated by
         // the capability flag below. Execution endpoints (killswitch, service
         // control) remain behind HTTP requireAdminToken — NOT affected here.
-        const got = extractHandshakeToken(socket.handshake);
-        if (got && expectedAdminToken && safeTokenEqual(got, expectedAdminToken)) {
+        const cred = extractHandshakeToken(socket.handshake);
+        const rawOrigin = socket.handshake.headers?.['origin'];
+        const origin = Array.isArray(rawOrigin) ? rawOrigin[0] : rawOrigin;
+        const carrierAllowsAdmin = cred.source !== 'cookie' || cookieOriginAllowed(origin);
+        if (carrierAllowsAdmin && cred.token && expectedAdminToken && safeTokenEqual(cred.token, expectedAdminToken)) {
             // Admin: full access including sensitive rooms.
             (socket as unknown as { data: Record<string, unknown> }).data = {
                 ...((socket as unknown as { data?: Record<string, unknown> }).data ?? {}),
@@ -497,7 +553,16 @@ export function setupWebSocketGateway(server: HttpServer, carnotStore?: CarnotSt
         // behavior rendered `runtime_ack: LIVE` over a rejected join).
         socket.on('subscribe:runtime_ack', (ack?: (res: { ok: boolean; code?: string }) => void) => {
             const allowed = socket?.data?.runtimeAckAllowed === true;
-            const reply = undefined as unknown as ((res: { ok: boolean; code?: string }) => void) | undefined; // TEMP-ROOM-AUTH-01 neutralized
+            // RUNTIME-ACK-AUTH (2026-10-24): restore the join verdict. It had been
+            // neutralized (`const reply = undefined`, TEMP-ROOM-AUTH-01), so even an
+            // AUTHORIZED client never received `{ ok: true }`: the frontend's
+            // runtimeAckJoinAck branch never fired and the channel stayed
+            // "connecting" until some broadcast happened to arrive. The calls below
+            // were already written for exactly this contract; restoring the binding
+            // leaks nothing new, because the SAME decision (code + room) is already
+            // emitted through the structured `error` event (ROOM-AUTH-01), and the
+            // replica in websocket.test.ts documents this behavior as the spec.
+            const reply = typeof ack === 'function' ? ack : undefined;
             if (!allowed) {
                 // WO-NO-WS-LOGS-01 (2026-09-17): structured (was console.warn).
                 log.warn(
