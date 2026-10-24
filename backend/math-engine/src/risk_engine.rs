@@ -459,3 +459,226 @@ mod rea_08_protection_tests {
         assert!(max_drawdown_protection(&winners, now, &p).is_none());
     }
 }
+
+// ============================================================================
+// REA-08 falsificadores (skill arbx-rea-brutal F7). Variante ROTA a proposito:
+// la MISMA asercion que valida el port debe matarla. Si el roto pasara, el test
+// no probaria nada. Estos tests se ejecutan (cargo test) y "caen" por diseno.
+// ============================================================================
+#[cfg(test)]
+mod rea_08_falsifiers {
+    use super::*;
+
+    fn trade(pair: &str, close_ts_s: i64, profit_ratio: f64, reason: ExitReason) -> ClosedTrade {
+        ClosedTrade {
+            pair: pair.to_string(),
+            close_ts_s,
+            profit_ratio,
+            exit_reason: reason,
+        }
+    }
+
+    /// Variante ROTA: ignora `pair_filter` (el upstream filtra por par con stop_per_pair).
+    fn broken_guard_ignores_pair_filter(
+        trades: &[ClosedTrade],
+        now_ts_s: i64,
+        _pair_filter: Option<&str>,
+        params: &StoplossGuardParams,
+    ) -> Option<ProtectionLock> {
+        let since = now_ts_s - params.lookback_s;
+        let qualifying: Vec<&ClosedTrade> = trades
+            .iter()
+            .filter(|t| {
+                t.close_ts_s >= since
+                    && matches!(
+                        t.exit_reason,
+                        ExitReason::StopLoss
+                            | ExitReason::TrailingStopLoss
+                            | ExitReason::StoplossOnExchange
+                            | ExitReason::Liquidation
+                    )
+                    && t.profit_ratio < params.profit_limit
+            })
+            .collect();
+        if qualifying.len() < params.trade_limit {
+            return None;
+        }
+        let max_close = qualifying.iter().map(|t| t.close_ts_s).max()?;
+        Some(ProtectionLock {
+            until_ts_s: max_close + params.stop_duration_s,
+            reason: "broken".to_string(),
+        })
+    }
+
+    /// Variante ROTA: ignora la ventana (lookback_s).
+    fn broken_guard_ignores_window(
+        trades: &[ClosedTrade],
+        _now_ts_s: i64,
+        pair_filter: Option<&str>,
+        params: &StoplossGuardParams,
+    ) -> Option<ProtectionLock> {
+        let qualifying: Vec<&ClosedTrade> = trades
+            .iter()
+            .filter(|t| {
+                matches!(
+                    t.exit_reason,
+                    ExitReason::StopLoss
+                        | ExitReason::TrailingStopLoss
+                        | ExitReason::StoplossOnExchange
+                        | ExitReason::Liquidation
+                ) && t.profit_ratio < params.profit_limit
+                    && pair_filter.map_or(true, |p| t.pair == p)
+            })
+            .collect();
+        if qualifying.len() < params.trade_limit {
+            return None;
+        }
+        let max_close = qualifying.iter().map(|t| t.close_ts_s).max()?;
+        Some(ProtectionLock {
+            until_ts_s: max_close + params.stop_duration_s,
+            reason: "broken".to_string(),
+        })
+    }
+
+    /// Variante ROTA: el lock termina en MIN(close) en vez de MAX(close).
+    fn broken_guard_min_close(
+        trades: &[ClosedTrade],
+        now_ts_s: i64,
+        pair_filter: Option<&str>,
+        params: &StoplossGuardParams,
+    ) -> Option<ProtectionLock> {
+        let since = now_ts_s - params.lookback_s;
+        let qualifying: Vec<&ClosedTrade> = trades
+            .iter()
+            .filter(|t| {
+                t.close_ts_s >= since
+                    && matches!(
+                        t.exit_reason,
+                        ExitReason::StopLoss
+                            | ExitReason::TrailingStopLoss
+                            | ExitReason::StoplossOnExchange
+                            | ExitReason::Liquidation
+                    )
+                    && t.profit_ratio < params.profit_limit
+                    && pair_filter.map_or(true, |p| t.pair == p)
+            })
+            .collect();
+        if qualifying.len() < params.trade_limit {
+            return None;
+        }
+        let min_close = qualifying.iter().map(|t| t.close_ts_s).min()?;
+        Some(ProtectionLock {
+            until_ts_s: min_close + params.stop_duration_s,
+            reason: "broken".to_string(),
+        })
+    }
+
+    /// Variante ROTA: drawdown RELATIVO (divide por el peak) en vez de absoluto.
+    fn broken_max_drawdown_ratio(values_in_close_order: &[f64]) -> f64 {
+        let mut cumulative = 0.0f64;
+        let mut peak = 0.0f64;
+        let mut max_dd = 0.0f64;
+        for value in values_in_close_order {
+            cumulative += *value;
+            if cumulative > peak {
+                peak = cumulative;
+            }
+            let dd = (peak - cumulative) / peak.max(f64::EPSILON);
+            if dd > max_dd {
+                max_dd = dd;
+            }
+        }
+        max_dd
+    }
+
+    #[test]
+    fn rea_08_falsifier_pair_filter_bites() {
+        // 3 stoplosses: 2 en ETH/USDC y 1 en BTC/USDT. Con stop_per_pair(ETH/USDC)
+        // el port correcto ve 2 (< trade_limit 3) => None. El roto ignora el par => Some.
+        let trades = vec![
+            trade("ETH/USDC", 1_000, -0.02, ExitReason::StopLoss),
+            trade("ETH/USDC", 1_100, -0.02, ExitReason::TrailingStopLoss),
+            trade("BTC/USDT", 1_200, -0.02, ExitReason::StopLoss),
+        ];
+        let p = StoplossGuardParams {
+            lookback_s: 3_600,
+            trade_limit: 3,
+            profit_limit: 0.0,
+            stop_duration_s: 2_400,
+        };
+        let now = 1_300;
+        assert_eq!(
+            stoploss_guard(&trades, now, Some("ETH/USDC"), &p),
+            None,
+            "per-pair: solo 2 del par cuentan (la asercion que el roto viola)"
+        );
+        let broken = broken_guard_ignores_pair_filter(&trades, now, Some("ETH/USDC"), &p);
+        assert!(
+            broken.is_some(),
+            "el roto SI dispara: la asercion de arriba lo mata => el falsificador muerde"
+        );
+    }
+
+    #[test]
+    fn rea_08_falsifier_lookback_window_bites() {
+        // Solo 1 trade dentro de la ventana (now 10_000, lookback 3600 => since 6_400).
+        // Correcto: 1 < 3 => None. El roto (sin ventana) ve 3 => Some.
+        let trades = vec![
+            trade("A/B", 1_000, -0.02, ExitReason::StopLoss),
+            trade("A/B", 2_000, -0.02, ExitReason::StopLoss),
+            trade("A/B", 9_000, -0.02, ExitReason::StopLoss),
+        ];
+        let p = StoplossGuardParams {
+            lookback_s: 3_600,
+            trade_limit: 3,
+            profit_limit: 0.0,
+            stop_duration_s: 2_400,
+        };
+        let now = 10_000;
+        assert_eq!(
+            stoploss_guard(&trades, now, None, &p),
+            None,
+            "solo 1 dentro de la ventana (la asercion que el roto viola)"
+        );
+        let broken = broken_guard_ignores_window(&trades, now, None, &p);
+        assert!(broken.is_some(), "el roto cuenta los viejos => muerde");
+    }
+
+    #[test]
+    fn rea_08_falsifier_lock_end_max_close_bites() {
+        // calculate_lock_end (iprotection.py:124-143): max(close_date) + stop_duration.
+        let trades = vec![
+            trade("A/B", 1_000, -0.02, ExitReason::StopLoss),
+            trade("A/B", 1_100, -0.02, ExitReason::StopLoss),
+            trade("A/B", 1_200, -0.02, ExitReason::StopLoss),
+        ];
+        let p = StoplossGuardParams {
+            lookback_s: 3_600,
+            trade_limit: 3,
+            profit_limit: 0.0,
+            stop_duration_s: 2_400,
+        };
+        let now = 1_300;
+        let lock = stoploss_guard(&trades, now, None, &p).expect("dispara");
+        assert_eq!(lock.until_ts_s, 1_200 + 2_400);
+        let broken = broken_guard_min_close(&trades, now, None, &p).expect("dispara");
+        assert_eq!(broken.until_ts_s, 1_000 + 2_400);
+        assert_ne!(
+            broken.until_ts_s, lock.until_ts_s,
+            "si el roto pasara, el test no probaria nada"
+        );
+    }
+
+    #[test]
+    fn rea_08_falsifier_drawdown_formula_bites() {
+        // Serie donde absoluto != relativo: cumsum 0.5, 0.25; peak 0.5; abs 0.25; rel 0.5.
+        let v = [0.5f64, -0.25f64];
+        assert_eq!(max_drawdown_ratio(&v), 0.25);
+        assert_eq!(broken_max_drawdown_ratio(&v), 0.5);
+        assert_ne!(
+            broken_max_drawdown_ratio(&v),
+            max_drawdown_ratio(&v),
+            "si el roto pasara, el test no probaria nada"
+        );
+    }
+}
