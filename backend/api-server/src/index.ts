@@ -325,7 +325,7 @@ const AuditAuthBody = z.object({
   ip_address: z.string().min(1).max(64),
   user_agent: z.string().max(512).optional(),
   trace_id: z.string().uuid().optional(),
-  after_state: z.record(z.unknown()).optional(),
+  after_state: z.record(z.string(), z.unknown()).optional(),
 });
 
 app.post("/internal/audit/auth", requireEdgeToken(ARBX_EDGE_TOKEN), async (req, res) => {

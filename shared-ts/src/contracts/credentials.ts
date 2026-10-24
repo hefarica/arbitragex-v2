@@ -50,7 +50,7 @@ export const CredentialRowPublicSchema = z.object({
   status: CredentialStatus,
   last_validated_at: z.string().datetime().nullable(),
   last_validation_error: z.string().nullable(),
-  metadata: z.record(z.unknown()),
+  metadata: z.record(z.string(), z.unknown()),
   updated_at: z.string().datetime(),
   updated_by: z.string().nullable(),
 });
@@ -63,7 +63,7 @@ export const CredentialUpsertSchema = z.object({
   display_name: z.string().min(1).max(200).optional(),
   // null = clear; non-null = replace.
   secret_value: z.string().min(1).max(2048).nullable(),
-  metadata: z.record(z.unknown()).default({}),
+  metadata: z.record(z.string(), z.unknown()).default({}),
 });
 export type CredentialUpsert = z.infer<typeof CredentialUpsertSchema>;
 
@@ -72,7 +72,7 @@ export const CredentialTestSchema = z.object({
   provider: CredentialProvider,
   scope: CredentialScope,
   secret_value: z.string().min(1).max(2048),
-  metadata: z.record(z.unknown()).default({}),
+  metadata: z.record(z.string(), z.unknown()).default({}),
 });
 export type CredentialTest = z.infer<typeof CredentialTestSchema>;
 
@@ -80,7 +80,7 @@ export type CredentialTest = z.infer<typeof CredentialTestSchema>;
 export const CredentialTestResultSchema = z.object({
   status: CredentialStatus,
   message: z.string(),
-  details: z.record(z.unknown()).optional(),
+  details: z.record(z.string(), z.unknown()).optional(),
   tested_at: z.string().datetime(),
 });
 export type CredentialTestResult = z.infer<typeof CredentialTestResultSchema>;
@@ -103,7 +103,7 @@ export const CredentialBulkItemSchema = z.object({
   display_name: z.string().min(1).max(200).optional(),
   // Absent/null = keep the stored secret (metadata-only refresh).
   secret_value: z.string().min(1).max(2048).nullable().optional(),
-  metadata: z.record(z.unknown()).default({}),
+  metadata: z.record(z.string(), z.unknown()).default({}),
 });
 export type CredentialBulkItem = z.infer<typeof CredentialBulkItemSchema>;
 

@@ -161,7 +161,7 @@ async function getValidated<T>(
   // so schemas that NORMALIZE the wire (e.g. BlockNumberWireSchema's numeric-
   // string coercion) still infer T from the schema's OUTPUT type instead of
   // collapsing the field to `unknown` when Input ≠ Output.
-  schema: z.ZodType<T, z.ZodTypeDef, unknown>,
+  schema: z.ZodType<T, unknown>,
   opts: { timeoutMs?: number; retries?: number; extraHeaders?: Record<string, string>; baseUrl?: string } = {},
 ): Promise<Result<T>> {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -221,7 +221,7 @@ async function postValidated<T>(
   body: unknown,
   extraHeaders: Record<string, string>,
   // WO-G2-PARITY (2026-09-17): same Input=unknown pin as getValidated above.
-  schema: z.ZodType<T, z.ZodTypeDef, unknown>,
+  schema: z.ZodType<T, unknown>,
   timeoutMs = DEFAULT_TIMEOUT_MS,
 ): Promise<Result<T>> {
   const url = `${getApiBaseUrl()}${path}`;

@@ -153,7 +153,7 @@ describe("OMEGA-8/M4 Fase 10 — WSS rooms admin-gate regression", () => {
 
   it("isValidRuntimeAck accepts a canonical payload (Capa 2 ↔ Capa 3 invariant)", () => {
     const ok = {
-      event_id: "11111111-2222-3333-4444-555555555555",
+      event_id: "11111111-2222-4333-8444-555555555555",
       resource: "trading_config",
       chain_id: 1,
       idempotency_key: "k",

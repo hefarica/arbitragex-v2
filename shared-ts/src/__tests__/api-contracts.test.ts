@@ -25,7 +25,7 @@ describe("TokenInfoSchema", () => {
 
 describe("OpportunityListItemSchema", () => {
   const base = {
-    id: "11111111-1111-1111-1111-111111111111",
+    id: "11111111-1111-4111-8111-111111111111",
     chain_id: 1, strategy_kind: "dex_arb", dex_a: "uniswap-v2", dex_b: null,
     pair_symbol: "x/y",
     token_in: "0x" + "a".repeat(40),  token_in_info: null,
@@ -33,7 +33,7 @@ describe("OpportunityListItemSchema", () => {
     amount_in_wei: "1000",
     expected_profit_usd: null, roi_pct: null, risk_score: null,
     block_number: null, rejection_reason: null, status: "detected" as const,
-    detected_at: "2026-05-06T00:00:00Z", trace_id: "22222222-2222-2222-2222-222222222222",
+    detected_at: "2026-05-06T00:00:00Z", trace_id: "22222222-2222-4222-8222-222222222222",
     chain_id_out: null, bridge: null, bridge_fee_usd: null,
   };
 
