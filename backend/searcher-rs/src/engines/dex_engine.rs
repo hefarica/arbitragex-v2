@@ -547,15 +547,22 @@ impl DexEngine {
                         // `probe_amount_in_usd` prices the SAME principal the
                         // gross was measured against, so the comparison is
                         // same-scale by construction.
+                        // Only when the cycle output was NOT measured: an
+                        // exposed wei ledger is a real round trip even if its
+                        // USD pricing looks odd (that is a different defect),
+                        // and this guard must never contradict a measurement it
+                        // can see. `measured_cycle_output` is the same source
+                        // that publishes `expected_amount_out`.
                         let impossible_loss = matches!(
                             &v3_gross_usd,
                             V3GrossOutcome::RoundTripLoss { gross_usd, .. }
-                                if loss_exceeds_principal(
-                                    *gross_usd,
-                                    probe_amount,
-                                    token_in_opt,
-                                    cfg_opt.as_ref(),
-                                )
+                                if measured_cycle_output(&v3_gross_usd, probe_amount).is_none()
+                                    && loss_exceeds_principal(
+                                        *gross_usd,
+                                        probe_amount,
+                                        token_in_opt,
+                                        cfg_opt.as_ref(),
+                                    )
                         );
                         let reason = if impossible_loss {
                             "instrument_gap"
@@ -653,6 +660,7 @@ impl DexEngine {
                                 amount_in_usd,
                                 gross,
                                 cfg,
+                                measured_cycle_output(&v3_gross_usd, probe_amount),
                             )
                         });
                         if let Some(econ) = measured_economics {

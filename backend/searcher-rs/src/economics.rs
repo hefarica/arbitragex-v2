@@ -206,6 +206,29 @@ pub fn economics_from_sized(
         .flatten()
         .reduce(|a, b| a + b);
 
+    // INSTRUMENT-GAP-01 (2026-10-24): when the cycle OUTPUT was never exposed
+    // AND the gross implies a loss larger than the whole principal, the row is
+    // not a market reading — it is a broken measurement, and every figure
+    // derived from it (`amount_out_usd = amount_in + gross`, `roi_pct`, the
+    // negative net) would be arithmetic on a hole.
+    //
+    // MEASURED DEFECT this closes (live PG, 2026-10-24): `amount_out_wei: null`
+    // with `cycle_output_not_exposed_by_kernel`, a 0.9998 USD principal and
+    // `gross = -2367.017` (ROI -236 809 %) — published as
+    // `spread_negative_round_trip` with `computation_status: "computed"`.
+    // R8: an impossible figure is refused at the source, and the refusal is
+    // itself the measurement (`instrument_gap`), never a market verdict.
+    //
+    // An EXPOSED output is never reclassified here: a real wei ledger stays a
+    // real round trip even when its USD pricing looks odd (a different defect).
+    if amount_out_wei.is_none() {
+        if let Some(ain) = amount_in_usd {
+            if loss_exceeds_principal_usd(gross, ain) {
+                return economics_error("instrument_gap:impossible_cycle_loss");
+            }
+        }
+    }
+
     // out = in + gross is an identity of the kernel's arithmetic (out − in ==
     // gross over input); absent only when the principal was never exposed.
     let amount_out_usd = amount_in_usd.map(|a| a + gross);
@@ -358,31 +381,20 @@ pub fn loss_exceeds_principal_usd(gross_profit_usd: f64, amount_in_usd: f64) -> 
 /// kernel) stays absent WITH its reason. `None` when the principal is not a
 /// usable positive finite figure: without the capital there is no closed
 /// arithmetic to claim, so the caller keeps the row's honest diagnostic.
+///
+/// INSTRUMENT-GAP-01: `cycle_output_wei` carries the cycle's MEASURED output
+/// when the verdict exposed one. `None` means the producer did not measure it,
+/// and an impossible gross (`< -amount_in_usd`) is then refused as an
+/// `instrument_gap` downstream instead of published as a market loss.
 pub fn economics_from_measured_gross(
     candidate: &StrategyCandidate,
     amount_in_wei: U256,
     amount_in_usd: f64,
     gross_profit_usd: f64,
     cfg: &TradingConfigState,
+    cycle_output_wei: Option<U256>,
 ) -> Option<EconomicsComputation> {
     if !amount_in_usd.is_finite() || amount_in_usd <= 0.0 || !gross_profit_usd.is_finite() {
-        return None;
-    }
-    // INSTRUMENT-GAP-01 (2026-10-24): a round trip can lose at most its whole
-    // principal — `amount_out == 0` implies `gross == -amount_in_usd`, and
-    // nothing returns LESS than nothing. A measured gross BELOW
-    // `-amount_in_usd` therefore implies a NEGATIVE cycle output, which is
-    // arithmetically impossible on a swap: it is a broken measurement of the
-    // return leg (unit/scale mismatch), never a market verdict.
-    //
-    // MEASURED DEFECT this closes: live rows carried `gross = -2367.017` on a
-    // `0.9998` USD principal (ROI -236 809 %), published as
-    // `spread_negative_round_trip` with `computation_status: "computed"` —
-    // an instrument failure read as a loss, and a 2 367x principal loss that
-    // no swap can produce. R8: an impossible figure is refused at the source,
-    // and refusing here keeps the row off the `computed` path (the caller
-    // classifies it as an instrument gap) instead of publishing it as market.
-    if loss_exceeds_principal_usd(gross_profit_usd, amount_in_usd) {
         return None;
     }
     let gas_usd = cfg.gas_cost_usd();
@@ -413,9 +425,11 @@ pub fn economics_from_measured_gross(
         net_negative: net_profit_usd <= 0.0,
         net_economics: Some(net_economics),
         // No per-leg chain on this path (R8 — never a repeated probe amount
-        // dressed as a ledger).
+        // dressed as a ledger). The cycle OUTPUT is a different fact: when the
+        // verdict measured it, it is published as the single-leg ledger so
+        // `amount_out_wei` stops being a hole.
         leg_amounts_in: None,
-        leg_amounts_out: None,
+        leg_amounts_out: cycle_output_wei.map(|o| vec![o.to_string()]),
     };
     Some(economics_from_sized(&sized, Some(cfg)))
 }
