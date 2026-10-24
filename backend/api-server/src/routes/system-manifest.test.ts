@@ -24,7 +24,7 @@ const SERVICE_TOKEN = "test-service-token-32-bytes-of-entropy-aaaa";
 const ADMIN_TOKEN = "test-admin-token-32-bytes-of-entropy-aaaaaa";
 
 const VALID_PAYLOAD = {
-  event_id: "11111111-1111-1111-1111-111111111111",
+  event_id: "11111111-1111-4111-8111-111111111111",
   resource: "trading_config",
   chain_id: 1,
   idempotency_key: "idem-001",
@@ -268,7 +268,7 @@ describe("R10 E2E-COMPUTE GUARD: GET /api/system/drift nunca fabrica COHERENT", 
 });
 
 describe("OMEGA-8/M3 P1-4: GET /api/system/runtime-ack/:event_id fallback", () => {
-  const validUuid = "22222222-2222-2222-2222-222222222222";
+  const validUuid = "22222222-2222-4222-8222-222222222222";
 
   it("rejects GET without admin token (401)", async () => {
     const state: MockState = { insertedOnConflict: true, getRows: [], queries: [] };
