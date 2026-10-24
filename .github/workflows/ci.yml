@@ -19,6 +19,24 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # DEPLOY-WINDOW-GUARD-01 — block a merge while a deploy for `main` is in flight
+  # (2026-10-18: a merge inside another deploy's gate window superseded it and the
+  # evidence publication for that SHA was lost). PR-only: on a main push this job
+  # would see its OWN deploy starting and fail the very gates that deploy waits on.
+  deploy-window-guard:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - name: Refuse to merge while a deploy for main is in flight
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci/deploy_window_guard.py
+
   lint-and-test-node:
     runs-on: ubuntu-latest
     services:

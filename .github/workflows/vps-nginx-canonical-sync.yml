@@ -25,6 +25,20 @@
 name: VPS nginx canonical sync (NGINX-CONF-DRIFT-01)
 
 on:
+  # NGINX-CONF-DRIFT-01 v3 (2026-10-18) — the sync had NO push trigger, so it
+  # could never reconcile on its own: every push that changed only nginx moved
+  # `main` while production stayed put (verified: 0 runs after a main push, and
+  # the file declared `workflow_dispatch` only). A `push` to a nginx path now
+  # reconciles automatically, in the default `aplicar` mode; `workflow_dispatch`
+  # remains for an operator-driven run (with the SYNC confirmation).
+  push:
+    branches: [main]
+    paths:
+      - 'config/nginx/**'
+      - 'infra/nginx/**'
+      - 'frontend/nginx.conf'
+      - 'scripts/vps/**'
+      - '.github/workflows/vps-nginx-canonical-sync.yml'
   workflow_dispatch:
     inputs:
       confirm:
@@ -44,7 +58,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: deploy-arbx # MISMO grupo que deploy.yml (exclusión mutua real)
+  # Same group as the ACTIVE auto-deploy (auto-deploy-vps.yml uses
+  # `production-vps`); `deploy-arbx` only matched the manual deploy.yml, so a
+  # nginx reload could race a real deploy. cancel-in-progress stays false: a
+  # half-finished deploy must not be killed by an nginx push, nor the reverse.
+  group: production-vps
   cancel-in-progress: false
 
 jobs:
@@ -55,6 +73,13 @@ jobs:
     steps:
       - name: "Guard de confirmación (alcanzable: sin `if` en el job)"
         run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            # Automatic trigger: no human to type SYNC. The reconciliation guards
+            # below (class-checked install, nginx -t, backup + rollback, reload
+            # only on change) are what make auto-apply safe.
+            echo "confirm=SYNC (push) · mode=aplicar"
+            exit 0
+          fi
           if [ "${{ inputs.confirm }}" != "SYNC" ]; then
             echo "::error::confirm debe ser SYNC (recibido: '${{ inputs.confirm }}')"
             exit 1
@@ -127,7 +152,7 @@ jobs:
           cat /tmp/nginx-evidence/antes.txt
 
       - name: "Aplicar (canónico sólo si el delta es el drift; si no, comentar en sitio)"
-        if: ${{ inputs.mode == 'aplicar' }}
+        if: ${{ github.event_name == 'push' || inputs.mode == 'aplicar' }}
         run: |
           STAGE="/tmp/nginx-canon-${{ github.run_id }}"
           ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" \

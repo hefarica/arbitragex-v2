@@ -16,12 +16,29 @@ import urllib.parse
 import urllib.request
 
 
-def assess(runs, sha, repository, required):
+def assess(runs, sha, repository, required, event="push"):
+    """Collect the latest run per workflow for `sha`.
+
+    `event="push"` (default) is the DEPLOY-GATE semantics: only main pushes count
+    as the same-SHA validation set.
+
+    `event=None` selects by the SHA alone — the invariant that actually matters
+    for EVIDENCE (`run.head_sha == deploy.sha`). Gating on `event=push` for
+    evidence is a proxy: a `workflow_dispatch` on the exact SHA produces equally
+    valid, commit-bound evidence, and excluding it left the readiness publication
+    with no evidence whenever the deployed SHA's push didn't touch the workflow's
+    `paths:` (2026-10-18: a manual dispatch registered `unit_tests`/`dep_tree`
+    while the deploy still reported "No simulator evidence run for this SHA").
+    """
     latest = {}
     for run in runs:
-        if (run.get("head_sha") != sha or run.get("event") != "push"
-                or run.get("head_branch") != "main"
-                or run.get("repository", {}).get("full_name") != repository):
+        if run.get("head_sha") != sha:
+            continue
+        if event is not None and run.get("event") != event:
+            continue
+        if event is not None and run.get("head_branch") != "main":
+            continue
+        if run.get("repository", {}).get("full_name") != repository:
             continue
         path = run.get("path", "")
         if not path.startswith(".github/workflows/"):
@@ -55,11 +72,15 @@ def api(path):
         return json.load(response)
 
 
-def fetch_runs(repository, sha):
+def fetch_runs(repository, sha, event="push"):
+    """Runs for `sha`. `event=None` drops the event/branch filters (SHA invariant)."""
     runs = []
     for page in range(1, 11):
-        query = urllib.parse.urlencode({"head_sha": sha, "event": "push",
-                                      "branch": "main", "per_page": 100, "page": page})
+        params = {"head_sha": sha, "per_page": 100, "page": page}
+        if event is not None:
+            params["event"] = event
+            params["branch"] = "main"
+        query = urllib.parse.urlencode(params)
         data = api(f"repos/{repository}/actions/runs?{query}")
         batch = data["workflow_runs"]
         runs.extend(batch)
