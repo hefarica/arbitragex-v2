@@ -37,6 +37,29 @@ use std::cmp::Ordering;
 /// `01_CONFIG!B13` (Min_Net_bps) — cross-pinned to `CanonicalKnobs::min_net_bps`.
 pub const DEFAULT_MIN_NET_BPS: f64 = 5.0;
 
+/// Sheet-07 column Q (`BuilderTip`) — the relay bribe. The policy is the SAME
+/// one the API simulator published (`relayFeeUsd`): Ethereum mainnet only,
+/// `max(gross × 5 %, $0.50)`. L2 inclusion is deterministic → 0.0.
+///
+/// C-06 (2026-10-19): this component used to live ONLY in the dashboard
+/// simulator. A cost that exists in one ladder and not the other produces
+/// rows the kernel admits and the simulator kills — the two figures were
+/// 0.50930 USD apart on a 1 USDC row. The relay is now INSIDE the kernel's
+/// sheet-07 columns, so both sides can publish one cost truth.
+pub const RELAY_FEE_PCT: f64 = 0.05;
+pub const RELAY_FEE_FLOOR_USD: f64 = 0.50;
+/// The only chain with a non-deterministic inclusion path (relay bribe).
+pub const RELAY_CHAIN_ETHEREUM_MAINNET: u64 = 1;
+
+/// Relay bribe for one attempt, in USD. Mirrors the api-server's `relayFeeUsd`
+/// exactly (same constants, same floor) so the two ladders cannot drift.
+pub fn relay_fee_usd(chain_id: u64, gross_usd: f64) -> f64 {
+    if chain_id != RELAY_CHAIN_ETHEREUM_MAINNET {
+        return 0.0;
+    }
+    (gross_usd * RELAY_FEE_PCT).max(RELAY_FEE_FLOOR_USD)
+}
+
 /// The sheet-07 cost/economics columns for ONE evaluated route under ONE
 /// financing mode. All USD. Built by the sizing kernel, which has every
 /// component in scope at its sized sites.
@@ -51,7 +74,7 @@ pub struct RouteNetEconomics {
     pub gas_usd: f64,
     /// P — FlashFee (USD), from `financing` (ARBX-0007 mode pricing).
     pub flash_fee_usd: f64,
-    /// Q — BuilderTip (USD). 0.0 until a bid path exists (see module docs).
+    /// Q — BuilderTip (USD) = relay bribe, [`relay_fee_usd`] (mainnet only).
     pub builder_tip_usd: f64,
     /// R — OtherCost (USD) = `ops_overhead_usd_per_attempt`.
     pub other_cost_usd: f64,
@@ -79,6 +102,7 @@ impl RouteNetEconomics {
     /// `net_profit_usd()` uses the same components — agreement with the
     /// kernel's `net_usd` holds to float associativity (≤ ~1e-12 relative).
     pub fn from_kernel(
+        chain_id: u64,
         start_amount_usd: f64,
         gross_over_input_usd: f64,
         gas_usd: f64,
@@ -92,7 +116,9 @@ impl RouteNetEconomics {
             gross_over_input_usd,
             gas_usd,
             flash_fee_usd,
-            builder_tip_usd: 0.0,
+            // C-06: the relay bribe is a REAL cost on mainnet, not a 0.0
+            // placeholder. It is the sheet-07 BuilderTip column.
+            builder_tip_usd: relay_fee_usd(chain_id, gross_over_input_usd),
             other_cost_usd,
         }
     }
@@ -360,21 +386,45 @@ mod tests {
     #[test]
     fn from_kernel_fee_policy_matches_financing_selected_mode() {
         // Flash-backed: borrow = start ⇒ fee = start * 5 bps (Aave policy).
-        let flash = RouteNetEconomics::from_kernel(12_345.6, 100.0, 7.0, 2.0, 12_345.6);
+        let flash = RouteNetEconomics::from_kernel(1, 12_345.6, 100.0, 7.0, 2.0, 12_345.6);
         let fee = 12_345.6 * crate::financing::FinancingMode::AaveFlashLoan.fee_bps() / 10_000.0;
         assert_eq!(flash.flash_fee_usd, fee);
-        assert_eq!(flash.builder_tip_usd, 0.0);
-        let kernel_net = 100.0 - 7.0 - 2.0 - fee;
+        // C-06: mainnet carries the relay bribe inside the kernel (5 % of
+        // gross, $0.50 floor). It is a cost, not a placeholder.
+        assert_eq!(flash.builder_tip_usd, relay_fee_usd(1, 100.0));
+        assert_eq!(flash.builder_tip_usd, 5.0);
+        let kernel_net = 100.0 - 7.0 - 2.0 - fee - flash.builder_tip_usd;
         assert!(
             (flash.net_profit_usd() - kernel_net).abs() < 1e-9,
             "flash.net_profit={} kernel_net={}",
             flash.net_profit_usd(),
             kernel_net
         );
-        // Own capital: borrow = 0 ⇒ no fee (exact here: no fee subtraction).
-        let own = RouteNetEconomics::from_kernel(1_000.0, 10.0, 2.0, 1.0, 0.0);
+        // Own capital on an L2: borrow = 0 ⇒ no fee; deterministic inclusion
+        // ⇒ no relay bribe either. The ladder is exactly gross − gas − other.
+        let own = RouteNetEconomics::from_kernel(8453, 1_000.0, 10.0, 2.0, 1.0, 0.0);
         assert_eq!(own.flash_fee_usd, 0.0);
+        assert_eq!(own.builder_tip_usd, 0.0);
         assert!((own.net_profit_usd() - 7.0).abs() < 1e-12);
+    }
+
+    /// C-06 anchor — the live 1 USDC row (`32c3eba2…`, 2026-10-18T20:49Z).
+    /// The kernel's sheet-07 ladder with the relay inside must be the ONE
+    /// figure the dashboard simulator publishes; before this change the sim
+    /// added 0.50930 USD of components that exist only there.
+    #[test]
+    fn c06_live_usdc_row_ladder_includes_the_relay() {
+        let gas = 0.585_960_349_999_999_9_f64;
+        let ops = 0.01_f64;
+        let gross = -1.160_783_833_939_809_1e-11_f64;
+        // Own capital at engine altitude (borrow = 0) → no flash fee.
+        let e = RouteNetEconomics::from_kernel(1, 0.999_772_000_806_000_1, gross, gas, ops, 0.0);
+        assert_eq!(e.flash_fee_usd, 0.0);
+        assert_eq!(e.builder_tip_usd, 0.5);
+        let total = e.gas_usd + e.flash_fee_usd + e.builder_tip_usd + e.other_cost_usd;
+        assert!((total - 1.095_960_35).abs() < 1e-12);
+        assert!((e.net_profit_usd() - (gross - total)).abs() < 1e-12);
+        assert!((e.net_profit_usd() - -1.095_960_350_011_607_7).abs() < 1e-9);
     }
 
     /// The standalone comparator and `rank_by_net_bps` are one order — callers

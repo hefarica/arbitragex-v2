@@ -410,6 +410,7 @@ pub fn economics_from_measured_gross(
         0.0
     };
     let net_economics = crate::net_bps_ranking::RouteNetEconomics::from_kernel(
+        candidate.opportunity.chain_id,
         amount_in_usd,
         gross_profit_usd,
         gas_usd,

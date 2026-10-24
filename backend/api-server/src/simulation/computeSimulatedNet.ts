@@ -43,6 +43,27 @@ export interface SimulatorRow {
   token_in: string;
   token_in_symbol: string | null;
   token_in_decimals: number | null;
+  /**
+   * C-06 (2026-10-19) — the kernel's CLOSED cost object (migration 126,
+   * `opportunities.economics`). When present and `computed`, it IS the one
+   * cost truth: the simulator must not rebuild a second ladder that adds
+   * components the kernel never charged (lp fees and slippage are already
+   * inside the measured gross; the relay bribe is in the kernel's
+   * BuilderTip). Absent on pre-126 rows — those keep the legacy ladder and
+   * say so in `notes`.
+   */
+  economics?: KernelEconomics | null;
+}
+
+/** The subset of `opportunities.economics` this module consumes. */
+export interface KernelEconomics {
+  computation_status?: string | null;
+  gas_usd?: number | null;
+  flash_fee_usd?: number | null;
+  bribe_usd?: number | null;
+  other_costs_usd?: number | null;
+  total_cost_usd?: number | null;
+  net_profit_usd?: number | null;
 }
 
 // ── Outputs ─────────────────────────────────────────────────────────────────
@@ -88,6 +109,10 @@ export interface SimulationResult {
   costs_total_usd: number;
   source: "simulation";
   notes: string[];
+}
+
+function isFiniteNumber(v: unknown): v is number {
+  return typeof v === "number" && Number.isFinite(v);
 }
 
 /**
@@ -319,6 +344,72 @@ export function forwardSimulate(
   }
 
   const notes: string[] = [];
+
+  // ── C-06 · ONE COST TRUTH ────────────────────────────────────────────────
+  // When the kernel closed the arithmetic for this row, that object is the
+  // ladder. Recomputing costs here is what produced two prices for one trade:
+  // on the live 1 USDC row (32c3eba2…, 2026-10-18T20:49Z) the simulator added
+  // 0.50930 USD of components that exist ONLY in this file (lp 0.003,
+  // slippage 0.005, failure 0.0004, flash 0.0009, relay 0.50) on top of a
+  // gross that the engine had already measured post-fee and post-impact.
+  // The deterministic columns are the kernel's four: gas, flash, relay
+  // (BuilderTip), ops. No component may exist in one ladder and not the other.
+  const kernel = row.economics;
+  if (
+    kernel &&
+    kernel.computation_status === "computed" &&
+    isFiniteNumber(kernel.gas_usd) &&
+    isFiniteNumber(kernel.flash_fee_usd) &&
+    isFiniteNumber(kernel.bribe_usd) &&
+    isFiniteNumber(kernel.other_costs_usd)
+  ) {
+    const cost_breakdown: SimulatedCostBreakdown = {
+      gas_usd: kernel.gas_usd,
+      // Included in the measured gross by the AMM curve — never a second
+      // charge (the kernel declares them with these exact reasons).
+      lp_fees_usd: 0,
+      slippage_usd: 0,
+      // Probabilistic/opportunity proxies outside sheet-07: they are risk,
+      // not a deterministic cost, and the kernel does not charge them.
+      failure_buffer_usd: 0,
+      copied_buffer_usd: 0,
+      capital_cost_usd: 0,
+      ops_overhead_usd: kernel.other_costs_usd,
+      flashloan_fee_usd: kernel.flash_fee_usd,
+      relay_fee_usd: kernel.bribe_usd,
+    };
+    const sum = costsTotalUsd(cost_breakdown);
+    // R8 fail-honest: a kernel whose total disagrees with its own components
+    // is not a closed ladder — publish nothing rather than a third figure.
+    if (isFiniteNumber(kernel.total_cost_usd) && Math.abs(kernel.total_cost_usd - sum) > 1e-6) {
+      return null;
+    }
+    const costs_total_usd = isFiniteNumber(kernel.total_cost_usd) ? kernel.total_cost_usd : sum;
+    const net_usd = isFiniteNumber(kernel.net_profit_usd)
+      ? kernel.net_profit_usd
+      : grossUsd - costs_total_usd;
+    notes.push(
+      "kernel-economics-ssot",
+      "lp-fee=included-in-measured-gross",
+      "slippage=priced-by-amm-curve",
+      "basis=amount_in_wei",
+    );
+    const roi_pct = amountInUsdVal > 0 ? (net_usd / amountInUsdVal) * 100 : 0;
+    return {
+      amount_in_usd: amountInUsdVal,
+      gross_usd: grossUsd,
+      net_usd,
+      roi_pct,
+      cost_breakdown,
+      costs_total_usd,
+      source: "simulation",
+      notes,
+    };
+  }
+
+  // Legacy ladder (pre-126 rows / rows whose economics is not `computed`).
+  // Declared as such: it is NOT the kernel's arithmetic.
+  notes.push("kernel-economics-absent-legacy-ladder");
 
   // Component 1: gas
   const gas_usd = gasCostUsd(cfg);
