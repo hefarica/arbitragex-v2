@@ -143,11 +143,39 @@ jobs:
             "export DEPLOY_PATH=$(printf %q "$REMOTE_PATH"); export TARGET_SHA=$(printf %q "$TARGET_SHA"); export DEPLOY_RUN_ID=$(printf %q "$DEPLOY_RUN_ID"); bash -s" <<'EOF'
           set -euo pipefail
 
+          # ── VPS-DEPLOY-GUARD (a): teardown del watchdog de disco ────────────
+          # INCIDENTE MEDIDO (2026-10-24 14:08Z): el watchdog del suelo de disco
+          # del paso [6/9] corre como `( while true; … sleep 15 ) &`. Si el script
+          # sale ANTES del `kill` del camino feliz (build que falla, compose que
+          # aborta, `exit` de un guard), el subshell queda HUÉRFANO y HEREDA los
+          # pipes del `ssh`: el runner nunca ve EOF y el job se CUELGA hasta el
+          # timeout (120 min) en vez de fallar rápido (2 intentos colgados).
+          # Esta limpieza se llama desde deploy_completion_guard, que es la
+          # función por la que TERMINAN los dos `trap … EXIT` del script
+          # (el temprano y el de deploy_self_heal), así que también corre en
+          # toda salida temprana.
+          DISK_FLOOR_PID=""
+          stop_disk_floor_watchdog() {
+            [ -n "${DISK_FLOOR_PID:-}" ] || return 0
+            if kill -0 "$DISK_FLOOR_PID" 2>/dev/null; then
+              echo "::warning::Deploy salió con el watchdog de disco VIVO (pid ${DISK_FLOOR_PID}) — matándolo para liberar los pipes del ssh (VPS-DEPLOY-GUARD)"
+              kill -TERM "$DISK_FLOOR_PID" 2>/dev/null || true
+              for _ in 1 2 3 4 5 6 7 8 9 10; do
+                kill -0 "$DISK_FLOOR_PID" 2>/dev/null || break
+                sleep 0.2
+              done
+              kill -KILL "$DISK_FLOOR_PID" 2>/dev/null || true
+            fi
+            wait "$DISK_FLOOR_PID" 2>/dev/null || true
+            DISK_FLOOR_PID=""
+          }
+
           # EX-01: EOF or an early exit 0 is not a completed deployment.
           DEPLOY_POSTCHECK_COMPLETE=0
           deploy_completion_guard() {
             local rc="${1:-$?}"
             trap - EXIT
+            stop_disk_floor_watchdog
             if [ "$rc" -eq 0 ] && [ "$DEPLOY_POSTCHECK_COMPLETE" != "1" ]; then
               echo "::error::Deploy stopped before mandatory final verification"
               rc=1
@@ -155,6 +183,92 @@ jobs:
             exit "$rc"
           }
           trap deploy_completion_guard EXIT
+
+          # ── VPS-DEPLOY-GUARD (b): el árbol de deploy DEBE ser el SHA ────────
+          # INCIDENTE MEDIDO (2026-10-24 14:08Z): un fichero NO trackeado
+          # (backend/api-server/src/routes/internal-am.ts, sha256 9476187b…)
+          # vivía en el árbol, `git reset --hard` NO lo borra (untracked), entró
+          # al contexto Docker, importaba `requireBearerToken` (inexistente en
+          # @arbx/shared) y rompió el `tsc` del api-server ⇒ build abortado ~30
+          # min con un rojo que culpaba al SHA (que estaba verde en CI).
+          # Segunda variante del mismo mal: un fichero TRACKEADO sucio es
+          # DESTRUIDO en silencio por el `git reset --hard` de [2/9].
+          # El guard corre dos veces — antes del reset y tras anclar el SHA — y
+          # aborta ANTES de cualquier `docker compose`, con la ruta exacta y el
+          # procedimiento REVERSIBLE de cuarentena
+          # (docs/ops/DEPLOY_TREE_GUARD.md).
+          # Escape de emergencia: ARBX_DEPLOY_TREE_GUARD=warn (loguea ::warning::
+          # y CONTINÚA: deja el deploy NO reproducible por el SHA, con traza).
+          DEPLOY_TREE_GUARD_MODE="${ARBX_DEPLOY_TREE_GUARD:-enforce}"
+          # Allowlist de las 11 entradas UNTRACKED de infraestructura MEDIDAS en
+          # /opt/arbitragex-v2 el 2026-10-24 (backups/prefijos preexistentes, NO
+          # forman parte del deploy). Añadir una entrada es decisión de operador y
+          # debe justificarse en docs/ops/DEPLOY_TREE_GUARD.md;
+          # scripts/ci/test_deploy_tree_guard.py falla si diverge del doc.
+          DEPLOY_TREE_ALLOW_UNTRACKED=(
+            ".secrets/"
+            "archives/"
+            "docker/compose.dev.yml.pre-f1-20261018"
+            "docker/compose.prod.yml.pre-r2.1792813353"
+            "monitoring/alertmanager/alertmanager.yml.pre-r2.1792813353"
+            "scripts/disk_guard.sh.pre-guard02-20261018"
+            "scripts/gsim1_variance_export.sql.bak"
+            "scripts/pg_retention.sh.pre-f1p-20261018"
+            "scripts/pg_retention.sh.pre-fk02-20261018"
+            "scripts/pg_retention.sh.pre-part03-20261018"
+            "scripts/price_seeder.sh.pre-pull-20260930T104945Z"
+          )
+          deploy_tree_guard() {
+            local phase="${1:-pre-anchor}"
+            local mode="${DEPLOY_TREE_GUARD_MODE:-enforce}"
+            local line kind path entry allowed offenders=""
+            # -uall: cada fichero untracked se lista con su RUTA COMPLETA (así el
+            # mensaje nombra el fichero del incidente, no su directorio padre) y la
+            # allowlist puede casar prefijos de directorio ("archives/") sin perder
+            # precisión para los ficheros sueltos.
+            while IFS= read -r line; do
+              [ -z "$line" ] && continue
+              kind="${line:0:2}"
+              path="${line:3}"
+              if [ "$kind" = "??" ]; then
+                allowed=0
+                for entry in "${DEPLOY_TREE_ALLOW_UNTRACKED[@]}"; do
+                  if [ "${entry%/}" = "$entry" ]; then
+                    if [ "$path" = "$entry" ]; then allowed=1; break; fi
+                  else
+                    case "$path" in
+                      "$entry"*) allowed=1; break ;;
+                    esac
+                  fi
+                done
+                [ "$allowed" = "1" ] && continue
+                offenders="${offenders}  UNTRACKED  ${path}"$'\n'
+              else
+                offenders="${offenders}  DIRTY      ${path}  (${kind})"$'\n'
+              fi
+            done < <(git status --porcelain=v1 --untracked-files=all 2>/dev/null || true)
+
+            if [ -z "$offenders" ]; then
+              echo "[tree-guard:${phase}] OK — árbol de deploy limpio (0 trackeados sucios, 0 untracked fuera de la allowlist)"
+              return 0
+            fi
+            echo "::error::DEPLOY-TREE-GUARD (${phase}): el árbol de deploy NO es el SHA — hay trabajo local que entraría al contexto Docker y rompería el build (o que el reset --hard destruiría)."
+            printf '%s' "$offenders"
+            echo "  HEAD=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)  path=$(pwd)"
+            echo "  PROCEDIMIENTO REVERSIBLE (docs/ops/DEPLOY_TREE_GUARD.md):"
+            echo "    1) inspeccionar: git -C $(pwd) diff -- <ruta-trackeada>   |   cat <ruta-untracked>"
+            echo "    2) cuarentena:   install -d -m 700 /root/arbx-quarantine"
+            echo "                     TS=\$(date -u +%Y-%m-%dT%H%MZ)"
+            echo "                     for f in <rutas>; do mv \"\$f\" \"/root/arbx-quarantine/\$(basename \"\$f\").\$TS\"; done"
+            echo "    3) deshacer:     mv /root/arbx-quarantine/<nombre>.<TS> <ruta original>   (la cuarentena NO borra nada)"
+            echo "    4) si el trabajo es legítimo: commitear en una rama y mergear — el árbol de producción NO es un workspace"
+            echo "    emergencia:      ARBX_DEPLOY_TREE_GUARD=warn  (deja el deploy NO reproducible; queda traza en el log)"
+            if [ "$mode" = "warn" ]; then
+              echo "::warning::DEPLOY-TREE-GUARD en modo warn: se CONTINÚA con el árbol sucio — deploy no reproducible por el SHA"
+              return 0
+            fi
+            return 1
+          }
 
           echo "[0/9] Entering deploy path: ${DEPLOY_PATH}"
           if [ ! -d "$DEPLOY_PATH" ]; then
@@ -356,6 +470,9 @@ jobs:
           fi
 
           echo "[2/9] Fetching + anchoring to target SHA (BEFORE compose ops)..."
+          # VPS-DEPLOY-GUARD (b): ANTES del reset — aquí se ve el trabajo local que
+          # el `git reset --hard` destruiría y el untracked que entraría al build.
+          deploy_tree_guard pre-anchor
           # Must land compose.prod.yml on disk before any `docker compose -f` call.
           # Prefer `github` remote if present (origin may be a stale VPS bare mirror).
           if git remote get-url github >/dev/null 2>&1; then
@@ -399,6 +516,10 @@ jobs:
             exit 1
           fi
           echo "HEAD=$(git rev-parse --short HEAD) $(git log -1 --oneline)"
+          # VPS-DEPLOY-GUARD (b): DESPUÉS del ancla — cualquier untracked que haya
+          # sobrevivido al reset (el reset NO borra untracked) aborta AQUÍ, no
+          # 30 minutos más tarde dentro del build.
+          deploy_tree_guard post-anchor
 
           if [ ! -f "$COMPOSE_FILE" ]; then
             echo "ERROR: $COMPOSE_FILE missing after git reset at $(pwd)"
@@ -529,8 +650,7 @@ jobs:
                          recon selector-api anvil math-engine token-enricher socket-proxy; do
             docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" build --no-cache "$service"
           done
-          kill "$DISK_FLOOR_PID" 2>/dev/null || true
-          wait "$DISK_FLOOR_PID" 2>/dev/null || true
+          stop_disk_floor_watchdog
           echo "    build completo; libre=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')GB"
 
           echo "[7/9] Starting stack (infra + hot-path + operator plane + observability + minio/vault)..."
