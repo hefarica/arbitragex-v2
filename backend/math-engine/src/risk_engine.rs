@@ -244,7 +244,7 @@ pub fn stoploss_guard(
                         | ExitReason::Liquidation
                 )
                 && t.profit_ratio < params.profit_limit
-                && pair_filter.map_or(true, |p| t.pair == p)
+                && pair_filter.is_none_or(|p| t.pair == p)
         })
         .collect();
     if qualifying.len() < params.trade_limit {
@@ -521,7 +521,7 @@ mod rea_08_falsifiers {
                         | ExitReason::StoplossOnExchange
                         | ExitReason::Liquidation
                 ) && t.profit_ratio < params.profit_limit
-                    && pair_filter.map_or(true, |p| t.pair == p)
+                    && pair_filter.is_none_or(|p| t.pair == p)
             })
             .collect();
         if qualifying.len() < params.trade_limit {
@@ -554,7 +554,7 @@ mod rea_08_falsifiers {
                             | ExitReason::Liquidation
                     )
                     && t.profit_ratio < params.profit_limit
-                    && pair_filter.map_or(true, |p| t.pair == p)
+                    && pair_filter.is_none_or(|p| t.pair == p)
             })
             .collect();
         if qualifying.len() < params.trade_limit {
