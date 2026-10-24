@@ -554,7 +554,7 @@ export const ContractDescriptor: RegistryDescriptor<ZodTypeAny> = {
     verified: z.boolean().default(false),
     enabled: z.boolean().default(true),
     status: z.enum(["active","paused","blocked","pending_validation","deprecated"]).default("pending_validation"),
-    metadata: z.record(z.unknown()).default({}),
+    metadata: z.record(z.string(), z.unknown()).default({}),
   }),
 };
 

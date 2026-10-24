@@ -265,7 +265,7 @@ export const OpportunityListItemSchema = z.object({
   // eth_call. Keyed by lowercased address; only resolved addresses present.
   // Optional — legacy payloads lack it and the client falls back honestly
   // to shortAddr (R8: no fabrication).
-  leg_symbols: z.record(z.string()).nullable().optional(),
+  leg_symbols: z.record(z.string(), z.string()).nullable().optional(),
   amount_in_wei: BigIntStr,
   expected_profit_usd: z.number().nullable(),
   roi_pct: z.number().nullable(),
