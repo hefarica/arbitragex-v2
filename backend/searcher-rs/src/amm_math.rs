@@ -2563,10 +2563,7 @@ mod rea_v3_math_tests {
     fn rea_03_amount_deltas_upstream_vectors_byte_exact() {
         // getAmount0Delta: '90909090909090910', roundDown = amount - 1
         let amount0_up = v3_get_amount0_delta(q96(), sqrt_121_100(), e18(), true).unwrap();
-        assert_eq!(
-            amount0_up,
-            U256::from_dec_str("90909090909090910").unwrap()
-        );
+        assert_eq!(amount0_up, U256::from_dec_str("90909090909090910").unwrap());
         let amount0_down = v3_get_amount0_delta(q96(), sqrt_121_100(), e18(), false).unwrap();
         assert_eq!(amount0_down, amount0_up - U256::one());
 
