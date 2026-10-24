@@ -792,18 +792,24 @@ export function resolveTokens(
   );
 }
 
-/** PC-07: Top-N preset ranking (TVL on-chain × torre de precios + reglas anti-rug). */
+/**
+ * PC-07: Top-N preset ranking + reglas anti-rug.
+ * D5 (2026-10-21): `rankBy="volume_24h"` orders by measured 24h traded volume
+ * (`token_validations.volume_24h_usd`) instead of on-chain pool value.
+ */
 export function getTopTokens(
   chainId: number,
   limit: number,
   window: "current" | "24h",
   rules: readonly string[],
+  rankBy: "tvl" | "volume_24h" = "tvl",
 ): Promise<Result<FE.TokenTopResponse>> {
   const qs = new URLSearchParams({
     chain_id: String(chainId),
     limit: String(limit),
     window,
     rules: rules.join(","),
+    rank_by: rankBy,
   });
   return getValidated(`/api/tokens/top?${qs.toString()}`, FE.TokenTopResponseSchema);
 }

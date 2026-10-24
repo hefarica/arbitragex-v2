@@ -78,6 +78,32 @@ const STATUS_VARIANT: Record<TokenResolvePreviewRow["resolution_status"], "secon
   UNSUPPORTED: "outline",
 };
 
+
+/**
+ * Write lock (contract decision 3, ratified 2026-10-21): saving an allowlist is
+ * a WRITE; it is refused when the selection is not computed or when no rule has
+ * a verifiable population. The banner names WHICH condition — a disabled button
+ * with no reason sends the operator looking for a bypass.
+ */
+export function writeLockReason(
+  gate: { allowed: boolean; reasons: string[] } | null,
+): string | null {
+  if (gate === null || gate.allowed) return null;
+  const parts: string[] = [];
+  if (gate.reasons.includes("selection_not_computed")) {
+    parts.push("la selección no es computable (sin frescura de volumen)");
+  }
+  if (gate.reasons.includes("no_rules_applied")) {
+    parts.push("no hay reglas anti-rug aplicadas");
+  }
+  if (gate.reasons.includes("no_verified_rule_population")) {
+    parts.push("ninguna regla anti-rug tiene población verificable");
+  }
+  return parts.length > 0
+    ? `Guardado bloqueado: ${parts.join(" · ")}.`
+    : "Guardado bloqueado.";
+}
+
 interface Props {
   config: TradingConfigConfigured;
   onSaved: (next: TradingConfigConfigured) => void;
@@ -117,6 +143,10 @@ export function TokenAllowlistTab({ config, onSaved, adminToken, actor }: Props)
   // universe-wide per operator doctrine 2026-09-19).
   const [topLimit, setTopLimit] = useState<(typeof TOP_LIMITS)[number]>(20);
   const [topWindow, setTopWindow] = useState<"current" | "24h">("current");
+  // D5 (2026-10-21): the operator's census is filled by 24h traded VOLUME, not
+  // by pool value — pool value ranks where capital sits, volume ranks where it
+  // trades, and only the second one has arbitrage behind it.
+  const [topRankBy, setTopRankBy] = useState<"tvl" | "volume_24h">("volume_24h");
   const [rugRules, setRugRules] = useState<Set<RugRuleId>>(new Set(RUG_RULE_CATALOG.map((r) => r.id)));
   const [topResult, setTopResult] = useState<TokenTopResponse | null>(null);
   const [topLoading, setTopLoading] = useState(false);
@@ -133,7 +163,7 @@ export function TokenAllowlistTab({ config, onSaved, adminToken, actor }: Props)
   const onLoadTop = async () => {
     setTopLoading(true);
     setTopError(null);
-    const res = await getTopTokens(config.chain_id, topLimit, topWindow, [...rugRules]);
+    const res = await getTopTokens(config.chain_id, topLimit, topWindow, [...rugRules], topRankBy);
     setTopLoading(false);
     if (res.ok) {
       setTopResult(res.data);
@@ -187,6 +217,8 @@ export function TokenAllowlistTab({ config, onSaved, adminToken, actor }: Props)
     (preview ?? []).map((r) => [r.input_symbol.toUpperCase(), r.resolution_status]),
   );
   const blocked = unresolvedSymbols(symbols, preview);
+  // Cerrojo de escritura: la selección servida manda sobre el guardado.
+  const writeLock = writeLockReason(topResult?.save_gate ?? null);
 
   const onSave = async () => {
     if (!hasAdminSession()) {
@@ -274,10 +306,22 @@ export function TokenAllowlistTab({ config, onSaved, adminToken, actor }: Props)
             >
               {resolving ? "Resolving…" : "Resolve"}
             </Button>
-            <Button onClick={onSave} disabled={saving || !hasSession} className="ml-auto" title={!hasSession ? "Admin session required — open /killswitch first" : undefined}>
+            <Button
+              onClick={onSave}
+              disabled={saving || !hasSession || writeLock !== null}
+              className="ml-auto"
+              title={
+                !hasSession
+                  ? "Admin session required — open /killswitch first"
+                  : writeLock ?? undefined
+              }
+            >
               {saving ? "Saving…" : "Save changes"}
             </Button>
           </div>
+          {writeLock !== null && (
+            <p className="text-xs text-warning font-mono" role="status">{writeLock}</p>
+          )}
           {msg && <p className="text-xs text-muted-foreground font-mono">{msg}</p>}
           {saveAck.version !== null && (
             <UniverseSaveCoherency
@@ -302,6 +346,8 @@ export function TokenAllowlistTab({ config, onSaved, adminToken, actor }: Props)
         setTopLimit={setTopLimit}
         topWindow={topWindow}
         setTopWindow={setTopWindow}
+        topRankBy={topRankBy}
+        setTopRankBy={setTopRankBy}
         rugRules={rugRules}
         toggleRugRule={toggleRugRule}
         onLoadTop={() => void onLoadTop()}
@@ -332,6 +378,8 @@ export function TopPresetMenu({
   setTopLimit,
   topWindow,
   setTopWindow,
+  topRankBy = "tvl",
+  setTopRankBy = () => {},
   rugRules,
   toggleRugRule,
   onLoadTop,
@@ -344,6 +392,9 @@ export function TopPresetMenu({
   setTopLimit: (n: 20 | 30 | 40 | 100) => void;
   topWindow: "current" | "24h";
   setTopWindow: (w: "current" | "24h") => void;
+  /** D5: ranking basis. Optional so older call sites keep compiling. */
+  topRankBy?: "tvl" | "volume_24h";
+  setTopRankBy?: (r: "tvl" | "volume_24h") => void;
   rugRules: ReadonlySet<RugRuleId>;
   toggleRugRule: (id: RugRuleId) => void;
   onLoadTop: () => void;
@@ -357,7 +408,7 @@ export function TopPresetMenu({
         <CardTitle className="text-base">
           Preset Top-N · filtro de reflejo (PC-07)
           <span className="ml-2 text-sm font-normal text-muted-foreground">
-            ranking = valor on-chain en pools × torre de precios · discovery sigue universo-completo
+            ranking = {topRankBy === "volume_24h" ? "volumen 24h (traded)" : "valor on-chain en pools × torre de precios"} · discovery sigue universo-completo
           </span>
         </CardTitle>
       </CardHeader>
@@ -379,6 +430,21 @@ export function TopPresetMenu({
           </Button>
           <Button variant={topWindow === "24h" ? "default" : "outline"} size="sm" onClick={() => setTopWindow("24h")}>
             Últimas 24 horas
+          </Button>
+          <span className="ml-2 text-xs text-muted-foreground">base del ranking:</span>
+          <Button
+            variant={topRankBy === "volume_24h" ? "default" : "outline"}
+            size="sm"
+            onClick={() => setTopRankBy("volume_24h")}
+          >
+            Volumen 24h
+          </Button>
+          <Button
+            variant={topRankBy === "tvl" ? "default" : "outline"}
+            size="sm"
+            onClick={() => setTopRankBy("tvl")}
+          >
+            TVL on-chain
           </Button>
           <Button size="sm" className="ml-auto" onClick={onLoadTop} disabled={loading}>
             {loading ? "Cargando…" : `Cargar Top ${topLimit} → chips`}
@@ -427,6 +493,7 @@ export function TopPresetMenu({
                   <TableRow className="text-left text-muted-foreground">
                     <TableHead className="font-medium">#</TableHead>
                     <TableHead className="font-medium">Símbolo</TableHead>
+                    <TableHead className="text-right font-medium">Vol 24h USD</TableHead>
                     <TableHead className="text-right font-medium">TVL USD</TableHead>
                     <TableHead className="text-right font-medium">TVL 24h atrás</TableHead>
                     <TableHead className="text-right font-medium">Pools</TableHead>
@@ -443,10 +510,13 @@ export function TopPresetMenu({
                       <TableCell className="font-medium" title={r.address}>
                         {r.symbol ?? DASH}
                       </TableCell>
-                      <TableCell className="text-right tabular-nums">{r.tvl_usd}</TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {r.volume_24h_usd === null ? DASH : Number(r.volume_24h_usd).toLocaleString("en-US", { maximumFractionDigits: 0 })}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">{r.tvl_usd ?? DASH}</TableCell>
                       <TableCell className="text-right tabular-nums">{r.tvl_24h_ago_usd ?? DASH}</TableCell>
                       <TableCell className="text-right tabular-nums">{r.pool_count}</TableCell>
-                      <TableCell className="text-right tabular-nums">{r.safety_score ?? DASH}</TableCell>
+                      <TableCell className="text-right tabular-nums">{r.validation_score ?? DASH}</TableCell>
                       <TableCell>{r.final_status ?? DASH}</TableCell>
                       <TableCell className="text-right tabular-nums">
                         {r.vol_liq_ratio === null ? DASH : r.vol_liq_ratio.toFixed(2)}
