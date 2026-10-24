@@ -819,7 +819,7 @@ mod tests {
         // 0.99980034 USD against a gross of -2367.0172711053206 USD, ROI
         // -236809 % — a 2367x principal loss, which no swap can produce.
         assert!(loss_exceeds_principal_usd(
-            -2367.017_271_105_320_6,
+            -2367.0172711053206,
             0.999_800_34
         ));
         // Control (-): the WHOLE principal gone is the boundary a swap CAN
