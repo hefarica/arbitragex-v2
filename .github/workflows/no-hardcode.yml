@@ -24,6 +24,11 @@ jobs:
           node-version: "20"
       - name: Run no-hardcode lint
         run: bash automation/tools/lint-no-hardcode.sh
+      # The gate's own controls: prove it FAILS on a new violation (C2) and on a
+      # missing/tampered baseline (C3/C4), and passes on the recorded debt (C1).
+      # A gate without a negative control is a virgin gate.
+      - name: Lint gate controls (must fail on a new violation)
+        run: bash automation/tools/test-lint-fail-closed.sh
       - name: Verify dashboard metrics exist
         run: bash automation/tools/verify-dashboard-metrics.sh
       - name: Post-run advice on failure
