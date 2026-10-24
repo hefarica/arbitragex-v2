@@ -222,3 +222,141 @@ mod rea_16_tests {
         assert_eq!(out[2], ArbClassification::Pruned);
     }
 }
+
+// ============================================================================
+// REA-16 falsificadores (skill arbx-rea-brutal F7). Variante ROTA a proposito:
+// la MISMA asercion que valida el port debe matarla. Si el roto pasara, el test
+// no probaria nada. Ejecutados por cargo test y "caen" por diseno.
+// ============================================================================
+#[cfg(test)]
+mod rea_16_falsifiers {
+    use super::*;
+
+    fn addr(seed: u8) -> Address {
+        Address::from([seed; 20])
+    }
+
+    fn transfer(from: Address, to: Address, amount: u64, token: Address) -> Transfer {
+        Transfer {
+            from,
+            to,
+            amount: U256::from(amount),
+            token,
+        }
+    }
+
+    fn pair(seed: u8, closing_amount: u64) -> (MevAction, MevAction) {
+        let token1 = addr(seed);
+        let token2 = addr(seed + 1);
+        let usr = addr(seed + 2);
+        let pool1 = addr(seed + 3);
+        let pool2 = addr(seed + 4);
+        let t1 = Trade {
+            t1: transfer(usr, pool1, 100, token1),
+            t2: transfer(pool1, usr, 200, token2),
+        };
+        let t2 = Trade {
+            t1: transfer(usr, pool2, 200, token2),
+            t2: transfer(pool2, usr, closing_amount, token1),
+        };
+        (MevAction::Trade(t1), MevAction::Trade(t2))
+    }
+
+    /// Variante ROTA: `>=` en vez de `>` (la condicion ESTRICTA del upstream,
+    /// arbitrage.rs:42). Clasifica como arbitraje un par con retorno == gasto.
+    fn broken_reduce_strict_ge(actions: &[MevAction]) -> Vec<ArbClassification> {
+        let mut out = vec![ArbClassification::Kept; actions.len()];
+        for (i, action) in actions.iter().enumerate() {
+            let MevAction::Trade(trade) = action else {
+                continue;
+            };
+            for (j, candidate) in actions.iter().enumerate().skip(i + 1) {
+                if let MevAction::Trade(cand) = candidate {
+                    if cand.t2.token == trade.t1.token {
+                        if cand.t2.amount >= trade.t1.amount {
+                            out[i] = ArbClassification::Arbitrage {
+                                profit: cand.t2.amount.saturating_sub(trade.t1.amount),
+                                token: cand.t2.token,
+                                to: cand.t2.to,
+                            };
+                            for slot in out.iter_mut().take(j + 1).skip(i + 1) {
+                                *slot = ArbClassification::Pruned;
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Variante ROTA: no poda el rango entre los dos trades (upstream :52-73).
+    fn broken_reduce_no_prune(actions: &[MevAction]) -> Vec<ArbClassification> {
+        let mut out = vec![ArbClassification::Kept; actions.len()];
+        for (i, action) in actions.iter().enumerate() {
+            let MevAction::Trade(trade) = action else {
+                continue;
+            };
+            for (j, candidate) in actions.iter().enumerate().skip(i + 1) {
+                if let MevAction::Trade(cand) = candidate {
+                    if cand.t2.token == trade.t1.token {
+                        if cand.t2.amount > trade.t1.amount {
+                            out[i] = ArbClassification::Arbitrage {
+                                profit: cand.t2.amount.saturating_sub(trade.t1.amount),
+                                token: cand.t2.token,
+                                to: cand.t2.to,
+                            };
+                            let _ = j; // ROTO: no prune
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn rea_16_falsifier_strict_profit_bites() {
+        // Retorno IGUAL al gasto: el port correcto NO clasifica (Kept/Kept).
+        let (a, b) = pair(0x41, 100);
+        let actions = vec![a, b];
+        let correct = reduce_arbitrages(&actions);
+        assert_eq!(
+            correct,
+            vec![ArbClassification::Kept, ArbClassification::Kept],
+            "la condicion del upstream es ESTRICTA (la asercion que el roto viola)"
+        );
+        let broken = broken_reduce_strict_ge(&actions);
+        assert!(
+            matches!(broken[0], ArbClassification::Arbitrage { ref profit, .. } if profit.is_zero()),
+            "la variante rota clasifica un no-arb; la asercion de arriba lo mata => muerde"
+        );
+        assert_ne!(
+            broken, correct,
+            "si el roto pasara, el test no probaria nada"
+        );
+    }
+
+    #[test]
+    fn rea_16_falsifier_prune_range_bites() {
+        // Vector upstream (retorno 110 > gasto 100): correcto [Arb, Pruned].
+        let (a, b) = pair(0x51, 110);
+        let actions = vec![a, b];
+        let correct = reduce_arbitrages(&actions);
+        assert!(matches!(correct[0], ArbClassification::Arbitrage { .. }));
+        assert_eq!(correct[1], ArbClassification::Pruned);
+        let broken = broken_reduce_no_prune(&actions);
+        assert!(matches!(broken[0], ArbClassification::Arbitrage { .. }));
+        assert_eq!(
+            broken[1],
+            ArbClassification::Kept,
+            "la variante sin prune deja el closing trade como accion independiente"
+        );
+        assert_ne!(
+            broken, correct,
+            "si el roto pasara, el test no probaria nada"
+        );
+    }
+}
