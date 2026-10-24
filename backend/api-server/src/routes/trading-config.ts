@@ -533,11 +533,21 @@ export function buildTradingConfigRouter(deps: Deps): Router {
       } catch {
         // absent/unreadable counter stays null — honest absence
       }
+      const state = rowToRedisState(q.rows[0]!);
+      // §6 of the token-selection contract (decision 1, PR #1004): the base
+      // price in this row is the OPERATOR'S CONFIGURED value, not a measured
+      // price. Served as `base_token_price_usd` it read like a quote — on
+      // 42161/8453 it is a round 3000.0000 constant while chain 1 moves. It is
+      // now labelled: `configured_base_price_usd` + an explicit source. The
+      // legacy field stays one window so the edit form keeps round-tripping;
+      // it is documented as configured, never measured.
       res.status(200).json({
         chain_id: chainId,
         configured: true,
         universe_version: universeVersion,
-        ...rowToRedisState(q.rows[0]!),
+        ...state,
+        configured_base_price_usd: Number(q.rows[0]!.base_token_price_usd),
+        base_token_price_source: "operator_configured",
       });
     } catch (e) {
       deps.logger.warn({ event: "trading_config.read_failed", err: (e as Error).message });
