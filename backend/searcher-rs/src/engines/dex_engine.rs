@@ -181,6 +181,31 @@ fn measured_cycle_output(outcome: &V3GrossOutcome, probe_amount: U256) -> Option
     }
 }
 
+/// INSTRUMENT-GAP-01 (2026-10-24): does this measured loss EXCEED the whole
+/// principal?
+///
+/// A round trip can lose at most everything it put in (`amount_out == 0` keeps
+/// `gross == -amount_in_usd`); a swap cannot return a negative amount. When the
+/// measured gross is below `-amount_in_usd`, the return leg was not measured in
+/// the token the loss is priced in — a unit/scale mismatch, not a market state.
+///
+/// Returns `false` whenever the principal cannot be priced: an unpriced probe is
+/// NOT evidence of an impossible loss, and this guard must never silently
+/// reclassify a row it cannot evaluate (R8 — fail-open on absence, fail-closed
+/// on impossibility).
+fn loss_exceeds_principal(
+    gross_usd: f64,
+    probe_amount: U256,
+    token_in: Option<Address>,
+    cfg: Option<&TradingConfigState>,
+) -> bool {
+    let Some(cfg) = cfg else { return false };
+    let Some(amount_in_usd) = probe_amount_in_usd(probe_amount, token_in, cfg) else {
+        return false;
+    };
+    crate::economics::loss_exceeds_principal_usd(gross_usd, amount_in_usd)
+}
+
 /// Engine that converts impacted pool pairs into DEX arb candidates.
 ///
 /// Constructed once at boot and `Arc`-cloned into the orchestrator.
@@ -514,21 +539,52 @@ impl DexEngine {
                     // WETH/USDT-class pairs that ARE priced — the actual causes
                     // were V3 quote failures and zero-spread equilibria).
                     if gross_profit_usd.is_none() && cfg_opt.is_some() && !can_price_v2 {
-                        let reason = match v3_gross_usd {
-                            V3GrossOutcome::QuoteUnavailable => "v3_quote_unavailable",
-                            // CATALOG-BACKFILL-01: catalog gaps surface their
-                            // OWN label — never the flattened transport string.
-                            V3GrossOutcome::V3Labeled(label) => label,
-                            V3GrossOutcome::SpreadZeroEquilibrium => "spread_zero_equilibrium",
-                            // SPREAD-SIGNED-DELTA-01: a losing round trip is NOT
-                            // an equilibrium. Its own label, so the channel stops
-                            // reporting a measured loss as an "efficient market".
-                            V3GrossOutcome::RoundTripLoss { .. } => "spread_negative_round_trip",
-                            // The genuine token-price miss — keeps the original label.
-                            V3GrossOutcome::NoTokenPrice => "no_price_oracle",
-                            // Unreachable in this branch (Usd ⇒ gross Some; Skipped/NoConfig
-                            // ⇒ !can_price_v2 false or cfg absent) — honest fallback.
-                            _ => "no_price_oracle",
+                        // INSTRUMENT-GAP-01: a `RoundTripLoss` whose magnitude
+                        // exceeds the whole principal is not a loss — it is a
+                        // return leg measured in the wrong token (unit/scale),
+                        // and publishing it as `spread_negative_round_trip`
+                        // reads an instrument failure as a market verdict.
+                        // `probe_amount_in_usd` prices the SAME principal the
+                        // gross was measured against, so the comparison is
+                        // same-scale by construction.
+                        // Only when the cycle output was NOT measured: an
+                        // exposed wei ledger is a real round trip even if its
+                        // USD pricing looks odd (that is a different defect),
+                        // and this guard must never contradict a measurement it
+                        // can see. `measured_cycle_output` is the same source
+                        // that publishes `expected_amount_out`.
+                        let impossible_loss = matches!(
+                            &v3_gross_usd,
+                            V3GrossOutcome::RoundTripLoss { gross_usd, .. }
+                                if measured_cycle_output(&v3_gross_usd, probe_amount).is_none()
+                                    && loss_exceeds_principal(
+                                        *gross_usd,
+                                        probe_amount,
+                                        token_in_opt,
+                                        cfg_opt.as_ref(),
+                                    )
+                        );
+                        let reason = if impossible_loss {
+                            "instrument_gap"
+                        } else {
+                            match v3_gross_usd {
+                                V3GrossOutcome::QuoteUnavailable => "v3_quote_unavailable",
+                                // CATALOG-BACKFILL-01: catalog gaps surface their
+                                // OWN label — never the flattened transport string.
+                                V3GrossOutcome::V3Labeled(label) => label,
+                                V3GrossOutcome::SpreadZeroEquilibrium => "spread_zero_equilibrium",
+                                // SPREAD-SIGNED-DELTA-01: a losing round trip is NOT
+                                // an equilibrium. Its own label, so the channel stops
+                                // reporting a measured loss as an "efficient market".
+                                V3GrossOutcome::RoundTripLoss { .. } => {
+                                    "spread_negative_round_trip"
+                                }
+                                // The genuine token-price miss — keeps the original label.
+                                V3GrossOutcome::NoTokenPrice => "no_price_oracle",
+                                // Unreachable in this branch (Usd ⇒ gross Some; Skipped/NoConfig
+                                // ⇒ !can_price_v2 false or cfg absent) — honest fallback.
+                                _ => "no_price_oracle",
+                            }
                         };
                         let (opp, cand, rp) = build_rejected_opportunity(
                             chain_id,
@@ -555,10 +611,19 @@ impl DexEngine {
                         // A real loss is never rounded up to zero (R8): before this
                         // split `saturating_sub` made the two cases the SAME row,
                         // which is why the channel could not be audited.
-                        let computed_gross: Option<f64> = match v3_gross_usd {
-                            V3GrossOutcome::SpreadZeroEquilibrium => Some(0.0),
-                            V3GrossOutcome::RoundTripLoss { gross_usd, .. } => Some(gross_usd),
-                            _ => None,
+                        // INSTRUMENT-GAP-01: an impossible loss publishes NO
+                        // gross. Its magnitude is not a market figure, so the
+                        // row must not reach the `computed` economics path with
+                        // it (that is how `amount_out_usd = amount_in + gross`
+                        // turned into 0 and -2366 on live rows).
+                        let computed_gross: Option<f64> = if impossible_loss {
+                            None
+                        } else {
+                            match v3_gross_usd {
+                                V3GrossOutcome::SpreadZeroEquilibrium => Some(0.0),
+                                V3GrossOutcome::RoundTripLoss { gross_usd, .. } => Some(gross_usd),
+                                _ => None,
+                            }
                         };
                         let mut sc = StrategyCandidate {
                             label,
@@ -595,6 +660,7 @@ impl DexEngine {
                                 amount_in_usd,
                                 gross,
                                 cfg,
+                                measured_cycle_output(&v3_gross_usd, probe_amount),
                             )
                         });
                         if let Some(econ) = measured_economics {
@@ -2480,6 +2546,39 @@ mod tests {
             updated_at: Utc::now(),
             updated_by: None,
         }
+    }
+
+    /// INSTRUMENT-GAP-01: the engine-side gate that turns an impossible loss
+    /// into `instrument_gap` must fire on the measured shape and stay silent on
+    /// the boundary and on an unpriced principal.
+    #[test]
+    fn loss_exceeding_the_principal_is_an_instrument_gap() {
+        let cfg = make_cfg();
+        // 1 WETH probe at the helper's own base price (3000 USD). The address
+        // matters: `canonical_token_price_usd` refuses to price an unknown
+        // token (R8), and `None` is exactly that case — see the last assertion.
+        let weth: Address = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
+            .parse()
+            .unwrap();
+        let probe = U256::from(1_000_000_000_000_000_000u128);
+        // Impossible: a 3001 USD loss on a 3000 USD principal.
+        assert!(loss_exceeds_principal(
+            -3001.0,
+            probe,
+            Some(weth),
+            Some(&cfg)
+        ));
+        // Boundary: losing the whole principal is possible (output zero).
+        assert!(!loss_exceeds_principal(
+            -3000.0,
+            probe,
+            Some(weth),
+            Some(&cfg)
+        ));
+        // No config => no principal => never reclassify (fail-open on absence).
+        assert!(!loss_exceeds_principal(-3001.0, probe, Some(weth), None));
+        // Unpriced principal (no token) => absence, not impossibility.
+        assert!(!loss_exceeds_principal(-3001.0, probe, None, Some(&cfg)));
     }
 
     fn rejection_reasons(candidates: &[StrategyCandidate]) -> Vec<String> {

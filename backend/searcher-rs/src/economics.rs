@@ -206,6 +206,29 @@ pub fn economics_from_sized(
         .flatten()
         .reduce(|a, b| a + b);
 
+    // INSTRUMENT-GAP-01 (2026-10-24): when the cycle OUTPUT was never exposed
+    // AND the gross implies a loss larger than the whole principal, the row is
+    // not a market reading — it is a broken measurement, and every figure
+    // derived from it (`amount_out_usd = amount_in + gross`, `roi_pct`, the
+    // negative net) would be arithmetic on a hole.
+    //
+    // MEASURED DEFECT this closes (live PG, 2026-10-24): `amount_out_wei: null`
+    // with `cycle_output_not_exposed_by_kernel`, a 0.9998 USD principal and
+    // `gross = -2367.017` (ROI -236 809 %) — published as
+    // `spread_negative_round_trip` with `computation_status: "computed"`.
+    // R8: an impossible figure is refused at the source, and the refusal is
+    // itself the measurement (`instrument_gap`), never a market verdict.
+    //
+    // An EXPOSED output is never reclassified here: a real wei ledger stays a
+    // real round trip even when its USD pricing looks odd (a different defect).
+    if amount_out_wei.is_none() {
+        if let Some(ain) = amount_in_usd {
+            if loss_exceeds_principal_usd(gross, ain) {
+                return economics_error("instrument_gap:impossible_cycle_loss");
+            }
+        }
+    }
+
     // out = in + gross is an identity of the kernel's arithmetic (out − in ==
     // gross over input); absent only when the principal was never exposed.
     let amount_out_usd = amount_in_usd.map(|a| a + gross);
@@ -308,6 +331,24 @@ fn computed_legs(sized: &SizedCandidate) -> Vec<ComputedLeg> {
         .collect()
 }
 
+/// INSTRUMENT-GAP-01: is this measured loss LARGER than the whole principal?
+///
+/// The test that separates a market verdict from a broken measurement. A round
+/// trip can return at least nothing, so `gross >= -amount_in_usd` always holds
+/// for a real swap; a gross BELOW that bound implies a NEGATIVE output, which
+/// no swap produces. Exactly `-amount_in_usd` (the whole principal gone, output
+/// zero) is the boundary that IS possible and stays a market reading.
+///
+/// Non-finite or non-positive principals answer `false`: an unpriced principal
+/// is absence of a measurement, not evidence of an impossible one (R8 — this
+/// predicate must never reclassify a row it cannot evaluate).
+pub fn loss_exceeds_principal_usd(gross_profit_usd: f64, amount_in_usd: f64) -> bool {
+    gross_profit_usd.is_finite()
+        && amount_in_usd.is_finite()
+        && amount_in_usd > 0.0
+        && gross_profit_usd < -amount_in_usd
+}
+
 /// ALWAYS-COMPUTE-03 (2026-09-27): the CLOSED `computed` object for a REJECTED
 /// row whose gross was already MEASURED by its producer (`Some(gross)`, even a
 /// measured `0.0`) but which never reached the sizing kernel.
@@ -340,12 +381,18 @@ fn computed_legs(sized: &SizedCandidate) -> Vec<ComputedLeg> {
 /// kernel) stays absent WITH its reason. `None` when the principal is not a
 /// usable positive finite figure: without the capital there is no closed
 /// arithmetic to claim, so the caller keeps the row's honest diagnostic.
+///
+/// INSTRUMENT-GAP-01: `cycle_output_wei` carries the cycle's MEASURED output
+/// when the verdict exposed one. `None` means the producer did not measure it,
+/// and an impossible gross (`< -amount_in_usd`) is then refused as an
+/// `instrument_gap` downstream instead of published as a market loss.
 pub fn economics_from_measured_gross(
     candidate: &StrategyCandidate,
     amount_in_wei: U256,
     amount_in_usd: f64,
     gross_profit_usd: f64,
     cfg: &TradingConfigState,
+    cycle_output_wei: Option<U256>,
 ) -> Option<EconomicsComputation> {
     if !amount_in_usd.is_finite() || amount_in_usd <= 0.0 || !gross_profit_usd.is_finite() {
         return None;
@@ -378,9 +425,11 @@ pub fn economics_from_measured_gross(
         net_negative: net_profit_usd <= 0.0,
         net_economics: Some(net_economics),
         // No per-leg chain on this path (R8 — never a repeated probe amount
-        // dressed as a ledger).
+        // dressed as a ledger). The cycle OUTPUT is a different fact: when the
+        // verdict measured it, it is published as the single-leg ledger so
+        // `amount_out_wei` stops being a hole.
         leg_amounts_in: None,
-        leg_amounts_out: None,
+        leg_amounts_out: cycle_output_wei.map(|o| vec![o.to_string()]),
     };
     Some(economics_from_sized(&sized, Some(cfg)))
 }
@@ -760,6 +809,28 @@ mod tests {
         assert!(std::env::var("ARBX_ALWAYS_COMPUTE_ECONOMICS")
             .map(|v| !disable(&v))
             .unwrap_or(true));
+    }
+
+    // ── INSTRUMENT-GAP-01: an impossible loss is not a market verdict ─────
+
+    #[test]
+    fn loss_above_the_principal_is_refused_as_impossible() {
+        // MEASURED live row (2026-10-24, opportunity 9e50980c): principal
+        // 0.99980034 USD against a gross of -2367.0172711053206 USD, ROI
+        // -236809 % — a 2367x principal loss, which no swap can produce.
+        assert!(loss_exceeds_principal_usd(
+            -2367.0172711053206,
+            0.999_800_34
+        ));
+        // Control (-): the WHOLE principal gone is the boundary a swap CAN
+        // reach (output zero) — it stays a market reading, never "impossible".
+        assert!(!loss_exceeds_principal_usd(-0.999_800_34, 0.999_800_34));
+        // Control (+): a measured loss inside the principal stays a loss.
+        assert!(!loss_exceeds_principal_usd(-0.5, 1.0));
+        // Absence of a principal is not evidence of an impossible one (R8).
+        assert!(!loss_exceeds_principal_usd(-2367.0, 0.0));
+        assert!(!loss_exceeds_principal_usd(f64::NAN, 1.0));
+        assert!(!loss_exceeds_principal_usd(-1.0, f64::NAN));
     }
 
     // ── error object: gate 2 — no fabricated numbers ───────────────────────
