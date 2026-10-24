@@ -113,7 +113,7 @@ function loadFixture(file: string): unknown {
 }
 
 /** Zod issues surfaced path|code|message — a drift finding must be legible. */
-function issuesOf(result: { success: boolean; error?: { issues: { path: (string | number)[]; code: string; message: string }[] } }): string {
+function issuesOf(result: { success: boolean; error?: { issues: { path: PropertyKey[]; code: string; message: string }[] } }): string {
   return result.error!.issues
     .slice(0, 12)
     .map((i) => `${i.path.join(".") || "(root)"} | ${i.code} | ${i.message}`)

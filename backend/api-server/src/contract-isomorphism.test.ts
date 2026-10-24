@@ -51,7 +51,7 @@ const RuntimeAckSchemaMirror = z.object({
 });
 
 const VALID_PAYLOAD: RuntimeAckBroadcast = {
-  event_id: "11111111-2222-3333-4444-555555555555",
+  event_id: "11111111-2222-4333-8444-555555555555",
   resource: "trading_config",
   chain_id: 1,
   idempotency_key: "test-key-1",
