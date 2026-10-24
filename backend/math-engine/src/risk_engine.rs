@@ -254,10 +254,7 @@ pub fn stoploss_guard(
     let max_close = qualifying.iter().map(|t| t.close_ts_s).max()?;
     Some(ProtectionLock {
         until_ts_s: max_close + params.stop_duration_s,
-        reason: format!(
-            "{} stoplosses within lookback",
-            params.trade_limit
-        ),
+        reason: format!("{} stoplosses within lookback", params.trade_limit),
     })
 }
 
@@ -293,10 +290,7 @@ pub fn max_drawdown_protection(
     params: &MaxDrawdownParams,
 ) -> Option<ProtectionLock> {
     let since = now_ts_s - params.lookback_s;
-    let mut window: Vec<&ClosedTrade> = trades
-        .iter()
-        .filter(|t| t.close_ts_s >= since)
-        .collect();
+    let mut window: Vec<&ClosedTrade> = trades.iter().filter(|t| t.close_ts_s >= since).collect();
     if window.len() < params.trade_limit {
         return None;
     }
