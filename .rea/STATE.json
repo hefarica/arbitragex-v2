@@ -1,63 +1,59 @@
 {
   "iteration": 9,
-  "unit_in_progress": null,
-  "loop_status": "INTEGRACION DEL BARRIDO (REA_MASTER v2): §14 STATUS SWEEP, §15 BARRIDO DE PREMISAS, §16 FOLLOWUPS COMO UNIDADES, §17 LEDGER DE CORRECCIONES, §18 DONE. P0-P2 agotadas; la cola pasa a FOLLOWUPS de primera clase.",
-  "next_unit": "REA-03-WIRE",
-  "next_unit_prioridad": [
-    "REA-03-WIRE (desbloquea REA-18; plomeria slot0)",
-    "REA-04-CLOSE (grafo BF real + tests de ciclo inyectado)",
-    "REA-08-WIRE (consumir protecciones antes de emitir + equity mode)",
-    "REA-16-CLOSE (liquidation reducer + ingesta de trazas reales + wiring recon)",
-    "REA-14-CLOSE (pipeline intents/ordenes firmadas - decision del operador)"
-  ],
-  "followups_as_units": {
-    "REA-03-WIRE": {"estado": "PENDING", "gate": "un ciclo con pata V3 produce ledger contiguo (out_i == in_{i+1}); control negativo: con slot0 ausente => None nombrado", "bloqueo": "RouteLeg (prioritization-spine/src/route_plan.rs:27) sin sqrt_price_x96/liquidity; ReservesCache (triangular_engine.rs:84) V2-only; reledger_at (size_optimizer.rs:1398) sin Redis/chain_id"},
-    "REA-04-CLOSE": {"estado": "PENDING", "gate": "ciclo conocido inyectado se detecta contra bellman_ford_cycles (spanning_tree_engine.rs:291); ciclo sin beneficio se descarta", "bloqueo": "grafo productivo hardcoded (well_known_token_pairs:579); falta pool->token0/token1 en cache"},
-    "REA-08-WIRE": {"estado": "PENDING", "gate": "un candidato bloqueado por stoploss_guard/max_drawdown_protection NO se emite (test del emisor); control negativo: sin proteccion se emitiria", "bloqueo": "modulos puros sin consumidores; falta mapear trades cerrados a ClosedTrade"},
-    "REA-16-CLOSE": {"estado": "PENDING", "gate": "reducer de arbitraje aplicado a trazas reales + liquidation reducer con vector; control negativo: sin match no clasifica", "bloqueo": "ingesta revm/parity traces -> MevAction; liquidation reducer no portado"},
-    "REA-14-CLOSE": {"estado": "OPERATOR-DECISION", "gate": "EIP-712 domain+order hash con vectores propios + fill accounting", "bloqueo": "familia nueva (intents); requiere decision del operador"}
+  "loop_status": "CERRADO — REA P0-P2 portables agotadas, verificadas, en main y desplegadas. F5 validada en vivo. A3 paper_executed desplegado. Puerta de fase PENDIENTE por diseno paper (executed=0, paper_executed=0; no forzada).",
+  "main": "605feb17",
+  "production_deployed_sha": "3354c9e2",
+  "deploy_verified": {"run": 40112334878, "verified_at": "2026-10-24T17:09:11Z", "status": "success", "note": "los merges posteriores #1045 (allowlist cleanup) y #1034/#1029 (docs) no cambian runtime"},
+  "units": {
+    "REA-01-TWO-LEG": {"estado": "MERGED+DEPLOYED", "commit": "b5809f08"},
+    "REA-02-OPTIMAL-SIZE": {"estado": "MERGED+DEPLOYED", "commit": "0a0b1388"},
+    "REA-05-ATOMIC-CAUSE": {"estado": "MERGED+DEPLOYED", "commit": "9ecefc75"},
+    "REA-06-POBLACION": {"estado": "MERGED+DEPLOYED", "commit": "d2863d95"},
+    "REA-07-REVERT-TRACE": {"estado": "MERGED+DEPLOYED", "commit": "d71c9fa5"},
+    "REA-03-V3-MATH": {"estado": "MERGED+DEPLOYED", "commit": "1bfb1fd6", "gate": "6/6 vectores byte-exactos de v3-core + control negativo de redondeo"},
+    "REA-04-NEG-CYCLE": {"estado": "BLOCKED-INSPIRACION", "motivo": "artemis@4bb1580 sin cycle_enumerator; el destino ya tiene BF (spanning_tree_engine)"},
+    "REA-08-PROTECTIONS": {"estado": "MERGED+DEPLOYED", "commit": "3354c9e2", "gate": "5/5 vectores freqtrade + 4 falsificadores ejecutados y caidos"},
+    "REA-09-DETERMINISTIC": {"estado": "BLOCKED-YA-SATISFECHO", "motivo": "sim_core compartido searcher/relays + variance_benchmark"},
+    "REA-10-PER-LEG-LEDGER": {"estado": "BLOCKED-YA-SATISFECHO", "motivo": "leg_amounts_in/out cableado en produccion"},
+    "REA-11-CONNECTORS": {"estado": "OUT-OF-SCOPE", "motivo": "integracion de red; venues existen"},
+    "REA-12-BUNDLE": {"estado": "PARCIAL-PRESENTE", "motivo": "relays+submit+no-submit sim; bundle-vs-tip parcial"},
+    "REA-13-BEST-SOLUTION": {"estado": "SCAFFOLD", "motivo": "INTENT_AUCTION registrado sin subasta"},
+    "REA-14-SIGNED-ORDER": {"estado": "BLOCKED-INSPIRACION", "motivo": "PASO 3 sin vectores de las funciones puras"},
+    "REA-16-MEV-CLASS": {"estado": "MERGED+DEPLOYED", "commit": "a769f122", "gate": "vector profit 10 + 2 falsificadores ejecutados"},
+    "REA-17-LIQUIDATION": {"estado": "BLOCKED-PREMISA-PRESENTE", "motivo": "liquidation_engine/snipe/worker ya existen"},
+    "REA-18-V3-SIM": {"estado": "BLOCKED-GAP-DATOS", "motivo": "depende de REA-03-WIRE (slot0 en RouteLeg/StateProjector)"}
   },
-  "sweep_policy": {
-    "step0_password": "cada iteracion empieza por STATUS SWEEP (§14): PRs abiertos (checks -> rojo se arregla YA; verde + sin deploy -> merge), estado externo no confirmado -> UNCONFIRMED con comando, correcciones -> ledger",
-    "premise_audit": "ninguna unidad sin medir el destino (grep rutas:linea); veredicto PRESENTE/STALE/GAP-REAL/GAP-DATOS (§15)",
-    "no_fabricar": "sin test numerico del repo no se escribe codigo (§0.3); una unidad PRESENTE no se reintenta"
+  "fases": {
+    "F1-SIM-BUILDER": {"pr": 1031, "commit": "170f2f35", "estado": "MERGED+DEPLOYED", "gate": "contrato con fila real f55914d3 + CI 88 passed; post-deploy sostenido"},
+    "F2-SIM-DECIMALS": {"pr": 1033, "commit": "3de7c420", "estado": "MERGED+DEPLOYED", "gate": "6/6; el probe con (18,18) reproduce el falso PASS => el fix muerde"},
+    "F5-SIM-FORK-REVERT": {"pr": 1035, "commit": "3915f312", "estado": "MERGED+DEPLOYED", "gate": "POST-DEPLOY VALIDADO: 989 fork_revert (selector 749 / address 989 / op 989), 0 anonimos, 0 falso F3, 4232 sims"},
+    "A3-paper_executed": {"pr": 1037, "commit": "45a80cc2", "estado": "MERGED+DEPLOYED", "gate": "migracion 127 + writer guard + 9 tests; paper_executed=0 por economia, no forzado"},
+    "ZOD4": {"pr": 1038, "commit": "759157b9", "estado": "MERGED+DEPLOYED", "gate": "npm audit VERDE sin allowlist; zod unico 4.6.7"},
+    "CARGO-TOKIO": {"pr": 1041, "commit": "a3d34263", "estado": "MERGED+DEPLOYED", "gate": "RUSTSEC-2026-0386 FIXED"},
+    "RUSTSEC-BRIDGE": {"pr": 1044, "commit": "c2ee5246", "estado": "MERGED+DEPLOYED", "gate": "security.yml VERDE; expiry PER-ID 2026-11-07 enforzada"},
+    "VPS-TREE-GUARD": {"pr": 1047, "commit": "8aa483a2", "estado": "MERGED+DEPLOYED", "gate": "[tree-guard:pre-anchor] y [post-anchor] OK en enforce; deploy reproducible por SHA"}
   },
   "corrections_ledger": [
-    {"fuente": "flashbots/mev-inspect-rs", "hecho": "ES MIT (LICENSE en b6e2f0a); la ficha REA-trace la anoto sin licencia = error corregido", "artefacto": "clone mev-inspect-rs@b6e2f0a LICENSE", "fecha": "2026-10-22"},
-    {"fuente": "paradigmxyz/artemis@4bb1580", "hecho": "NO tiene cycle_enumerator ni inspector de reverts (grep total: solo 2 estrategias de ejemplo)", "artefacto": "clone artemis@4bb1580; grep arbitrage|triang|bellman", "fecha": "2026-10-21"},
-    {"fuente": "destino", "hecho": "Bellman-Ford YA existe (spanning_tree_engine.rs:66-85/291, enable_bfm=true); REA-04 PREMISA-STALE", "artefacto": "backend/searcher-rs/src/engines/spanning_tree_engine.rs", "fecha": "2026-10-21"},
-    {"fuente": "destino", "hecho": "ledger por pata YA existe (leg_amounts_in/out, attach_leg_ledger all-or-nothing); REA-10 PREMISA-PRESENTE", "artefacto": "size_optimizer.rs 95 refs; orchestrator.rs:1973-1996", "fecha": "2026-10-21"},
-    {"fuente": "destino", "hecho": "sim compartido backtest/live YA existe (sim_core en searcher y relays-client); REA-09 PREMISA-PRESENTE", "artefacto": "candidate_simulation.rs:175-424; execution_admission.rs:116", "fecha": "2026-10-21"},
-    {"fuente": "harness", "hecho": "sql_query devolvio vacio con ok:true; NO es evidencia; usar ssh/psql directo para la puerta de fase", "artefacto": "esta sesion (2 intentos)", "fecha": "2026-10-22"}
+    "mev-inspect-rs ES MIT (la ficha REA-trace la anoto sin licencia: corregido)",
+    "artemis@4bb1580 NO tiene cycle_enumerator (premisa stale)",
+    "Bellman-Ford, ledger por pata y sim compartido YA existian en el destino",
+    "crypto-bigint 0.5.5 alcanzable por DOS cadenas: alloy-signer 1.8.3 Y ethers-signers 2.0.14 (la firma real de relays-client); migrar alloy 2 solo NO cierra RUSTSEC-2026-0387 (t24 falsificada por medicion)",
+    "alloy-primitives/alloy-sol-types NO tienen linea 2.x (ultima 1.7.3); alloy-signer 2.5 usa k256 0.13.4",
+    "sql_query del harness devuelve vacio con ok:true: NO es evidencia; la DB se mide via WSL->ssh+psql",
+    "un deploy construye DESDE el arbol del VPS: un archivo sin commitear hace el deploy no reproducible por SHA; el tree-guard lo bloquea (enforce)",
+    "el badge 'socket ERROR' del monitor es cliente/stale: el endpoint publico socket.io responde 200+handshake y los 3 contenedores estan healthy (medido)"
   ],
-  "swEEP_open_items": {
-    "phase_gate": "UNCONFIRMED: status='executed' no medido (sql_query vacio ok:true; ssh arbx sin salida). GATE1 (integrador-2) en vuelo; su worktree fase1-gate existe. Requiere medicion directa antes de cualquier veredicto §7.",
-    "prs": {
-      "#1019": "ROJO 3 checks (cargo check+clippy+test, lint-and-test-rust, playwright) en head f05ff0d0 tras update-branch; SWEEP-FIX pendiente (reproducir en head remoto)",
-      "#1021": "CI en curso (2 PASS/31 pend); #1025 CI recien iniciado (0/34); docs PRs con CI en curso",
-      "merge": "sin deploy confirmado en vuelo; workflow list de main todo success en af331ce7 salvo 'Public DApp verified journeys' queued"
-    }
-  },
-  "units": {
-    "REA-01-TWO-LEG": {"estado": "MERGED", "commit": "d975eb30"},
-    "REA-02-OPTIMAL-SIZE": {"estado": "MERGED", "commit": "e8990fd8"},
-    "REA-05-ATOMIC-CAUSE": {"estado": "MERGED", "commit": "72aca3d5"},
-    "REA-06-POBLACION": {"estado": "MERGED", "commit": "78ab15ee"},
-    "REA-07-REVERT-TRACE": {"estado": "MERGED", "commit": "098d1c3a"},
-    "REA-03-V3-MATH": {"estado": "IN_PROGRESS", "commit": "710639ae", "pr": "https://github.com/hefarica/arbitragex-v2/pull/1019"},
-    "REA-04-NEG-CYCLE": {"estado": "BLOCKED", "tipo": "INSPIRACION", "commit": "76c66539"},
-    "REA-08-PROTECTIONS": {"estado": "IN_PROGRESS", "commit": "ec678b9a", "pr": "https://github.com/hefarica/arbitragex-v2/pull/1021"},
-    "REA-09-DETERMINISTIC": {"estado": "BLOCKED", "tipo": "INSPIRACION", "commit": "56ee8992"},
-    "REA-10-PER-LEG-LEDGER": {"estado": "BLOCKED", "tipo": "INSPIRACION", "commit": "1b94aee8"},
-    "REA-11-CONNECTORS": {"estado": "PENDING-OUT-OF-SCOPE", "tipo": "INTEGRACION-DE-RED"},
-    "REA-12-BUNDLE": {"estado": "PENDING-PARTIAL"},
-    "REA-13-BEST-SOLUTION": {"estado": "PENDING-SCAFFOLD"},
-    "REA-14-SIGNED-ORDER": {"estado": "BLOCKED", "tipo": "INSPIRACION", "commit": "0b14e02f"},
-    "REA-16-MEV-CLASS": {"estado": "IN_PROGRESS", "commit": "ad2e793c", "pr": "https://github.com/hefarica/arbitragex-v2/pull/1025"},
-    "REA-17-LIQUIDATION": {"estado": "BLOCKED", "tipo": "PREMISA-PRESENTE"},
-    "REA-18-V3-SIM": {"estado": "BLOCKED", "tipo": "GAP-DATOS", "bloqueo": "REA-03-WIRE"}
+  "pending_for_closure": {
+    "paper_executed": "0 — el writer A3 espera sim passed + net>0; el funnel muere en reverts nombrados (TRANSFER_FROM_FAILED / allowance) y rechazos de poblacion. NO forzado.",
+    "executed": "0 — paper_mode; decision del operador (live o semantica de gate)",
+    "O3-signing-k256": "cerrada hasta pedido explicito del operador (firma directa sobre k256 0.14 cierra 0387; toca camino de firma)",
+    "edge-hard-2": "diff preservado en quarantine/usePricesStream.diff.2026-10-24T1516Z (98 lineas, sha256 1f503e1b…); revisar antes de aplicar",
+    "vps-untracked-11": "en la allowlist del tree-guard; limpiar en ventana aparte",
+    "codeql-latency": "el deploy espera analyze(rust) ~20 min; planificar la ventana",
+    "rea-03-wire": "slot0 en RouteLeg/StateProjector (desbloquea REA-18-V3-SIM)"
   },
   "mode": "loop",
   "death_criterion_fired": false,
-  "notes": "Iteracion 9 = integracion del barrido en REA_MASTER v2 (docs/rea/REA_MASTER.md, PR). El master ahora obliga STATUS SWEEP + BARRIDO DE PREMISAS + FOLLOWUPS como unidades + LEDGER. Proximo paso real: SWEEP-FIX-1019 (PR propio en rojo) y REA-03-WIRE."
+  "next_unit": null,
+  "notes": "Cierre total de la sesion: 3 portes REA en main y desplegados (03/08/16) con vectores+falsificadores; F1/F2/F5/A3/zod4/tokio/bridge/tree-guard en main y desplegados; F5 validada en vivo; REA P0-P2 no portables cerradas por medicion. Lo unico pendiente es la economia (paper_executed) y la decision de modo del operador."
 }
