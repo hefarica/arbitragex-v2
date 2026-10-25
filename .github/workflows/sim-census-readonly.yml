@@ -1,0 +1,137 @@
+name: SIM-CENSUS-01 — read-only census of the simulations table
+
+# SIM-CENSUS-01 (2026-10-25).
+ #
+# WHY: every published number must carry its table. On 2026-10-25 the daily
+# control published rejection "families" measured on `opportunities` and they
+# were read as the simulation census: `route_path_not_representable`, `rpc_error`
+# and `build_error` live in `simulations`, so their absence there proved nothing.
+# This job is the missing instrument: ONE read-only query against `simulations`
+# that publishes, with the table name next to every number:
+#
+#   M1  rows whose `fail_reason` is `route_path_not_representable*`
+#       (the 2-leg builder blocking the pass criterion — #1029 §2 / #1031)
+#   M2  rows with `gas_estimate_wei IS NOT NULL`
+#       (the FIRST decodable eth_call — the leading indicator, #1029 §1)
+#   M3  the pass census itself (`passed`), for context only
+#
+# HONESTY (RULE 00 / R8): SELECTs only. No INSERT/UPDATE/DELETE, no config, no
+# route that touches the searcher. Every figure is printed with its window and
+# its table, and an empty table prints `0` rather than an error.
+
+on:
+  workflow_dispatch:
+    inputs:
+      window_hours:
+        description: "Window in hours for the census (default 24)"
+        type: string
+        required: false
+        default: "24"
+  schedule:
+    - cron: '23 6 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sim-census-readonly
+  cancel-in-progress: false
+
+jobs:
+  census:
+    name: read-only census of simulations (M1 fail_reason, M2 gas_estimate_wei)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Setup SSH
+        env:
+          VPS_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+        run: |
+          set -euo pipefail
+          test -n "$VPS_KEY" && test -n "$VPS_HOST"
+          install -m 700 -d ~/.ssh
+          umask 077
+          printf '%s\n' "$VPS_KEY" > ~/.ssh/deploy_key
+          ssh-keyscan -T 10 -p "$VPS_PORT" -H "$VPS_HOST" > ~/.ssh/known_hosts
+          test -s ~/.ssh/known_hosts
+
+      - name: Read the simulations census (read-only)
+        env:
+          VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
+          VPS_USER: ${{ secrets.VPS_SSH_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+          WINDOW_HOURS: ${{ inputs.window_hours || '24' }}
+        run: |
+          set -euo pipefail
+          # One round trip, one transaction, READ ONLY, one row per figure.
+          # Every line carries `table=simulations` and the window it was
+          # measured over: a count without a table is a count somebody reads
+          # wrong (2026-10-25 lesson).
+          SQL="
+            SET default_transaction_read_only = on;
+            SELECT 'window_hours|' || :'w';
+            SELECT 'table|simulations';
+            SELECT 'total_rows|' || count(*) FROM simulations;
+            SELECT 'rows_in_window|' || count(*)
+              FROM simulations
+             WHERE simulated_at >= now() - (:'w' || ' hours')::interval;
+            SELECT 'max_simulated_at|' || coalesce(max(simulated_at)::text, 'never')
+              FROM simulations;
+            SELECT 'M1_route_path_not_representable|' || count(*)
+              FROM simulations
+             WHERE simulated_at >= now() - (:'w' || ' hours')::interval
+               AND fail_reason LIKE 'route_path_not_representable%';
+            SELECT 'M2_gas_estimate_wei_not_null|' || count(*)
+              FROM simulations
+             WHERE simulated_at >= now() - (:'w' || ' hours')::interval
+               AND gas_estimate_wei IS NOT NULL;
+            SELECT 'M3_passed_true|' || count(*)
+              FROM simulations
+             WHERE simulated_at >= now() - (:'w' || ' hours')::interval
+               AND passed IS TRUE;
+            SELECT 'fail_reason|' || coalesce(nullif(fail_reason, ''), '(null)') || '|' || count(*)
+              FROM simulations
+             WHERE simulated_at >= now() - (:'w' || ' hours')::interval
+             GROUP BY 1
+             ORDER BY count(*) DESC
+             LIMIT 12;
+          "
+          ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" -o BatchMode=yes -o IdentitiesOnly=yes \
+            "$VPS_USER@$VPS_HOST" \
+            "docker exec -i -e PGTZ=UTC arbitragex-v2-postgres-1 psql -U postgres -d arbitragex -t -A -v w='$WINDOW_HOURS' -f -" \
+            <<<"$SQL" > census.txt
+          test -s census.txt || { echo "::error::empty census — cannot interpret"; exit 1; }
+          cat census.txt
+
+      - name: Publish the census as the job summary
+        if: always()
+        run: |
+          {
+            echo "## SIM-CENSUS-01 — tabla \`simulations\` (read-only)"
+            echo
+            echo "| figura | valor |"
+            echo "|---|---|"
+            while IFS='|' read -r k v extra; do
+              [ -n "${k:-}" ] || continue
+              if [ -n "${extra:-}" ]; then
+                printf '| %s = %s | %s |\n' "$k" "$v" "$extra"
+              else
+                printf '| %s | %s |\n' "$k" "$v"
+              fi
+            done < census.txt
+            echo
+            echo "M1 = \`route_path_not_representable*\` en \`simulations\` (bloqueo del builder 2-pata)."
+            echo "M2 = \`gas_estimate_wei IS NOT NULL\` en \`simulations\` (primer eth_call decodable)."
+            echo "M3 = \`passed IS TRUE\`, sólo contexto: no es el indicador líder."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the raw census
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sim-census-${{ github.run_id }}
+          path: census.txt
+          retention-days: 30
