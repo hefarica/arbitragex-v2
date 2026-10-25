@@ -181,6 +181,28 @@ fn measured_cycle_output(outcome: &V3GrossOutcome, probe_amount: U256) -> Option
     }
 }
 
+/// INSTRUMENT-GAP-02 (2026-10-24): is this sell-leg output a DUST amount —
+/// i.e. no usable quote at all?
+///
+/// A leg that sells a large amount and returns a handful of wei did not quote:
+/// its pool state is empty, uncatalogued or stale. C-01 (2026-10-18) already
+/// refuses the EXACT zero; live rows show the neighbouring shape — a return of
+/// 1 wei that survives `is_zero()` and lands as a `RoundTripLoss` whose gross
+/// equals `-amount_in` in f64 (`-2294.9380491856004` against a
+/// `2294.9380491856004` principal, `amount_out_usd = 0`, five rows in a 15-min
+/// window). That is a dead leg published as a 100 % market loss.
+///
+/// The floor is 1e-6 of what the leg SOLD: six orders of magnitude below any
+/// real round trip, far above any legitimate dust from integer division.
+fn cycle_output_is_dust(returned: U256, sold: U256) -> bool {
+    if returned.is_zero() {
+        return true;
+    }
+    // `returned * 1e6 < sold` without overflow: both sides are compared through
+    // division when `returned` cannot be scaled safely.
+    returned.saturating_mul(U256::from(1_000_000u64)) < sold
+}
+
 /// INSTRUMENT-GAP-01 (2026-10-24): does this measured loss EXCEED the whole
 /// principal?
 ///
@@ -872,7 +894,12 @@ impl DexEngine {
         // no usable state (empty / uncatalogued pool, zero liquidity): that is
         // an instrument gap (`QuoteUnavailable`), never a market verdict. R8:
         // absence of a measurement is not a measurement of absence.
-        if returned.is_zero() {
+        // INSTRUMENT-GAP-02: the EXACT zero (C-01) and its neighbour, the dust
+        // return, are the same defect: a dead sell leg that never quoted. Both
+        // leave the market verdict path through the SAME label C-01 already
+        // uses (`QuoteUnavailable` ⇒ `v3_quote_unavailable`), so the channel
+        // stops publishing a 100 % loss that no swap produced.
+        if cycle_output_is_dust(returned, buy_out) {
             return V3GrossOutcome::QuoteUnavailable;
         }
         if returned == probe_amount {
@@ -2546,6 +2573,30 @@ mod tests {
             updated_at: Utc::now(),
             updated_by: None,
         }
+    }
+
+    /// INSTRUMENT-GAP-02: the dust return that used to survive `is_zero()` and
+    /// land as a 100 % market loss (measured: 1 wei out of a 2294.94 USD leg).
+    #[test]
+    fn dust_cycle_output_is_an_instrument_gap_not_a_100pct_loss() {
+        let sold = U256::from(1_000_000_000_000_000_000u128); // 1 ETH sold
+                                                              // Control (-): a real round trip keeps 99 % — never dust.
+        assert!(!cycle_output_is_dust(
+            sold * U256::from(99u64) / U256::from(100u64),
+            sold
+        ));
+        // Control (+): the live shape — 1 wei out of a 1e18 leg.
+        assert!(cycle_output_is_dust(U256::from(1u64), sold));
+        // The exact zero stays a gap (C-01, unchanged).
+        assert!(cycle_output_is_dust(U256::zero(), sold));
+        // Boundary is exclusive by construction: exactly 1e-6 of the amount
+        // sold is NOT dust (a hair below it is), so the guard can never eat a
+        // legitimate small round trip at the threshold.
+        assert!(!cycle_output_is_dust(sold / U256::from(1_000_000u64), sold));
+        assert!(cycle_output_is_dust(
+            sold / U256::from(1_000_000u64) - U256::from(1u64),
+            sold
+        ));
     }
 
     /// INSTRUMENT-GAP-01: the engine-side gate that turns an impossible loss
