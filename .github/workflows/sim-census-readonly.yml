@@ -95,7 +95,7 @@ jobs:
             SELECT 'fail_reason|' || coalesce(nullif(fail_reason, ''), '(null)') || '|' || count(*)
               FROM simulations
              WHERE simulated_at >= now() - (:'w' || ' hours')::interval
-             GROUP BY 1
+             GROUP BY coalesce(nullif(fail_reason, ''), '(null)')
              ORDER BY count(*) DESC
              LIMIT 12;
           "
