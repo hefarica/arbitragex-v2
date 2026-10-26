@@ -78,9 +78,9 @@ jobs:
           echo
           echo "=== [2] cuanto ocupan los logs de contenedor (json-file) ==="
           LOGDIR=/var/lib/docker/containers
-          TOTAL=$(sudo du -sc "$LOGDIR"/*/*-json.log 2>/dev/null | tail -1 | awk '{print $1}')
+          TOTAL=$(du -sc "$LOGDIR"/*/*-json.log 2>/dev/null | tail -1 | awk '{print $1}')
           echo "json-logs total: ${TOTAL:-0} KiB"
-          sudo du -sh "$LOGDIR" 2>/dev/null | tail -1 || true
+          du -sh "$LOGDIR" 2>/dev/null | tail -1 || true
           echo
           echo "=== [3] volumenes y contenedores (informativo, NO se tocan) ==="
           docker system df 2>&1 | head -6
@@ -92,7 +92,12 @@ jobs:
             exit 0
           fi
           echo "=== [4] APPLY: truncando json logs (no son datos) ==="
-          sudo sh -c 'for f in /var/lib/docker/containers/*/*-json.log; do : > "$f"; done' 2>/dev/null || true
+          # VPS_USER is root (c10-f1-recovery-step14-only.yml:18), so no sudo:
+          # a `sudo` that does not exist would have made this a silent no-op.
+          for f in /var/lib/docker/containers/*/*-json.log; do
+            [ -f "$f" ] && : > "$f"
+          done
+          rm -f /var/lib/docker/containers/*/*-json.log.*.gz 2>/dev/null || true
           df -h / | tail -1
           echo
           echo "=== [5] APPLY: contenedores detenidos (prune de exited, no de volumenes) ==="
