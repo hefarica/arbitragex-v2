@@ -1,0 +1,137 @@
+name: VPS-DISK-EMERGENCY — free space and bring postgres back (incident)
+
+# VPS-DISK-EMERGENCY (2026-10-26), written DURING the outage.
+#
+# MEASURED STATE when this was written:
+#   /dev/sda1  150G  144G  0  100% /            (vps-janitor, run 40336168197)
+#   docker builder prune → 0B, journal vacuum → 0B, image prune → 0B
+#   postgres → "is restarting" (sim-census-readonly, run 40336070937)
+#   redis    → "MISCONF Errors writing to the AOF file: No space left on device"
+#              (hardened-vps-audit, run 40336859944)
+#   api-server → 500 on /api/status, /api/readiness, /api/opportunities/live
+#
+# So the ordinary prune has NOTHING to reclaim (all images are in use, no
+# dangling layers, journals already capped). What is left that can be freed
+# WITHOUT touching data is the container logs: 63 containers, json-file driver,
+# no rotation observed — and that is what this job truncates.
+#
+# WHAT IT DOES NOT DO, deliberately: it never deletes a volume, never touches
+# /var/lib/docker/volumes, never runs VACUUM FULL, never drops a table and never
+# resets the repo tree. The 96.81 GB in 11 active volumes is the database, and
+# the retention-vs-capacity decision is not an agent's to take.
+#
+# Two phases, and the default is the DRY RUN:
+#   apply=false → report only: what would be truncated, how much, and the state
+#                 of postgres/redis.
+#   apply=true  → truncate the json logs, prune stopped containers, start
+#                 postgres, and RE-MEASURE free space afterwards.
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "false = dry-run (default). true = truncate logs + start postgres"
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-vps
+  cancel-in-progress: false
+
+jobs:
+  emergency:
+    name: disk emergency (logs + postgres)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Setup SSH
+        env:
+          VPS_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+        run: |
+          set -euo pipefail
+          test -n "$VPS_KEY" && test -n "$VPS_HOST"
+          install -m 700 -d ~/.ssh
+          umask 077
+          printf '%s\n' "$VPS_KEY" > ~/.ssh/deploy_key
+          ssh-keyscan -T 10 -p "$VPS_PORT" -H "$VPS_HOST" > ~/.ssh/known_hosts
+          test -s ~/.ssh/known_hosts
+
+      - name: Run (read-only unless apply=true)
+        env:
+          VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
+          VPS_USER: ${{ secrets.VPS_SSH_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+          APPLY: ${{ inputs.apply && 'true' || 'false' }}
+        run: |
+          set -uo pipefail
+          ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" -o BatchMode=yes -o IdentitiesOnly=yes \
+            "$VPS_USER@$VPS_HOST" "APPLY='$APPLY' bash -s" > out.txt 2>&1 <<'REMOTE'
+          echo "=== [1] disco ANTES ==="
+          df -h / | tail -1
+          echo
+          echo "=== [2] cuanto ocupan los logs de contenedor (json-file) ==="
+          LOGDIR=/var/lib/docker/containers
+          TOTAL=$(sudo du -sc "$LOGDIR"/*/*-json.log 2>/dev/null | tail -1 | awk '{print $1}')
+          echo "json-logs total: ${TOTAL:-0} KiB"
+          sudo du -sh "$LOGDIR" 2>/dev/null | tail -1 || true
+          echo
+          echo "=== [3] volumenes y contenedores (informativo, NO se tocan) ==="
+          docker system df 2>&1 | head -6
+          docker ps -a --filter 'name=postgres' --format '{{.Names}}|{{.Status}}' 2>&1
+          docker ps --filter 'name=redis' --format '{{.Names}}|{{.Status}}' 2>&1
+          echo
+          if [ "${APPLY:-false}" != "true" ]; then
+            echo "=== DRY RUN — no se ha modificado nada. Re-ejecutar con apply=true. ==="
+            exit 0
+          fi
+          echo "=== [4] APPLY: truncando json logs (no son datos) ==="
+          sudo sh -c 'for f in /var/lib/docker/containers/*/*-json.log; do : > "$f"; done' 2>/dev/null || true
+          df -h / | tail -1
+          echo
+          echo "=== [5] APPLY: contenedores detenidos (prune de exited, no de volumenes) ==="
+          docker container prune -f 2>&1 | tail -2
+          df -h / | tail -1
+          echo
+          echo "=== [6] APPLY: arrancando postgres ==="
+          PG=$(docker ps -a --filter 'name=postgres' --format '{{.Names}}' | head -1)
+          echo "postgres container: ${PG:-none}"
+          if [ -n "${PG:-}" ]; then
+            docker start "$PG" 2>&1 | tail -2 || true
+            for i in 1 2 3 4 5 6 7 8 9 10; do
+              sleep 3
+              ST=$(docker ps --filter "name=$PG" --format '{{.Status}}' 2>/dev/null)
+              echo "  t+$((i*3))s: ${ST:-gone}"
+              case "$ST" in *healthy*|*Up*) break;; esac
+            done
+          fi
+          echo
+          echo "=== [7] estado despues ==="
+          df -h / | tail -1
+          docker ps -a --filter 'name=postgres' --format '{{.Names}}|{{.Status}}' 2>&1
+          echo
+          echo "=== [8] ultimas lineas de postgres (credenciales filtradas) ==="
+          docker logs --tail 20 "${PG:-arbitragex-v2-postgres-1}" 2>&1 \
+            | sed -E 's#(postgres(ql)?://)[^@ ]*@#\1***@#g' | sed -E 's/(password|PASSWORD|DATABASE_URL)=[^ ]*/\1=***/g' | tail -20
+          REMOTE
+          test -s out.txt || { echo "::error::empty output"; exit 1; }
+          cat out.txt
+
+      - name: Publish as job summary
+        if: always()
+        run: |
+          { echo "## VPS-DISK-EMERGENCY (apply=${{ inputs.apply }})"; echo '```'; cat out.txt 2>/dev/null || echo "(no output)"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the raw output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vps-disk-emergency-${{ github.run_id }}
+          path: out.txt
+          retention-days: 30
