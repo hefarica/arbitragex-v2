@@ -1,0 +1,105 @@
+name: VPS-DISK-PROBE — read-only inventory of the host disk and the postgres container
+
+# VPS-DISK-PROBE (2026-10-26), written during the outage.
+#
+# WHY: the API returned 500 on every route because ONE dependency was down. The
+# janitor proved the root disk is at 100 % (144G of 150G, 0B free) and that
+# pruning reclaims NOTHING (build cache 0, dangling images 0, journals 0). What
+# the janitor cannot answer — and what nobody can decide without it — is WHERE
+# those 144G are and WHY postgres is crash-looping.
+#
+# This job is strictly READ-ONLY: df, du, docker ps, docker system df, and the
+# last lines of the postgres container log. It writes nothing, restarts nothing,
+# prunes nothing, and filters credentials out of anything it prints.
+#
+# It exists so the capacity/retention decision is taken on numbers instead of on
+# a hypothesis. If the numbers say the payload is the database volume, the
+# decision is retention or a bigger disk — not a cleanup script.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vps-disk-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: read-only disk + container inventory
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Setup SSH
+        env:
+          VPS_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+        run: |
+          set -euo pipefail
+          test -n "$VPS_KEY" && test -n "$VPS_HOST"
+          install -m 700 -d ~/.ssh
+          umask 077
+          printf '%s\n' "$VPS_KEY" > ~/.ssh/deploy_key
+          ssh-keyscan -T 10 -p "$VPS_PORT" -H "$VPS_HOST" > ~/.ssh/known_hosts
+          test -s ~/.ssh/known_hosts
+
+      - name: Inventory (read-only)
+        env:
+          VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
+          VPS_USER: ${{ secrets.VPS_SSH_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+        run: |
+          set -uo pipefail
+          ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" -o BatchMode=yes -o IdentitiesOnly=yes \
+            "$VPS_USER@$VPS_HOST" 'bash -s' > probe.txt 2>&1 <<'REMOTE'
+          echo "=== df -h (host) ==="
+          df -h / | tail -2
+          echo
+          echo "=== inodos ==="
+          df -i / | tail -1
+          echo
+          echo "=== donde estan los GB: du -x -d1 / (top 15) ==="
+          du -x -d1 / 2>/dev/null | sort -rn | head -15
+          echo
+          echo "=== du -d1 /var/lib/docker ==="
+          sudo du -x -d1 /var/lib/docker 2>/dev/null | sort -rn | head -8 || du -x -d1 /var/lib/docker 2>/dev/null | sort -rn | head -8
+          echo
+          echo "=== docker system df ==="
+          docker system df 2>&1
+          echo
+          echo "=== contenedores por estado ==="
+          docker ps -a --format '{{.Names}}|{{.Status}}' 2>&1 | awk -F'|' '{print $2}' | sed -E 's/^(Up|Exited|Restarting|Created|Paused).*/\1/' | sort | uniq -c | sort -rn
+          echo
+          echo "=== postgres: estado y reinicios ==="
+          docker ps -a --filter 'name=postgres' --format '{{.Names}}|{{.Status}}' 2>&1
+          echo
+          echo "=== postgres: ultimas lineas del log (credenciales filtradas) ==="
+          docker logs --tail 40 arbitragex-v2-postgres-1 2>&1 \
+            | sed -E 's#(postgres(ql)?://)[^@ ]*@#\1***@#g' \
+            | sed -E 's/(password|PASSWORD|DATABASE_URL)=[^ ]*/\1=***/g' \
+            | tail -40
+          REMOTE
+          test -s probe.txt || { echo "::error::empty probe"; exit 1; }
+          cat probe.txt
+
+      - name: Publish as job summary
+        if: always()
+        run: |
+          {
+            echo "## VPS-DISK-PROBE (read-only)"
+            echo '```'
+            cat probe.txt 2>/dev/null || echo "(no output)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the raw probe
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vps-disk-probe-${{ github.run_id }}
+          path: probe.txt
+          retention-days: 30
