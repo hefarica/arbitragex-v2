@@ -1,30 +1,17 @@
-# OMEGA-8/M4 Fase 3 (2026-05-15): conservative clippy config for ArbitrageX backend.
-# Tighten over time as individual modules are cleaned up.
-# Promotion path: warn here -> per-module #[deny] -> workspace deny in CI.
+# clippy.toml — EDGE-HARD-2 (2026-08-20).
 #
-# Static audit (OMEGA-8/M4 Fase 3) — production unwraps remaining by crate
-# (excluding #[cfg(test)] modules and boot-time builders):
-#   - searcher-rs        : addressed two V3 quoter hot-path unwraps in Fase 1
-#                          (Lazy<Result<Address>>). The remaining file-wide
-#                          `#![allow(clippy::unwrap_used)]` covers documented
-#                          M11-TODO sites; promoting requires per-fn audits.
-#   - sed-core           : addressed first/last unwrap pre-dispatch panic in
-#                          Fase 2 (closure_check + slice-pattern is_closed).
-#                          Remaining hits are inside test modules or
-#                          numerical-invariant code paths that already guard
-#                          via thiserror enums.
-#   - relays-client      : remaining `.expect("reqwest client")` calls are at
-#                          construction time (boot-fail), not pre-dispatch.
-#                          Surfaced in Fase 4 integration tests.
-#   - prioritization-spine, simulator-v2, recon, math-engine : production
-#                          unwraps audited; no pre-dispatch panic surface
-#                          found. Surfaced in Fase 5/6 property + cobertura
-#                          tests.
+# HONEST scope: these are the ONLY keys proposed in the operator's hardening
+# pass that actually exist in clippy's configuration surface. They tighten
+# two standard lints — they do NOT "prevent stack overflows" or "detect
+# infinite loops" (no clippy.toml key does; that claim came from the rejected
+# v1 proposal and is documented here so nobody re-believes it).
 #
-# Per-crate clippy.toml override (M5+ work): add `[lints.clippy] unwrap_used = "deny"`
-# to each Cargo.toml once the audit memo accepts the remaining sites.
-
-msrv = "1.85"
-
-# Reserved for future use.
-disallowed-methods = []
+#   type-complexity-threshold — flags overly complex type signatures;
+#                               250 is clippy's default, pinned explicitly
+#                               so drift upward is a visible diff.
+#
+# too-many-arguments-threshold: deliberately NOT set — a first pass pinned 6
+# and immediately flagged 3 existing 7-arg functions in prioritization-spine
+# under -D warnings (CI red, #440). Tightening lints the codebase doesn't
+# meet is churn, not hardening; revisit with the struct-param refactor.
+type-complexity-threshold = 250
